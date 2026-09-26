@@ -101,46 +101,76 @@
     const G_CLIENT_ID_KEY = 'life_tracker_gclient_id';
     const G_FOLDER_KEY = 'life_tracker_gfolder_name';
 
-    // New Data Structure with Built-in Subcategories
-    let appData = {
-      expenses: [],
-      items: [],
-      categories: {
-        'Food': ['Restaurant', 'Delivery', 'Snacks', 'Coffee'],
-        'Bills': ['Electricity', 'Water', 'Internet', 'Mobile', 'Rent', 'EMI'],
-        'Groceries': ['Supermarket', 'Vegetables', 'Meat'],
-        'Transport': ['Fuel', 'Taxi/Uber', 'Public Transit', 'Flights'],
-        'Shopping': ['Clothes', 'Electronics', 'Gifts', 'Amazon'],
-        'Entertainment': ['Netflix', 'Spotify', 'Movies', 'Gaming', 'Events'],
-        'Health': ['Pharmacy', 'Doctor', 'Gym', 'Insurance'],
-        'Travel': ['Hotels', 'Tickets', 'Tours']
-      }
-    };
+    // Returns a fresh copy of the default app data shape. Used on first run
+    // and as the base to rebuild onto when restoring from Google Drive.
+    function getDefaultAppData() {
+      return {
+        expenses: [],
+        items: [],
+        // Generic "tap a day to log it" items - milk, newspaper, whatever recurs daily.
+        // Fully user-configurable in Settings, and rides along in the same backup blob.
+        recurringItems: [
+          { id: 'milk', name: 'Milk', category: 'Milk', subCategory: null, price: 50 }
+        ],
+        categories: {
+          'Food': ['Restaurant', 'Delivery', 'Snacks', 'Coffee'],
+          'Bills': ['Electricity', 'Water', 'Internet', 'Mobile', 'Rent', 'EMI'],
+          'Groceries': ['Supermarket', 'Vegetables', 'Meat'],
+          'Transport': ['Fuel', 'Taxi/Uber', 'Public Transit', 'Flights'],
+          'Shopping': ['Clothes', 'Electronics', 'Gifts', 'Amazon'],
+          'Entertainment': ['Netflix', 'Spotify', 'Movies', 'Gaming', 'Events'],
+          'Health': ['Pharmacy', 'Doctor', 'Gym', 'Insurance'],
+          'Travel': ['Hotels', 'Tickets', 'Tours'],
+          'Milk': ['Cow Milk', 'Buffalo Milk', 'Toned Milk']
+        }
+      };
+    }
+
+    let appData = getDefaultAppData();
 
     let gdriveToken = null;
     let tokenClient = null;
 
+    // Merges a parsed data blob (from localStorage or a Drive restore) into the
+    // current appData, applying backwards-compatibility upgrades along the way.
+    // Shared by initStorage() and restoreFromGoogleDrive() so both paths always
+    // stay in sync - one place to fix migrations, not two.
+    function mergeIntoAppData(parsedData) {
+      if (!parsedData) return;
+
+      if (parsedData.expenses) appData.expenses = parsedData.expenses;
+      if (parsedData.items) appData.items = parsedData.items;
+
+      // Recurring Daily Items (generic, user-configurable replacement for the
+      // old hardcoded single "milkPrice" setting)
+      if (Array.isArray(parsedData.recurringItems)) {
+        appData.recurringItems = parsedData.recurringItems;
+      } else if (typeof parsedData.milkPrice === 'number') {
+        // Legacy upgrade path for users who saved data before this feature existed.
+        appData.recurringItems = [{ id: 'milk', name: 'Milk', category: 'Milk', subCategory: null, price: parsedData.milkPrice }];
+      }
+
+      // Backwards Compatibility Migration for Categories
+      if (parsedData.categories) {
+        if (Array.isArray(parsedData.categories)) {
+          parsedData.categories.forEach(cat => {
+            if (!appData.categories[cat]) {
+              appData.categories[cat] = [];
+            }
+          });
+        } else {
+          // Merge saved categories on top of defaults so newly introduced
+          // built-in categories (e.g. Milk) still show up for existing users.
+          appData.categories = { ...appData.categories, ...parsedData.categories };
+        }
+      }
+    }
+
     function initStorage() {
       const saved = localStorage.getItem(DB_KEY);
       if (saved) {
-        try { 
-          const parsedData = JSON.parse(saved); 
-          
-          if(parsedData.expenses) appData.expenses = parsedData.expenses;
-          if(parsedData.items) appData.items = parsedData.items;
-
-          // Backwards Compatibility Migration for Categories
-          if (parsedData.categories) {
-            if (Array.isArray(parsedData.categories)) {
-              parsedData.categories.forEach(cat => {
-                if (!appData.categories[cat]) {
-                  appData.categories[cat] = [];
-                }
-              });
-            } else {
-              appData.categories = parsedData.categories;
-            }
-          }
+        try {
+          mergeIntoAppData(JSON.parse(saved));
         } catch (e) { console.error('Corrupt data:', e); }
       }
       
@@ -174,28 +204,58 @@
     }
 
     // --- Home Screen View ---
+    // Shared row renderer for an expense line-item, with a delete button, used by
+    // both the Home "Recent Spending" preview and the full Expenses tab list so
+    // there's one place to change the markup, not two copies drifting apart.
+    function renderExpenseRow(e, wrapperClass) {
+      return `
+        <div class="${wrapperClass} flex items-center justify-between gap-2">
+          <div class="min-w-0">
+            <p class="text-xs font-bold text-slate-800 truncate">${e.note || e.category}</p>
+            <p class="text-[10px] text-slate-400 truncate">${e.category}${e.subCategory ? ' &raquo; ' + e.subCategory : ''} &bull; ${e.date}</p>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <p class="text-xs font-bold text-slate-800">₹${Number(e.amount).toLocaleString()}</p>
+            <button onclick="deleteExpense('${e.id}')" class="w-6 h-6 rounded-full flex items-center justify-center text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition" title="Delete expense">
+              <i class="fa-solid fa-trash text-[11px]"></i>
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    function deleteExpense(id) {
+      const exp = appData.expenses.find(e => e.id === id);
+      if (!exp) return;
+      if (!confirm(`Delete this expense?\n\n${exp.note || exp.category} \u2022 \u20b9${Number(exp.amount).toLocaleString()} \u2022 ${exp.date}`)) return;
+
+      appData.expenses = appData.expenses.filter(e => e.id !== id);
+      saveState();
+      navigate(currentTab);
+    }
+
     function renderHome(container) {
       const todayStr = new Date().toISOString().split('T')[0];
+      const currentMonthStr = todayStr.slice(0, 7); // YYYY-MM
       const todaySpending = appData.expenses.filter(e => e.date === todayStr).reduce((sum, e) => sum + Number(e.amount), 0);
+      const monthSpending = appData.expenses.filter(e => e.date.startsWith(currentMonthStr)).reduce((sum, e) => sum + Number(e.amount), 0);
       
       container.innerHTML = `
-        <div class="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm text-center">
-          <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Spent Today</p>
-          <p class="text-3xl font-bold text-slate-800 mt-1">₹${todaySpending.toLocaleString()}</p>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm text-center">
+            <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Spent Today</p>
+            <p class="text-2xl font-bold text-slate-800 mt-1">₹${todaySpending.toLocaleString()}</p>
+          </div>
+          <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm text-center">
+            <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">This Month</p>
+            <p class="text-2xl font-bold text-slate-800 mt-1">₹${monthSpending.toLocaleString()}</p>
+          </div>
         </div>
 
         <div class="space-y-2">
           <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Recent Spending</h3>
           <div class="bg-white rounded-2xl border border-slate-100 divide-y divide-slate-50 overflow-hidden shadow-xs">
-            ${appData.expenses.slice(-4).reverse().map(e => `
-              <div class="p-3 flex items-center justify-between">
-                <div>
-                  <p class="text-xs font-bold text-slate-800">${e.note || e.category}</p>
-                  <p class="text-[10px] text-slate-400">${e.category}${e.subCategory ? ' &raquo; ' + e.subCategory : ''} &bull; ${e.date}</p>
-                </div>
-                <p class="text-xs font-bold text-slate-800">₹${Number(e.amount).toLocaleString()}</p>
-              </div>
-            `).join('')}
+            ${appData.expenses.slice(-4).reverse().map(e => renderExpenseRow(e, 'p-3')).join('')}
             ${appData.expenses.length === 0 ? '<p class="text-xs text-slate-400 text-center py-4">No expenses recorded.</p>' : ''}
           </div>
         </div>
@@ -203,25 +263,109 @@
     }
 
     // --- Working Expenses & Items Views ---
+    let expenseFilterMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+    let selectedRecurringItemId = null;
+
     function renderExpenses(container) {
+      const monthExpenses = appData.expenses.filter(e => e.date.startsWith(expenseFilterMonth));
+      const monthTotal = monthExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+      const [fYear, fMonth] = expenseFilterMonth.split('-').map(Number);
+      const monthLabel = new Date(fYear, fMonth - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+      const activeItem = appData.recurringItems.find(i => i.id === selectedRecurringItemId) || appData.recurringItems[0] || null;
+
       container.innerHTML = `
         <div class="flex items-center justify-between">
           <h2 class="text-sm font-bold text-slate-800">All Expenses</h2>
           <button onclick="openExpenseForm()" class="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-lg shadow-sm hover:bg-blue-700">+ Add Expense</button>
         </div>
-        <div class="space-y-2 mt-3">
-          ${appData.expenses.slice().reverse().map(e => `
-            <div class="bg-white p-3 rounded-xl border border-slate-100 flex items-center justify-between shadow-sm hover:bg-slate-50 transition cursor-pointer">
-              <div>
-                <p class="text-xs font-bold text-slate-800">${e.note || e.category}</p>
-                <p class="text-[10px] text-slate-400">${e.category}${e.subCategory ? ' &raquo; ' + e.subCategory : ''} &bull; ${e.date}</p>
-              </div>
-              <p class="text-xs font-bold text-slate-800">₹${Number(e.amount).toLocaleString()}</p>
+
+        <div class="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between gap-3">
+          <div>
+            <label class="text-[10px] font-semibold text-slate-400 block mb-1">Filter by Month</label>
+            <input type="month" value="${expenseFilterMonth}" onchange="onExpenseMonthChange(this.value)" class="text-xs p-2 rounded-lg border border-slate-200 outline-none focus:border-blue-500 bg-white">
+          </div>
+          <div class="text-right">
+            <p class="text-[10px] font-semibold text-slate-400 uppercase">${monthLabel} Total</p>
+            <p class="text-lg font-bold text-slate-800">₹${monthTotal.toLocaleString()}</p>
+          </div>
+        </div>
+
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-xs font-bold text-slate-800 flex items-center gap-1.5"><i class="fa-solid fa-repeat text-blue-400"></i> Daily Recurring Calendar</h3>
+          </div>
+          ${appData.recurringItems.length === 0 ? `
+            <p class="text-[11px] text-slate-400 text-center py-4">No recurring items yet. Add one (e.g. Milk, Newspaper) in Settings.</p>
+          ` : `
+            <div class="flex items-center justify-between gap-2 mb-3">
+              <select id="recurringItemSelect" onchange="onRecurringItemChange(this.value)" class="flex-1 text-xs p-2 rounded-lg border border-slate-200 outline-none focus:border-blue-500 bg-white">
+                ${appData.recurringItems.map(item => `<option value="${item.id}" ${item.id === activeItem.id ? 'selected' : ''}>${item.name}</option>`).join('')}
+              </select>
+              <span class="text-[10px] text-slate-400 whitespace-nowrap">₹${Number(activeItem.price).toLocaleString()}/day</span>
             </div>
-          `).join('')}
-          ${appData.expenses.length === 0 ? '<div class="text-center py-10 bg-white rounded-xl border border-dashed border-slate-200"><p class="text-xs text-slate-400">No expenses recorded yet.</p></div>' : ''}
+            <div id="recurringCalendarGrid" class="grid grid-cols-7 gap-1.5">
+              ${buildRecurringCalendarHtml(activeItem, expenseFilterMonth)}
+            </div>
+          `}
+        </div>
+
+        <div class="space-y-2 mt-3">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">${monthLabel} Expenses</h3>
+          ${monthExpenses.slice().reverse().map(e => renderExpenseRow(e, 'bg-white p-3 rounded-xl border border-slate-100 shadow-sm hover:bg-slate-50 transition')).join('')}
+          ${monthExpenses.length === 0 ? '<div class="text-center py-10 bg-white rounded-xl border border-dashed border-slate-200"><p class="text-xs text-slate-400">No expenses recorded for this month.</p></div>' : ''}
         </div>
       `;
+    }
+
+    function onExpenseMonthChange(value) {
+      if (!value) return;
+      expenseFilterMonth = value;
+      navigate('expenses');
+    }
+
+    function onRecurringItemChange(id) {
+      selectedRecurringItemId = id;
+      navigate('expenses');
+    }
+
+    function buildRecurringCalendarHtml(item, monthStr) {
+      const [year, month] = monthStr.split('-').map(Number);
+      const daysInMonth = new Date(year, month, 0).getDate();
+      let html = '';
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dateStr = `${monthStr}-${String(day).padStart(2, '0')}`;
+        const logged = appData.expenses.some(e => e.id === item.id + '_' + dateStr);
+        html += `
+          <button onclick="toggleRecurringDay('${item.id}', '${dateStr}')" class="aspect-square rounded-lg text-[11px] font-bold flex items-center justify-center border transition ${logged ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-blue-50'}">
+            ${day}
+          </button>
+        `;
+      }
+      return html;
+    }
+
+    function toggleRecurringDay(itemId, dateStr) {
+      const item = appData.recurringItems.find(i => i.id === itemId);
+      if (!item) return;
+
+      const entryId = itemId + '_' + dateStr;
+      const existingIdx = appData.expenses.findIndex(e => e.id === entryId);
+
+      if (existingIdx > -1) {
+        appData.expenses.splice(existingIdx, 1);
+      } else {
+        appData.expenses.push({
+          id: entryId,
+          amount: Number(item.price) || 0,
+          category: item.category,
+          subCategory: item.subCategory || null,
+          date: dateStr,
+          note: item.name
+        });
+      }
+      saveState();
+      navigate(currentTab);
     }
 
     function renderItems(container) {
@@ -427,13 +571,105 @@
     }
 
     // --- Settings / Google Drive View ---
+    let selectedCategoryForSub = null;
+
     function renderSettings(container) {
       const savedClientId = localStorage.getItem(G_CLIENT_ID_KEY) || '';
       const savedFolder = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
       const isConnected = !!gdriveToken;
+      const categoryNames = Object.keys(appData.categories);
+      const activeSubCategoryName = categoryNames.includes(selectedCategoryForSub) ? selectedCategoryForSub : categoryNames[0];
+      const activeSubCategoryList = activeSubCategoryName ? (appData.categories[activeSubCategoryName] || []) : [];
 
       container.innerHTML = `
         <h2 class="text-sm font-bold text-slate-800 mb-3">Settings & Cloud Backup</h2>
+
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3 mb-4">
+          <div class="flex items-center gap-2 mb-1">
+            <i class="fa-solid fa-repeat text-blue-400"></i>
+            <h3 class="font-bold text-slate-800 text-sm">Recurring Daily Items</h3>
+          </div>
+          <p class="text-[10px] text-slate-400 -mt-2">Things you get every day (milk, newspaper, etc). Each gets its own tap-to-log calendar in the Expenses tab.</p>
+
+          <div class="space-y-2">
+            ${appData.recurringItems.map(item => `
+              <div class="flex items-center justify-between p-2.5 rounded-xl border border-slate-100 bg-slate-50">
+                <div>
+                  <p class="text-xs font-bold text-slate-800">${item.name}</p>
+                  <p class="text-[10px] text-slate-400">${item.category}${item.subCategory ? ' &raquo; ' + item.subCategory : ''} &bull; ₹${Number(item.price).toLocaleString()}/day</p>
+                </div>
+                <button onclick="deleteRecurringItem('${item.id}')" class="text-rose-500 hover:text-rose-600 px-2"><i class="fa-solid fa-trash text-xs"></i></button>
+              </div>
+            `).join('')}
+            ${appData.recurringItems.length === 0 ? '<p class="text-[11px] text-slate-400 text-center py-2">No recurring items configured yet.</p>' : ''}
+          </div>
+
+          <div class="w-full h-px bg-slate-100 my-1"></div>
+
+          <form onsubmit="addRecurringItem(event)" class="space-y-2">
+            <input type="text" required id="newRecurringName" placeholder="e.g. Newspaper" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            <div class="grid grid-cols-2 gap-2">
+              <select id="newRecurringCategory" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+                ${Object.keys(appData.categories).map(c => `<option value="${c}">${c}</option>`).join('')}
+              </select>
+              <input type="number" step="any" required id="newRecurringPrice" placeholder="Price/day (₹)" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            </div>
+            <button type="submit" class="w-full py-2 bg-slate-800 text-white rounded-xl text-xs font-medium hover:bg-slate-700 transition">+ Add Recurring Item</button>
+          </form>
+        </div>
+
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3 mb-4">
+          <div class="flex items-center gap-2 mb-1">
+            <i class="fa-solid fa-tags text-blue-400"></i>
+            <h3 class="font-bold text-slate-800 text-sm">Manage Categories</h3>
+          </div>
+          <p class="text-[10px] text-slate-400 -mt-2">Deleting a category only hides it from new entries — past expenses already saved under it stay exactly as they are.</p>
+
+          <div class="flex flex-wrap gap-2">
+            ${Object.keys(appData.categories).map(cat => `
+              <span class="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
+                ${cat}
+                <button onclick="deleteCategory('${cat}')" class="w-4 h-4 rounded-full bg-slate-200 hover:bg-rose-500 hover:text-white text-slate-500 flex items-center justify-center text-[9px] transition"><i class="fa-solid fa-xmark"></i></button>
+              </span>
+            `).join('')}
+          </div>
+
+          <div class="flex gap-2 pt-1">
+            <input type="text" id="newCategoryName" placeholder="e.g. Newspaper, Pet Care" class="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            <button onclick="addCategory()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition">Add</button>
+          </div>
+        </div>
+
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3 mb-4">
+          <div class="flex items-center gap-2 mb-1">
+            <i class="fa-solid fa-tag text-blue-400"></i>
+            <h3 class="font-bold text-slate-800 text-sm">Manage Sub-categories</h3>
+          </div>
+          <p class="text-[10px] text-slate-400 -mt-2">Fine-tune the sub-options under a category. Deleting one only hides it from new entries — past expenses keep their original label.</p>
+
+          ${categoryNames.length === 0 ? `
+            <p class="text-[11px] text-slate-400 text-center py-2">Add a category first.</p>
+          ` : `
+            <select id="subCategorySelector" onchange="onSubCategoryCategoryChange(this.value)" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+              ${categoryNames.map(c => `<option value="${c}" ${c === activeSubCategoryName ? 'selected' : ''}>${c}</option>`).join('')}
+            </select>
+
+            <div class="flex flex-wrap gap-2">
+              ${activeSubCategoryList.map(sub => `
+                <span class="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
+                  ${sub}
+                  <button onclick="deleteSubCategory('${activeSubCategoryName}', '${sub}')" class="w-4 h-4 rounded-full bg-slate-200 hover:bg-rose-500 hover:text-white text-slate-500 flex items-center justify-center text-[9px] transition"><i class="fa-solid fa-xmark"></i></button>
+                </span>
+              `).join('')}
+              ${activeSubCategoryList.length === 0 ? '<p class="text-[11px] text-slate-400">No sub-categories yet.</p>' : ''}
+            </div>
+
+            <div class="flex gap-2 pt-1">
+              <input type="text" id="newSubCategoryName" placeholder="e.g. Toned Milk" class="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+              <button onclick="addSubCategory()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition">Add</button>
+            </div>
+          `}
+        </div>
         
         <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-4">
           <div class="flex items-center gap-2 mb-2">
@@ -479,6 +715,94 @@
           <p id="driveSyncNotice" class="text-[11px] text-center text-slate-400 font-medium h-4"></p>
         </div>
       `;
+    }
+
+    function addRecurringItem(e) {
+      e.preventDefault();
+      const name = document.getElementById('newRecurringName').value.trim();
+      const category = document.getElementById('newRecurringCategory').value;
+      const price = parseFloat(document.getElementById('newRecurringPrice').value) || 0;
+      if (!name) return;
+
+      appData.recurringItems.push({
+        id: 'recur_' + Date.now(),
+        name,
+        category,
+        subCategory: null,
+        price
+      });
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    function deleteRecurringItem(id) {
+      if (!confirm('Remove this recurring item? Past logged expenses will NOT be affected — only future calendar toggles.')) return;
+      appData.recurringItems = appData.recurringItems.filter(i => i.id !== id);
+      if (selectedRecurringItemId === id) selectedRecurringItemId = null;
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    function addCategory() {
+      const input = document.getElementById('newCategoryName');
+      const name = input.value.trim();
+      if (!name) return;
+      if (appData.categories[name]) {
+        alert('That category already exists.');
+        return;
+      }
+      appData.categories[name] = [];
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    function deleteCategory(name) {
+      const inUseCount = appData.expenses.filter(e => e.category === name).length;
+      const msg = inUseCount > 0
+        ? `"${name}" is used on ${inUseCount} existing expense(s). Those will keep showing "${name}" — you just won't be able to pick it for new entries. Delete anyway?`
+        : `Delete category "${name}"?`;
+      if (!confirm(msg)) return;
+
+      delete appData.categories[name];
+      if (selectedCategoryForSub === name) selectedCategoryForSub = null;
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    function onSubCategoryCategoryChange(name) {
+      selectedCategoryForSub = name;
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    function addSubCategory() {
+      const catName = selectedCategoryForSub || Object.keys(appData.categories)[0];
+      if (!catName) return;
+
+      const input = document.getElementById('newSubCategoryName');
+      const sub = input.value.trim();
+      if (!sub) return;
+
+      if (!appData.categories[catName]) appData.categories[catName] = [];
+      if (appData.categories[catName].includes(sub)) {
+        alert('That sub-category already exists.');
+        return;
+      }
+
+      appData.categories[catName].push(sub);
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    function deleteSubCategory(catName, sub) {
+      const inUseCount = appData.expenses.filter(e => e.category === catName && e.subCategory === sub).length;
+      const msg = inUseCount > 0
+        ? `"${sub}" is used on ${inUseCount} existing expense(s). Those will keep showing "${sub}" — you just won't be able to pick it for new entries. Delete anyway?`
+        : `Delete sub-category "${sub}" from "${catName}"?`;
+      if (!confirm(msg)) return;
+
+      appData.categories[catName] = (appData.categories[catName] || []).filter(s => s !== sub);
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
     }
 
     function saveDriveSettings() {
@@ -667,7 +991,8 @@
         const cloudData = await fileRes.json();
         if (cloudData && Array.isArray(cloudData.expenses)) {
           if (confirm('Are you sure you want to replace your current local data with the version from Google Drive?')) {
-            appData = cloudData;
+            appData = getDefaultAppData();
+            mergeIntoAppData(cloudData);
             saveState();
             notice.innerText = 'Data Restored Successfully!';
             notice.className = 'text-[11px] text-center text-emerald-600 font-medium h-4';
