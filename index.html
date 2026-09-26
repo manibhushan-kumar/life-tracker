@@ -1,1143 +1,427 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Life Tracker</title>
-    
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- FontAwesome -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: { sans: ['Inter', 'sans-serif'] },
-                    colors: {
-                        primary: '#4F46E5', // Indigo 600
-                        secondary: '#10B981', // Emerald 500
-                        danger: '#EF4444', // Red 500
-                        warning: '#F59E0B', // Amber 500
-                        dark: '#1F2937',
-                        light: '#F3F4F6'
-                    }
-                }
-            }
-        }
-    </script>
-
-    <style>
-        /* Custom Styles for App Feel */
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #F9FAFB;
-            -webkit-tap-highlight-color: transparent;
-            overscroll-behavior-y: none; /* Prevent pull-to-refresh on mobile */
-        }
-        
-        .hide-scrollbar::-webkit-scrollbar {
-            display: none;
-        }
-        .hide-scrollbar {
-            -ms-overflow-style: none;
-            scrollbar-width: none;
-        }
-
-        /* Modal transitions */
-        .modal {
-            transition: opacity 0.3s ease, transform 0.3s ease;
-            opacity: 0;
-            pointer-events: none;
-            transform: translateY(100%);
-        }
-        .modal.active {
-            opacity: 1;
-            pointer-events: auto;
-            transform: translateY(0);
-        }
-        .modal-overlay {
-            transition: opacity 0.3s ease;
-            opacity: 0;
-            pointer-events: none;
-        }
-        .modal-overlay.active {
-            opacity: 1;
-            pointer-events: auto;
-        }
-
-        /* Bottom Nav Active State */
-        .nav-item.active {
-            color: #4F46E5;
-        }
-        .nav-item.active .nav-icon {
-            transform: translateY(-2px);
-            transition: transform 0.2s ease;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Life Tracker</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#2563eb">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    body { -webkit-tap-highlight-color: transparent; }
+    .hide-scrollbar::-webkit-scrollbar { display: none; }
+    .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
 </head>
-<body class="text-gray-800 h-screen flex flex-col overflow-hidden">
+<body class="bg-slate-50 text-slate-900 pb-24 font-sans select-none">
 
-    <!-- App Header -->
-    <header class="bg-white shadow-sm px-4 py-3 flex justify-between items-center z-10 safe-top">
-        <div>
-            <h1 class="text-xl font-bold text-primary tracking-tight">Life Tracker</h1>
-            <p id="header-greeting" class="text-xs text-gray-500">Good morning 👋</p>
-        </div>
-        <div class="flex gap-3">
-            <button onclick="UI.toggleSearch()" class="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 hover:bg-gray-200 transition">
-                <i class="fas fa-search"></i>
-            </button>
-            <button onclick="App.requestNotificationPermission()" class="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 hover:bg-gray-200 transition relative">
-                <i class="fas fa-bell"></i>
-                <span id="notification-badge" class="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full hidden"></span>
-            </button>
-        </div>
-    </header>
-
-    <!-- Global Search Bar (Hidden by default) -->
-    <div id="search-bar" class="hidden bg-white px-4 py-2 shadow-md z-20 absolute top-16 left-0 w-full">
-        <div class="relative">
-            <i class="fas fa-search absolute left-3 top-3 text-gray-400"></i>
-            <input type="text" id="global-search" oninput="UI.handleSearch(this.value)" placeholder="Search expenses, bills, documents..." class="w-full bg-gray-100 rounded-lg py-2 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-primary text-sm">
-            <button onclick="UI.toggleSearch()" class="absolute right-3 top-2 text-gray-500"><i class="fas fa-times"></i></button>
-        </div>
-        <div id="search-results" class="max-h-60 overflow-y-auto mt-2 hide-scrollbar"></div>
+  <!-- Top App Bar -->
+  <header class="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200 px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-sm shadow-blue-500/30">
+        <i class="fa-solid fa-layer-group text-sm"></i>
+      </div>
+      <div>
+        <h1 class="text-base font-bold tracking-tight leading-none text-slate-800">Life Tracker</h1>
+        <p class="text-[10px] font-medium text-slate-400 leading-tight mt-0.5" id="headerDate">Loading...</p>
+      </div>
     </div>
+    <div class="flex items-center gap-2">
+      <span id="globalDriveStatus" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border border-slate-200 text-slate-400 bg-white shadow-sm">
+        <i class="fa-brands fa-google-drive"></i> Offline
+      </span>
+    </div>
+  </header>
 
-    <!-- Main Content Area -->
-    <main id="main-content" class="flex-1 overflow-y-auto pb-24 hide-scrollbar relative">
-        <!-- Views injected here by JS -->
-    </main>
+  <!-- Main Container -->
+  <main class="max-w-md mx-auto px-4 pt-4 space-y-5" id="mainContainer">
+    <!-- Dynamic views injected via JS: Home, Expenses, Items, Settings -->
+  </main>
 
-    <!-- Floating Action Button -->
-    <div class="fixed bottom-20 left-1/2 transform -translate-x-1/2 z-30">
-        <button onclick="UI.openModal('add-modal')" class="bg-primary text-white w-14 h-14 rounded-full shadow-lg shadow-primary/40 flex items-center justify-center text-2xl hover:scale-105 transition-transform">
-            <i class="fas fa-plus"></i>
+  <!-- Bottom Navigation -->
+  <nav class="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-lg border-t border-slate-200 max-w-md mx-auto">
+    <div class="flex items-center justify-around py-2">
+      <button onclick="navigate('home')" id="nav-home" class="nav-btn flex flex-col items-center gap-1 text-blue-600 flex-1">
+        <i class="fa-solid fa-house text-lg"></i>
+        <span class="text-[10px] font-semibold">Home</span>
+      </button>
+      <button onclick="navigate('expenses')" id="nav-expenses" class="nav-btn flex flex-col items-center gap-1 text-slate-400 flex-1">
+        <i class="fa-solid fa-wallet text-lg"></i>
+        <span class="text-[10px] font-medium">Expenses</span>
+      </button>
+      
+      <!-- Primary FAB (+) -->
+      <div class="relative -top-4 flex items-center justify-center flex-1">
+        <button onclick="openQuickAddModal()" class="w-12 h-12 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-lg shadow-blue-500/40 hover:bg-blue-700 active:scale-95 transition">
+          <i class="fa-solid fa-plus text-xl"></i>
         </button>
+      </div>
+
+      <button onclick="navigate('items')" id="nav-items" class="nav-btn flex flex-col items-center gap-1 text-slate-400 flex-1">
+        <i class="fa-solid fa-calendar-check text-lg"></i>
+        <span class="text-[10px] font-medium">Due Items</span>
+      </button>
+      <button onclick="navigate('settings')" id="nav-settings" class="nav-btn flex flex-col items-center gap-1 text-slate-400 flex-1">
+        <i class="fa-solid fa-gear text-lg"></i>
+        <span class="text-[10px] font-medium">Settings</span>
+      </button>
     </div>
+  </nav>
 
-    <!-- Bottom Navigation -->
-    <nav class="bg-white border-t border-gray-200 fixed bottom-0 w-full z-20 safe-bottom">
-        <div class="flex justify-between items-center px-6 py-2">
-            <button onclick="App.navigate('home')" class="nav-item active flex flex-col items-center p-2 text-gray-500 text-xs w-16" data-view="home">
-                <i class="fas fa-home text-lg mb-1 nav-icon"></i>
-                <span>Home</span>
-            </button>
-            <button onclick="App.navigate('expenses')" class="nav-item flex flex-col items-center p-2 text-gray-500 text-xs w-16 mr-6" data-view="expenses">
-                <i class="fas fa-wallet text-lg mb-1 nav-icon"></i>
-                <span>Expenses</span>
-            </button>
-            <button onclick="App.navigate('trackers')" class="nav-item flex flex-col items-center p-2 text-gray-500 text-xs w-16 ml-6" data-view="trackers">
-                <i class="fas fa-calendar-check text-lg mb-1 nav-icon"></i>
-                <span>Trackers</span>
-            </button>
-            <button onclick="App.navigate('calendar')" class="nav-item flex flex-col items-center p-2 text-gray-500 text-xs w-16" data-view="calendar">
-                <i class="fas fa-list-ul text-lg mb-1 nav-icon"></i>
-                <span>Timeline</span>
-            </button>
-        </div>
-    </nav>
-
-    <!-- Modal Overlay -->
-    <div id="modal-overlay" class="fixed inset-0 bg-black/50 z-40 modal-overlay" onclick="UI.closeAllModals()"></div>
-
-    <!-- Quick Add Menu Modal -->
-    <div id="add-modal" class="fixed bottom-0 left-0 w-full bg-white rounded-t-3xl shadow-2xl z-50 modal pb-8 pt-4 px-6">
-        <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-6"></div>
-        <h3 class="text-lg font-bold mb-4 text-center">What would you like to add?</h3>
-        <div class="grid grid-cols-3 gap-4">
-            <button onclick="UI.openForm('expense')" class="flex flex-col items-center gap-2 p-3 rounded-xl hover:bg-gray-50 active:bg-gray-100">
-                <div class="w-12 h-12 rounded-full bg-red-100 text-red-500 flex items-center justify-center text-xl"><i class="fas fa-receipt"></i></div>
-                <span class="text-xs font-medium">Expense</span>
-            </button>
-            <button onclick="UI.openForm('bill')" class="flex flex-col items-center gap-2 p-3 rounded-xl hover:bg-gray-50 active:bg-gray-100">
-                <div class="w-12 h-12 rounded-full bg-blue-100 text-blue-500 flex items-center justify-center text-xl"><i class="fas fa-file-invoice-dollar"></i></div>
-                <span class="text-xs font-medium">Bill</span>
-            </button>
-            <button onclick="UI.openForm('subscription')" class="flex flex-col items-center gap-2 p-3 rounded-xl hover:bg-gray-50 active:bg-gray-100">
-                <div class="w-12 h-12 rounded-full bg-purple-100 text-purple-500 flex items-center justify-center text-xl"><i class="fas fa-sync-alt"></i></div>
-                <span class="text-xs font-medium">Subscription</span>
-            </button>
-            <button onclick="UI.openForm('document')" class="flex flex-col items-center gap-2 p-3 rounded-xl hover:bg-gray-50 active:bg-gray-100">
-                <div class="w-12 h-12 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center text-xl"><i class="fas fa-passport"></i></div>
-                <span class="text-xs font-medium">Document</span>
-            </button>
-            <button onclick="UI.openForm('warranty')" class="flex flex-col items-center gap-2 p-3 rounded-xl hover:bg-gray-50 active:bg-gray-100">
-                <div class="w-12 h-12 rounded-full bg-orange-100 text-orange-500 flex items-center justify-center text-xl"><i class="fas fa-shield-alt"></i></div>
-                <span class="text-xs font-medium">Warranty</span>
-            </button>
-            <button onclick="UI.openForm('other')" class="flex flex-col items-center gap-2 p-3 rounded-xl hover:bg-gray-50 active:bg-gray-100">
-                <div class="w-12 h-12 rounded-full bg-teal-100 text-teal-500 flex items-center justify-center text-xl"><i class="fas fa-tasks"></i></div>
-                <span class="text-xs font-medium">Reminder</span>
-            </button>
-        </div>
+  <!-- Quick Add Action Sheet Modal -->
+  <div id="quickAddModal" class="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm hidden flex items-end justify-center transition-opacity" onclick="closeQuickAddModal(event)">
+    <div class="bg-white w-full max-w-md rounded-t-2xl p-5 shadow-2xl space-y-4 transform transition-transform" onclick="event.stopPropagation()">
+      <div class="w-10 h-1 bg-slate-200 rounded-full mx-auto mb-2"></div>
+      <h3 class="text-sm font-bold uppercase tracking-wider text-slate-400">Quick Record</h3>
+      <div class="grid grid-cols-2 gap-3">
+        <button onclick="openExpenseForm(); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
+          <div class="w-9 h-9 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center font-bold">₹</div>
+          <div class="text-left"><p class="text-xs font-bold text-slate-800">Expense</p><p class="text-[10px] text-slate-400">Track spending</p></div>
+        </button>
+        <button onclick="openDueItemForm('Bill'); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
+          <div class="w-9 h-9 rounded-lg bg-rose-500/10 text-rose-600 flex items-center justify-center"><i class="fa-solid fa-file-invoice-dollar text-sm"></i></div>
+          <div class="text-left"><p class="text-xs font-bold text-slate-800">Bill</p><p class="text-[10px] text-slate-400">Utility, Rent, EMI</p></div>
+        </button>
+      </div>
     </div>
+  </div>
 
-    <!-- Generic Data Entry Form Modal -->
-    <div id="form-modal" class="fixed inset-0 bg-white z-50 modal flex flex-col">
-        <header class="px-4 py-3 flex justify-between items-center border-b shadow-sm">
-            <button onclick="UI.closeForm()" class="text-gray-500 hover:text-gray-800"><i class="fas fa-arrow-left text-lg"></i></button>
-            <h2 id="form-title" class="text-lg font-bold">Add Item</h2>
-            <div class="w-5"></div> <!-- Spacer -->
-        </header>
-        <div class="flex-1 overflow-y-auto p-4 bg-gray-50 hide-scrollbar">
-            <form id="data-form" onsubmit="App.handleFormSubmit(event)" class="space-y-4">
-                <input type="hidden" id="entry-id">
-                <input type="hidden" id="entry-data-type"> <!-- 'expense' or 'tracker' -->
-                <input type="hidden" id="entry-tracker-type"> <!-- 'bill', 'document', etc. -->
-                
-                <!-- Amount Field (Primary for expenses, optional for trackers) -->
-                <div id="field-amount" class="bg-white p-4 rounded-xl shadow-sm">
-                    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Amount</label>
-                    <div class="relative">
-                        <span class="absolute left-3 top-2 text-xl text-gray-400">₹</span>
-                        <input type="number" id="input-amount" step="0.01" class="w-full text-3xl font-bold py-1 pl-10 pr-2 border-b-2 border-gray-200 focus:border-primary focus:outline-none bg-transparent" placeholder="0.00">
-                    </div>
+  <!-- Common Generic Form Modal -->
+  <div id="formModal" class="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm hidden flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div id="formModalContent" class="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 shadow-2xl max-h-[90vh] overflow-y-auto">
+      <!-- Injected form fields dynamically -->
+    </div>
+  </div>
+
+  <script>
+    // --- Application State ---
+    const DB_KEY = 'life_tracker_pwa_data';
+    const G_CLIENT_ID_KEY = 'life_tracker_gclient_id';
+    const G_FOLDER_KEY = 'life_tracker_gfolder_name';
+
+    let appData = {
+      expenses: [],
+      items: [],
+      categories: ['Food', 'Bills', 'Groceries', 'Transport', 'Shopping', 'Entertainment', 'Health', 'Travel']
+    };
+
+    let gdriveToken = null;
+    let tokenClient = null;
+
+    function initStorage() {
+      const saved = localStorage.getItem(DB_KEY);
+      if (saved) {
+        try { appData = JSON.parse(saved); } catch (e) { console.error('Corrupt data:', e); }
+      }
+      document.getElementById('headerDate').innerText = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      navigate('home');
+    }
+
+    function saveState() {
+      localStorage.setItem(DB_KEY, JSON.stringify(appData));
+    }
+
+    // --- Core Views & Navigation ---
+    let currentTab = 'home';
+    function navigate(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.nav-btn').forEach(btn => {
+        btn.classList.remove('text-blue-600');
+        btn.classList.add('text-slate-400');
+      });
+      const activeNav = document.getElementById(`nav-${tab}`);
+      if (activeNav) {
+        activeNav.classList.add('text-blue-600');
+        activeNav.classList.remove('text-slate-400');
+      }
+
+      const container = document.getElementById('mainContainer');
+      if (tab === 'home') renderHome(container);
+      else if (tab === 'expenses') renderExpenses(container);
+      else if (tab === 'items') renderItems(container);
+      else if (tab === 'settings') renderSettings(container);
+    }
+
+    // --- Home Screen View ---
+    function renderHome(container) {
+      const todayStr = new Date().toISOString().split('T')[0];
+      const todaySpending = appData.expenses.filter(e => e.date === todayStr).reduce((sum, e) => sum + Number(e.amount), 0);
+      
+      container.innerHTML = `
+        <div class="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm text-center">
+          <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Spent Today</p>
+          <p class="text-3xl font-bold text-slate-800 mt-1">₹${todaySpending.toLocaleString()}</p>
+        </div>
+
+        <div class="space-y-2">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Recent Spending</h3>
+          <div class="bg-white rounded-2xl border border-slate-100 divide-y divide-slate-50 overflow-hidden shadow-xs">
+            ${appData.expenses.slice(-4).reverse().map(e => `
+              <div class="p-3 flex items-center justify-between">
+                <div>
+                  <p class="text-xs font-bold text-slate-800">${e.note || e.category}</p>
+                  <p class="text-[10px] text-slate-400">${e.category} •${e.date}</p>
                 </div>
-
-                <div class="bg-white p-4 rounded-xl shadow-sm space-y-4">
-                    <!-- Title/Name -->
-                    <div id="field-title">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Title / Name</label>
-                        <input type="text" id="input-title" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary focus:border-primary outline-none" placeholder="e.g. Lunch, Netflix, Passport">
-                    </div>
-
-                    <!-- Category -->
-                    <div id="field-category">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Category</label>
-                        <select id="input-category" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary focus:border-primary outline-none">
-                            <!-- Populated dynamically -->
-                        </select>
-                    </div>
-
-                    <!-- Date -->
-                    <div id="field-date">
-                        <label id="label-date" class="block text-sm font-medium text-gray-700 mb-1">Date</label>
-                        <input type="date" id="input-date" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary focus:border-primary outline-none">
-                    </div>
-
-                    <!-- Recurrence (For Trackers) -->
-                    <div id="field-recurrence" class="hidden">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Recurrence</label>
-                        <select id="input-recurrence" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary focus:border-primary outline-none">
-                            <option value="none">Once</option>
-                            <option value="daily">Daily</option>
-                            <option value="weekly">Weekly</option>
-                            <option value="monthly">Monthly</option>
-                            <option value="yearly">Yearly</option>
-                        </select>
-                    </div>
-
-                    <!-- Reminder (For Trackers) -->
-                    <div id="field-reminder" class="hidden">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Reminder</label>
-                        <select id="input-reminder" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary focus:border-primary outline-none">
-                            <option value="0">On due date</option>
-                            <option value="1">1 day before</option>
-                            <option value="3">3 days before</option>
-                            <option value="7">7 days before</option>
-                            <option value="30">30 days before</option>
-                        </select>
-                    </div>
-
-                    <!-- Note -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Note (Optional)</label>
-                        <textarea id="input-note" rows="2" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary focus:border-primary outline-none" placeholder="Additional details..."></textarea>
-                    </div>
-                </div>
-
-                <button type="submit" class="w-full bg-primary text-white font-bold py-3 rounded-xl shadow-md hover:bg-primary/90 transition-colors mt-4">
-                    Save Entry
-                </button>
-                <button type="button" id="btn-delete" onclick="App.deleteCurrentEntry()" class="w-full bg-red-50 text-red-600 font-bold py-3 rounded-xl shadow-sm hover:bg-red-100 transition-colors mt-2 hidden">
-                    Delete Entry
-                </button>
-            </form>
+                <p class="text-xs font-bold text-slate-800">₹${Number(e.amount).toLocaleString()}</p>
+              </div>
+            `).join('')}
+            ${appData.expenses.length === 0 ? '<p class="text-xs text-slate-400 text-center py-4">No expenses recorded.</p>' : ''}
+          </div>
         </div>
-    </div>
+      `;
+    }
 
-    <!-- Message Toast -->
-    <div id="toast" class="fixed top-5 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg z-50 transition-opacity opacity-0 pointer-events-none text-sm font-medium flex items-center gap-2">
-        <i class="fas fa-info-circle"></i> <span id="toast-msg"></span>
-    </div>
+    // --- Settings / Google Drive View ---
+    function renderSettings(container) {
+      const savedClientId = localStorage.getItem(G_CLIENT_ID_KEY) || '';
+      const savedFolder = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
+      const isConnected = !!gdriveToken;
 
-    <script>
-        // --- Constants & Config ---
-        const DATE_FORMAT_OPTS = { day: 'numeric', month: 'short', year: 'numeric' };
+      container.innerHTML = `
+        <h2 class="text-sm font-bold text-slate-800 mb-3">Settings & Cloud Backup</h2>
         
-        const CATEGORIES = {
-            expense: ['Food', 'Groceries', 'Transport', 'Fuel', 'Shopping', 'Bills', 'Utilities', 'Entertainment', 'Health', 'Education', 'Travel', 'Rent', 'EMI', 'Other'],
-            bill: ['Electricity', 'Water', 'Internet', 'Mobile', 'Credit Card', 'Rent', 'Maintenance', 'Other'],
-            subscription: ['Entertainment', 'Software', 'Gym', 'Cloud Storage', 'Other'],
-            document: ['ID', 'Certificate', 'Property', 'Vehicle', 'Visa', 'Other'],
-            warranty: ['Electronics', 'Appliances', 'Vehicles', 'Other'],
-            insurance: ['Health', 'Vehicle', 'Life', 'Home', 'Travel'],
-            other: ['Personal', 'Work', 'Family']
-        };
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-4">
+          <div class="flex items-center gap-2 mb-2">
+            <i class="fa-brands fa-google-drive text-amber-500 text-lg"></i>
+            <h3 class="font-bold text-slate-800 text-sm">Google Drive Sync</h3>
+          </div>
+          
+          <div>
+            <label class="block text-[11px] font-semibold text-slate-400 mb-1">Google OAuth Client ID</label>
+            <input type="text" id="settingClientId" value="${savedClientId}" placeholder="xxxx.apps.googleusercontent.com" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+          </div>
 
-        const ICONS = {
-            'Food': 'fa-utensils text-orange-500', 'Groceries': 'fa-shopping-basket text-green-500',
-            'Transport': 'fa-bus text-blue-500', 'Fuel': 'fa-gas-pump text-red-500',
-            'Shopping': 'fa-shopping-bag text-pink-500', 'Bills': 'fa-file-invoice-dollar text-purple-500',
-            'Entertainment': 'fa-film text-indigo-500', 'Health': 'fa-heartbeat text-red-400',
-            'Rent': 'fa-home text-teal-600', 'EMI': 'fa-university text-gray-600',
-            'bill': 'fa-file-invoice-dollar text-blue-500', 'subscription': 'fa-sync text-purple-500',
-            'document': 'fa-passport text-gray-600', 'warranty': 'fa-shield-alt text-orange-500',
-            'insurance': 'fa-file-medical text-green-600', 'other': 'fa-tasks text-gray-400'
-        };
+          <div>
+            <label class="block text-[11px] font-semibold text-slate-400 mb-1">Backup Folder Name</label>
+            <input type="text" id="settingFolder" value="${savedFolder}" placeholder="Life Tracker Sync" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            <p class="text-[9px] text-slate-400 mt-1">Data will reside here in your Google Drive.</p>
+          </div>
 
-        // --- Core Application Logic ---
-        const App = {
-            data: {
-                expenses: [],
-                trackers: [], // Due/Expiry items
-                budgets: { 'Food': 10000, 'Shopping': 5000, 'Entertainment': 3000 }
-            },
-            currentView: 'home',
-            chartInstance: null,
+          <div class="flex gap-2">
+            <button onclick="saveDriveSettings()" class="flex-1 py-2 bg-slate-800 text-white rounded-xl text-xs font-medium hover:bg-slate-700 transition">Save Config</button>
+            <button onclick="authenticateGoogleDrive()" class="flex-1 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 flex items-center justify-center gap-2 hover:bg-slate-50 transition">
+               ${isConnected ? '<i class="fa-solid fa-check text-emerald-500"></i> Connected' : '<i class="fa-brands fa-google"></i> Connect Auth'}
+            </button>
+          </div>
 
-            init() {
-                this.loadData();
-                this.setGreeting();
-                this.navigate('home');
-                
-                // Request notification permission quietly on load if not set
-                if ("Notification" in window && Notification.permission === "default") {
-                    console.log("Notification permission not set.");
-                }
-            },
+          <div class="w-full h-px bg-slate-100 my-2"></div>
 
-            loadData() {
-                const stored = localStorage.getItem('lifeTrackerData');
-                if (stored) {
-                    this.data = JSON.parse(stored);
-                    this.migrateData(); // Handle older versions if needed
-                } else {
-                    this.generateMockData();
-                }
-            },
+          <div class="grid grid-cols-2 gap-2">
+            <button onclick="backupToGoogleDrive()" class="py-2.5 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition disabled:opacity-50" ${!isConnected ? 'disabled' : ''}>
+              <i class="fa-solid fa-cloud-arrow-up mr-1"></i> Upload to Drive
+            </button>
+            <button onclick="restoreFromGoogleDrive()" class="py-2.5 border border-blue-600 text-blue-600 rounded-xl text-xs font-semibold hover:bg-blue-50 transition disabled:opacity-50" ${!isConnected ? 'disabled' : ''}>
+              <i class="fa-solid fa-cloud-arrow-down mr-1"></i> Restore Data
+            </button>
+          </div>
+          
+          <p id="driveSyncNotice" class="text-[11px] text-center text-slate-400 font-medium h-4"></p>
+        </div>
+      `;
+    }
 
-            saveData() {
-                localStorage.setItem('lifeTrackerData', JSON.stringify(this.data));
-                this.refreshCurrentView();
-            },
+    function saveDriveSettings() {
+      const clientId = document.getElementById('settingClientId').value.trim();
+      const folderName = document.getElementById('settingFolder').value.trim() || 'Life Tracker Sync';
+      
+      if (!clientId) return alert('Client ID is required.');
+      
+      localStorage.setItem(G_CLIENT_ID_KEY, clientId);
+      localStorage.setItem(G_FOLDER_KEY, folderName);
+      document.getElementById('driveSyncNotice').innerText = 'Configuration saved!';
+      document.getElementById('driveSyncNotice').classList.add('text-emerald-500');
+    }
 
-            migrateData() {
-                // Ensure arrays exist
-                if(!this.data.expenses) this.data.expenses = [];
-                if(!this.data.trackers) this.data.trackers = [];
-            },
+    // --- Google Drive API Logic with Folders ---
+    function authenticateGoogleDrive() {
+      const clientId = localStorage.getItem(G_CLIENT_ID_KEY);
+      if (!clientId) return alert('Please enter and save your Google Cloud OAuth Client ID first.');
 
-            generateMockData() {
-                const today = new Date();
-                const d = (days) => {
-                    const date = new Date(today);
-                    date.setDate(date.getDate() + days);
-                    return date.toISOString().split('T')[0];
-                };
+      if (typeof google === 'undefined' || !google.accounts) {
+        return alert('Google scripts are loading or offline. Check internet connection.');
+      }
 
-                this.data.expenses = [
-                    { id: 'e1', amount: 250, title: 'Lunch', category: 'Food', date: d(0), note: 'Office lunch' },
-                    { id: 'e2', amount: 800, title: 'Petrol', category: 'Fuel', date: d(0), note: '' },
-                    { id: 'e3', amount: 1200, title: 'Dmart', category: 'Groceries', date: d(-1), note: 'Weekly' },
-                    { id: 'e4', amount: 4500, title: 'Electricity', category: 'Bills', date: d(-3), note: 'August bill' },
-                    { id: 'e5', amount: 649, title: 'Netflix', category: 'Entertainment', date: d(-5), note: '' }
-                ];
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: 'https://www.googleapis.com/auth/drive.file',
+        callback: (response) => {
+          if (response.error) {
+            alert('Authentication failed: ' + response.error);
+            return;
+          }
+          gdriveToken = response.access_token;
+          
+          // Update global header status
+          const status = document.getElementById('globalDriveStatus');
+          status.innerHTML = '<i class="fa-brands fa-google-drive text-amber-500"></i> Connected';
+          status.classList.remove('text-slate-400');
+          status.classList.add('text-slate-700');
 
-                this.data.trackers = [
-                    { id: 't1', type: 'bill', title: 'Gym Membership', category: 'Gym', dueDate: d(-2), amount: 1500, recurrence: 'monthly', reminder: 1, status: 'pending' },
-                    { id: 't2', type: 'bill', title: 'Electricity Bill', category: 'Electricity', dueDate: d(4), amount: 1840, recurrence: 'monthly', reminder: 3, status: 'pending' },
-                    { id: 't3', type: 'insurance', title: 'Car Insurance', category: 'Vehicle', dueDate: d(9), amount: 8500, recurrence: 'yearly', reminder: 7, status: 'pending' },
-                    { id: 't4', type: 'subscription', title: 'Netflix', category: 'Entertainment', dueDate: d(12), amount: 649, recurrence: 'monthly', reminder: 1, status: 'pending' },
-                    { id: 't5', type: 'document', title: 'Passport', category: 'ID', dueDate: d(420), amount: null, recurrence: 'none', reminder: 30, status: 'pending', note: 'Number: [ID Redacted]' }
-                ];
-                this.saveData();
-            },
-
-            setGreeting() {
-                const hour = new Date().getHours();
-                let greeting = 'Good evening';
-                if (hour < 12) greeting = 'Good morning';
-                else if (hour < 17) greeting = 'Good afternoon';
-                document.getElementById('header-greeting').textContent = `${greeting} 👋`;
-            },
-
-            // --- Navigation & Routing ---
-            navigate(view) {
-                this.currentView = view;
-                
-                // Update Nav UI
-                document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-                document.querySelector(`[data-view="${view}"]`).classList.add('active');
-
-                const main = document.getElementById('main-content');
-                main.innerHTML = ''; // Clear current
-
-                window.scrollTo(0, 0);
-
-                switch(view) {
-                    case 'home': Render.home(main); break;
-                    case 'expenses': Render.expenses(main); break;
-                    case 'trackers': Render.trackers(main); break;
-                    case 'calendar': Render.calendar(main); break;
-                }
-            },
-
-            refreshCurrentView() {
-                this.navigate(this.currentView);
-            },
-
-            handleFormSubmit(e) {
-                e.preventDefault();
-                const id = document.getElementById('entry-id').value;
-                const dataType = document.getElementById('entry-data-type').value; // 'expense' or 'tracker'
-                const trackerType = document.getElementById('entry-tracker-type').value; 
-                
-                const amountVal = document.getElementById('input-amount').value;
-                const amount = amountVal ? parseFloat(amountVal) : null;
-                const title = document.getElementById('input-title').value;
-                const category = document.getElementById('input-category').value;
-                const date = document.getElementById('input-date').value;
-                const note = document.getElementById('input-note').value;
-
-                if (dataType === 'expense') {
-                    if (!amount) { UI.toast("Amount is required for expenses"); return; }
-                    const expense = {
-                        id: id || 'exp_' + Date.now(),
-                        amount, title, category, date, note
-                    };
-                    if (id) {
-                        const idx = this.data.expenses.findIndex(e => e.id === id);
-                        if(idx > -1) this.data.expenses[idx] = expense;
-                    } else {
-                        this.data.expenses.push(expense);
-                    }
-                } else if (dataType === 'tracker') {
-                    const recurrence = document.getElementById('input-recurrence').value;
-                    const reminder = parseInt(document.getElementById('input-reminder').value);
-                    
-                    const tracker = {
-                        id: id || 'trk_' + Date.now(),
-                        type: trackerType,
-                        title, category, dueDate: date, amount, recurrence, reminder, note,
-                        status: 'pending' // pending, completed
-                    };
-                    if (id) {
-                        const idx = this.data.trackers.findIndex(t => t.id === id);
-                        if(idx > -1) this.data.trackers[idx] = tracker;
-                    } else {
-                        this.data.trackers.push(tracker);
-                    }
-                }
-
-                this.saveData();
-                UI.closeForm();
-                UI.toast("Saved successfully!");
-            },
-
-            deleteCurrentEntry() {
-                const id = document.getElementById('entry-id').value;
-                const dataType = document.getElementById('entry-data-type').value;
-                if(!id) return;
-
-                if(confirm("Are you sure you want to delete this entry?")) {
-                    if (dataType === 'expense') {
-                        this.data.expenses = this.data.expenses.filter(e => e.id !== id);
-                    } else {
-                        this.data.trackers = this.data.trackers.filter(t => t.id !== id);
-                    }
-                    this.saveData();
-                    UI.closeForm();
-                    UI.toast("Entry deleted");
-                }
-            },
-
-            markTrackerComplete(id, createExpense = false) {
-                const tracker = this.data.trackers.find(t => t.id === id);
-                if (!tracker) return;
-
-                // 1. Create Expense if requested
-                if (createExpense && tracker.amount) {
-                    this.data.expenses.push({
-                        id: 'exp_' + Date.now(),
-                        amount: tracker.amount,
-                        title: tracker.title,
-                        category: tracker.type === 'bill' ? 'Bills' : 'Other', // Simplified mapping
-                        date: new Date().toISOString().split('T')[0],
-                        note: `Auto-generated from ${tracker.type} payment`
-                    });
-                }
-
-                // 2. Handle Recurrence
-                if (tracker.recurrence && tracker.recurrence !== 'none') {
-                    // Update due date based on recurrence
-                    const currentDue = new Date(tracker.dueDate);
-                    let nextDue = new Date(currentDue);
-                    
-                    if (tracker.recurrence === 'daily') nextDue.setDate(currentDue.getDate() + 1);
-                    if (tracker.recurrence === 'weekly') nextDue.setDate(currentDue.getDate() + 7);
-                    if (tracker.recurrence === 'monthly') nextDue.setMonth(currentDue.getMonth() + 1);
-                    if (tracker.recurrence === 'yearly') nextDue.setFullYear(currentDue.getFullYear() + 1);
-
-                    tracker.dueDate = nextDue.toISOString().split('T')[0];
-                    tracker.status = 'pending'; // Keep it pending for the new date
-                    UI.toast(createExpense ? "Paid & next occurrence created" : "Marked complete & next occurrence created");
-                } else {
-                    tracker.status = 'completed';
-                    UI.toast(createExpense ? "Paid & added to expenses" : "Marked as completed");
-                }
-
-                this.saveData();
-            },
-
-            requestNotificationPermission() {
-                if (!("Notification" in window)) {
-                    UI.toast("This browser does not support desktop notification");
-                } else if (Notification.permission === "granted") {
-                    UI.toast("Notifications are already enabled.");
-                    this.checkNotifications(); // Test it
-                } else if (Notification.permission !== "denied") {
-                    Notification.requestPermission().then(function (permission) {
-                        if (permission === "granted") {
-                            UI.toast("Notifications enabled!");
-                        }
-                    });
-                }
-            },
-
-            checkNotifications() {
-                if (Notification.permission === "granted") {
-                    const todayStr = getTodayStr();
-                    const dueToday = this.data.trackers.filter(t => t.dueDate === todayStr && t.status !== 'completed');
-                    if (dueToday.length > 0) {
-                        new Notification("Life Tracker", {
-                            body: `You have ${dueToday.length} item(s) due today!`,
-                            icon: "https://cdn-icons-png.flaticon.com/512/1066/1066538.png"
-                        });
-                    }
-                }
-            }
-        };
-
-        // --- Helpers ---
-        function formatCurrency(amount) {
-            return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
+          // Re-render settings if open
+          if(currentTab === 'settings') renderSettings(document.getElementById('mainContainer'));
         }
-        function formatDate(dateString) {
-            if(!dateString) return '';
-            return new Date(dateString).toLocaleDateString('en-GB', DATE_FORMAT_OPTS);
-        }
-        function getTodayStr() {
-            return new Date().toISOString().split('T')[0];
-        }
-        function getRelativeDayStr(dateStr) {
-            const today = new Date(getTodayStr());
-            const d = new Date(dateStr);
-            const diffTime = d - today;
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-            
-            if (diffDays === 0) return 'Today';
-            if (diffDays === 1) return 'Tomorrow';
-            if (diffDays === -1) return 'Yesterday';
-            if (diffDays < 0) return `${Math.abs(diffDays)} days ago`;
-            return `In ${diffDays} days`;
-        }
-        function getIconClass(category, type = null) {
-            if (ICONS[category]) return ICONS[category];
-            if (type && ICONS[type]) return ICONS[type];
-            return 'fa-tag text-gray-500';
+      });
+      tokenClient.requestAccessToken({ prompt: 'consent' });
+    }
+
+    // Helper: Find or create the target folder
+    async function getOrCreateFolder(folderName) {
+      // 1. Search for folder
+      const query = `mimeType='application/vnd.google-apps.folder' and name='${folderName}' and trashed=false`;
+      const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
+        headers: { Authorization: `Bearer ${gdriveToken}` }
+      });
+      const searchData = await searchRes.json();
+
+      if (searchData.files && searchData.files.length > 0) {
+        return searchData.files[0].id; // Folder exists
+      }
+
+      // 2. Create if not found
+      const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+        method: 'POST',
+        headers: { 
+          Authorization: `Bearer ${gdriveToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: folderName,
+          mimeType: 'application/vnd.google-apps.folder'
+        })
+      });
+      const createData = await createRes.json();
+      return createData.id;
+    }
+
+    async function backupToGoogleDrive() {
+      if (!gdriveToken) return alert('Authenticate with Google first!');
+      const notice = document.getElementById('driveSyncNotice');
+      notice.innerText = 'Preparing backup...';
+      notice.className = 'text-[11px] text-center text-blue-500 font-medium h-4';
+
+      try {
+        const folderName = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
+        const folderId = await getOrCreateFolder(folderName);
+        notice.innerText = `Found folder '${folderName}'... uploading...`;
+
+        const fileName = 'life_tracker_data.json';
+        const fileContent = JSON.stringify(appData, null, 2);
+        
+        // Search if file already exists IN THIS FOLDER
+        const query = `name='${fileName}' and '${folderId}' in parents and trashed=false`;
+        const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
+          headers: { Authorization: `Bearer ${gdriveToken}` }
+        });
+        const searchData = await searchRes.json();
+
+        let endpoint = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+        let method = 'POST';
+        
+        let metadata = { name: fileName, mimeType: 'application/json' };
+        
+        if (searchData.files && searchData.files.length > 0) {
+          // Update existing file
+          const fileId = searchData.files[0].id;
+          endpoint = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`;
+          method = 'PATCH';
+        } else {
+          // Create new file, specify parent folder
+          metadata.parents = [folderId];
         }
 
-        const UI = {
-            toastTimeout: null,
-            
-            toast(msg) {
-                const t = document.getElementById('toast');
-                document.getElementById('toast-msg').textContent = msg;
-                t.classList.remove('opacity-0', 'pointer-events-none');
-                
-                clearTimeout(this.toastTimeout);
-                this.toastTimeout = setTimeout(() => {
-                    t.classList.add('opacity-0', 'pointer-events-none');
-                }, 3000);
-            },
+        const boundary = 'foo_bar_baz';
+        const delimiter = "\r\n--" + boundary + "\r\n";
+        const closeDelim = "\r\n--" + boundary + "--";
+        const multipartRequestBody =
+          delimiter +
+          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+          JSON.stringify(metadata) +
+          delimiter +
+          'Content-Type: application/json\r\n\r\n' +
+          fileContent +
+          closeDelim;
 
-            toggleSearch() {
-                const sb = document.getElementById('search-bar');
-                sb.classList.toggle('hidden');
-                if(!sb.classList.contains('hidden')) {
-                    document.getElementById('global-search').focus();
-                    this.handleSearch(''); // show all recent or clear
-                }
-            },
-
-            handleSearch(query) {
-                const resDiv = document.getElementById('search-results');
-                if (!query || query.length < 2) {
-                    resDiv.innerHTML = '';
-                    return;
-                }
-                const q = query.toLowerCase();
-                
-                // Search Expenses
-                const exps = App.data.expenses.filter(e => 
-                    e.title.toLowerCase().includes(q) || 
-                    e.category.toLowerCase().includes(q) ||
-                    (e.note && e.note.toLowerCase().includes(q))
-                );
-
-                // Search Trackers
-                const trks = App.data.trackers.filter(t => 
-                    t.title.toLowerCase().includes(q) || 
-                    t.category.toLowerCase().includes(q) ||
-                    t.type.toLowerCase().includes(q)
-                );
-
-                let html = '';
-                if(exps.length === 0 && trks.length === 0) {
-                    html = '<div class="p-3 text-sm text-gray-500 text-center">No results found</div>';
-                } else {
-                    exps.forEach(e => {
-                        html += `
-                        <div class="p-3 border-b border-gray-100 flex justify-between items-center bg-white hover:bg-gray-50 cursor-pointer" onclick="UI.editEntry('${e.id}', 'expense')">
-                            <div class="flex items-center gap-3">
-                                <div class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center"><i class="fas ${getIconClass(e.category)}"></i></div>
-                                <div>
-                                    <div class="text-sm font-medium text-gray-800">${e.title}</div>
-                                    <div class="text-xs text-gray-500">${formatDate(e.date)}</div>
-                                </div>
-                            </div>
-                            <div class="text-sm font-bold text-gray-800">${formatCurrency(e.amount)}</div>
-                        </div>`;
-                    });
-                    trks.forEach(t => {
-                        html += `
-                        <div class="p-3 border-b border-gray-100 flex justify-between items-center bg-white hover:bg-gray-50 cursor-pointer" onclick="UI.editEntry('${t.id}', 'tracker')">
-                            <div class="flex items-center gap-3">
-                                <div class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center"><i class="fas ${getIconClass(t.category, t.type)}"></i></div>
-                                <div>
-                                    <div class="text-sm font-medium text-gray-800">${t.title}</div>
-                                    <div class="text-xs text-gray-500 capitalize">${t.type} • Due: ${formatDate(t.dueDate)}</div>
-                                </div>
-                            </div>
-                            ${t.amount ? `<div class="text-sm font-bold text-gray-800">${formatCurrency(t.amount)}</div>` : ''}
-                        </div>`;
-                    });
-                }
-                resDiv.innerHTML = html;
-            },
-
-            openModal(id) {
-                document.getElementById('modal-overlay').classList.add('active');
-                document.getElementById(id).classList.add('active');
-            },
-            closeAllModals() {
-                document.getElementById('modal-overlay').classList.remove('active');
-                document.querySelectorAll('.modal').forEach(m => m.classList.remove('active'));
-            },
-
-            openForm(type, id = null) {
-                this.closeAllModals();
-                const form = document.getElementById('data-form');
-                form.reset();
-                document.getElementById('entry-id').value = id || '';
-                
-                // Show/Hide delete button
-                const btnDelete = document.getElementById('btn-delete');
-                if(id) btnDelete.classList.remove('hidden');
-                else btnDelete.classList.add('hidden');
-
-                const fAmount = document.getElementById('field-amount');
-                const fRecurrence = document.getElementById('field-recurrence');
-                const fReminder = document.getElementById('field-reminder');
-                const lDate = document.getElementById('label-date');
-                const selCat = document.getElementById('input-category');
-
-                selCat.innerHTML = ''; // Clear options
-
-                if (type === 'expense') {
-                    document.getElementById('form-title').innerText = id ? 'Edit Expense' : 'Add Expense';
-                    document.getElementById('entry-data-type').value = 'expense';
-                    document.getElementById('entry-tracker-type').value = '';
-                    
-                    fAmount.classList.remove('hidden');
-                    fRecurrence.classList.add('hidden');
-                    fReminder.classList.add('hidden');
-                    lDate.innerText = 'Date';
-                    document.getElementById('input-date').value = getTodayStr();
-
-                    CATEGORIES.expense.forEach(c => selCat.add(new Option(c, c)));
-                } else {
-                    // It's a tracker (bill, doc, etc.)
-                    document.getElementById('form-title').innerText = id ? `Edit ${type}` : `Add ${type.charAt(0).toUpperCase() + type.slice(1)}`;
-                    document.getElementById('entry-data-type').value = 'tracker';
-                    document.getElementById('entry-tracker-type').value = type;
-
-                    fRecurrence.classList.remove('hidden');
-                    fReminder.classList.remove('hidden');
-                    
-                    if(type === 'document' || type === 'warranty') lDate.innerText = 'Expiry Date';
-                    else lDate.innerText = 'Due Date';
-                    
-                    document.getElementById('input-date').value = getTodayStr();
-
-                    // Amount is optional for some, hidden for documents unless specified
-                    if(type === 'document') fAmount.classList.add('hidden');
-                    else fAmount.classList.remove('hidden');
-
-                    const cats = CATEGORIES[type] || CATEGORIES.other;
-                    cats.forEach(c => selCat.add(new Option(c, c)));
-                }
-
-                // If editing, populate data
-                if (id) {
-                    if (type === 'expense') {
-                        const entry = App.data.expenses.find(e => e.id === id);
-                        if(entry) {
-                            document.getElementById('input-amount').value = entry.amount;
-                            document.getElementById('input-title').value = entry.title;
-                            selCat.value = entry.category;
-                            document.getElementById('input-date').value = entry.date;
-                            document.getElementById('input-note').value = entry.note || '';
-                        }
-                    } else {
-                        const entry = App.data.trackers.find(t => t.id === id);
-                        if(entry) {
-                            if(entry.amount) document.getElementById('input-amount').value = entry.amount;
-                            document.getElementById('input-title').value = entry.title;
-                            
-                            // Ensure category exists in dropdown, if not add it
-                            if(!Array.from(selCat.options).some(o => o.value === entry.category)) {
-                                selCat.add(new Option(entry.category, entry.category));
-                            }
-                            selCat.value = entry.category;
-                            
-                            document.getElementById('input-date').value = entry.dueDate;
-                            document.getElementById('input-recurrence').value = entry.recurrence || 'none';
-                            document.getElementById('input-reminder').value = entry.reminder || '0';
-                            document.getElementById('input-note').value = entry.note || '';
-                        }
-                    }
-                }
-
-                document.getElementById('form-modal').classList.add('active');
-            },
-
-            closeForm() {
-                document.getElementById('form-modal').classList.remove('active');
-            },
-
-            editEntry(id, dataType) {
-                this.toggleSearch(); // Close search if open
-                if (dataType === 'expense') {
-                    this.openForm('expense', id);
-                } else {
-                    const tracker = App.data.trackers.find(t => t.id === id);
-                    if(tracker) this.openForm(tracker.type, id);
-                }
-            }
-        };
-
-        const Render = {
-            home(container) {
-                const today = getTodayStr();
-                const currentMonth = today.substring(0, 7); // YYYY-MM
-
-                // Calculate Expenses
-                const todayExpenses = App.data.expenses.filter(e => e.date === today).reduce((sum, e) => sum + e.amount, 0);
-                const monthExpenses = App.data.expenses.filter(e => e.date.startsWith(currentMonth)).reduce((sum, e) => sum + e.amount, 0);
-
-                // Process Trackers (Due/Expiry)
-                let overdue = [], dueToday = [], upcoming = [];
-                App.data.trackers.filter(t => t.status !== 'completed').forEach(t => {
-                    if (t.dueDate < today) overdue.push(t);
-                    else if (t.dueDate === today) dueToday.push(t);
-                    else {
-                        // Check if within 30 days for dashboard
-                        const diffDays = (new Date(t.dueDate) - new Date(today)) / (1000 * 60 * 60 * 24);
-                        if(diffDays <= 30) upcoming.push(t);
-                    }
-                });
-
-                // Sort
-                overdue.sort((a,b) => a.dueDate.localeCompare(b.dueDate));
-                upcoming.sort((a,b) => a.dueDate.localeCompare(b.dueDate));
-
-                // Recent Expenses (last 3)
-                const recentExp = [...App.data.expenses].sort((a,b) => b.date.localeCompare(a.date)).slice(0,3);
-
-                let html = `
-                    <div class="px-4 py-4 space-y-6">
-                        
-                        <!-- Expense Summary Cards -->
-                        <div class="grid grid-cols-2 gap-4">
-                            <div class="bg-gradient-to-br from-primary to-indigo-700 rounded-2xl p-4 text-white shadow-lg shadow-indigo-200">
-                                <p class="text-indigo-100 text-xs font-medium mb-1">Today's spending</p>
-                                <h3 class="text-2xl font-bold tracking-tight">${formatCurrency(todayExpenses)}</h3>
-                            </div>
-                            <div class="bg-white rounded-2xl p-4 text-gray-800 shadow-sm border border-gray-100">
-                                <p class="text-gray-500 text-xs font-medium mb-1">This month</p>
-                                <h3 class="text-xl font-bold tracking-tight text-gray-800">${formatCurrency(monthExpenses)}</h3>
-                            </div>
-                        </div>
-
-                        <!-- Needs Attention (Overdue & Today) -->
-                        ${(overdue.length > 0 || dueToday.length > 0) ? `
-                        <div>
-                            <h3 class="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
-                                <i class="fas fa-exclamation-circle text-red-500"></i> Needs Attention
-                            </h3>
-                            <div class="space-y-3">
-                                ${overdue.map(t => this.trackerCardHTML(t, 'overdue')).join('')}
-                                ${dueToday.map(t => this.trackerCardHTML(t, 'today')).join('')}
-                            </div>
-                        </div>
-                        ` : ''}
-
-                        <!-- Upcoming -->
-                        ${upcoming.length > 0 ? `
-                        <div>
-                            <h3 class="text-sm font-bold text-gray-800 mb-3 text-gray-600">Upcoming (Next 30 days)</h3>
-                            <div class="space-y-3">
-                                ${upcoming.slice(0,4).map(t => this.trackerCardHTML(t, 'upcoming')).join('')}
-                            </div>
-                        </div>
-                        ` : ''}
-
-                        <!-- Recent Expenses -->
-                        <div>
-                            <div class="flex justify-between items-center mb-3">
-                                <h3 class="text-sm font-bold text-gray-800 text-gray-600">Recent Expenses</h3>
-                                <button onclick="App.navigate('expenses')" class="text-xs text-primary font-medium">View all</button>
-                            </div>
-                            <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                                ${recentExp.length > 0 ? recentExp.map((e, index) => `
-                                    <div class="p-3 ${index !== recentExp.length -1 ? 'border-b border-gray-50' : ''} flex justify-between items-center active:bg-gray-50 cursor-pointer" onclick="UI.editEntry('${e.id}', 'expense')">
-                                        <div class="flex items-center gap-3">
-                                            <div class="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center">
-                                                <i class="fas ${getIconClass(e.category)} text-lg"></i>
-                                            </div>
-                                            <div>
-                                                <p class="text-sm font-semibold text-gray-800">${e.title}</p>
-                                                <p class="text-xs text-gray-400">${e.category}</p>
-                                            </div>
-                                        </div>
-                                        <div class="text-right">
-                                            <p class="text-sm font-bold text-gray-800">${formatCurrency(e.amount)}</p>
-                                            <p class="text-xs text-gray-400">${getRelativeDayStr(e.date)}</p>
-                                        </div>
-                                    </div>
-                                `).join('') : '<p class="p-4 text-sm text-center text-gray-400">No recent expenses.</p>'}
-                            </div>
-                        </div>
-                    </div>
-                `;
-                container.innerHTML = html;
-            },
-
-            // Helper to render tracker cards based on status
-            trackerCardHTML(t, status) {
-                let badgeClass = "", badgeText = "";
-                let bgClass = "bg-white";
-                
-                if (status === 'overdue') {
-                    badgeClass = "bg-red-100 text-red-700"; badgeText = `${Math.abs(Math.floor((new Date(t.dueDate) - new Date()) / (1000 * 60 * 60 * 24)))} days overdue`;
-                    bgClass = "bg-red-50 border border-red-100";
-                } else if (status === 'today') {
-                    badgeClass = "bg-orange-100 text-orange-700"; badgeText = "Due Today";
-                    bgClass = "bg-orange-50 border border-orange-100";
-                } else {
-                    const days = Math.ceil((new Date(t.dueDate) - new Date()) / (1000 * 60 * 60 * 24));
-                    badgeClass = days <= 7 ? "bg-yellow-100 text-yellow-700" : "bg-green-100 text-green-700";
-                    badgeText = days === 1 ? "Tomorrow" : `In ${days} days`;
-                    bgClass = "bg-white border border-gray-100";
-                }
-
-                const actionBtn = (t.type === 'bill' || t.type === 'subscription') && t.amount ?
-                    `<button onclick="App.markTrackerComplete('${t.id}', true)" class="bg-primary text-white text-xs px-3 py-1.5 rounded-lg shadow-sm hover:bg-primary/90 flex items-center gap-1"><i class="fas fa-check"></i> Pay</button>` :
-                    `<button onclick="App.markTrackerComplete('${t.id}', false)" class="bg-gray-100 text-gray-700 text-xs px-3 py-1.5 rounded-lg shadow-sm hover:bg-gray-200 flex items-center gap-1"><i class="fas fa-check"></i> Done</button>`;
-
-                return `
-                <div class="${bgClass} rounded-2xl p-4 shadow-sm relative overflow-hidden transition-all active:scale-[0.98]">
-                    <div class="flex justify-between items-start mb-2">
-                        <div class="flex items-center gap-2">
-                            <i class="fas ${getIconClass(t.category, t.type)} text-lg opacity-80"></i>
-                            <h4 class="font-bold text-gray-800 text-sm" onclick="UI.editEntry('${t.id}', 'tracker')">${t.title}</h4>
-                        </div>
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${badgeClass}">${badgeText}</span>
-                    </div>
-                    <div class="flex justify-between items-end mt-3">
-                        <div>
-                            <p class="text-xs text-gray-500 capitalize">${t.type} • ${formatDate(t.dueDate)}</p>
-                            ${t.amount ? `<p class="font-bold text-gray-800 mt-0.5">${formatCurrency(t.amount)}${t.recurrence && t.recurrence !== 'none' ? `<span class="text-xs font-normal text-gray-400">/${t.recurrence.charAt(0)}</span>` : ''}</p>` : ''}
-                        </div>
-                        <div class="flex gap-2">
-                            ${actionBtn}
-                        </div>
-                    </div>
-                </div>`;
-            },
-
-            expenses(container) {
-                const exps = App.data.expenses.sort((a,b) => b.date.localeCompare(a.date));
-                const total = exps.reduce((sum, e) => sum + e.amount, 0);
-                
-                // Categorize for chart
-                const catTotals = {};
-                exps.forEach(e => {
-                    catTotals[e.category] = (catTotals[e.category] || 0) + e.amount;
-                });
-                
-                const labels = Object.keys(catTotals);
-                const data = Object.values(catTotals);
-
-                let html = `
-                    <div class="px-4 py-4 space-y-6">
-                        <div class="text-center">
-                            <p class="text-gray-500 text-sm">Total Spent</p>
-                            <h2 class="text-3xl font-bold text-gray-800">${formatCurrency(total)}</h2>
-                        </div>
-
-                        ${data.length > 0 ? `
-                        <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                            <div class="relative h-48 w-full flex justify-center">
-                                <canvas id="expenseChart"></canvas>
-                            </div>
-                        </div>
-                        ` : ''}
-
-                        <!-- Budgets (Simple visual) -->
-                        <div>
-                            <h3 class="text-sm font-bold text-gray-800 mb-3">Top Categories</h3>
-                            <div class="space-y-4 bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                                ${labels.sort((a,b) => catTotals[b] - catTotals[a]).slice(0,4).map(cat => {
-                                    const spent = catTotals[cat];
-                                    const limit = App.data.budgets[cat] || 15000; // default limit for visual
-                                    const pct = Math.min(100, (spent / limit) * 100);
-                                    const color = pct > 90 ? 'bg-red-500' : pct > 75 ? 'bg-orange-500' : 'bg-primary';
-                                    return `
-                                    <div>
-                                        <div class="flex justify-between text-xs mb-1">
-                                            <span class="font-medium flex items-center gap-1"><i class="fas ${getIconClass(cat)} text-[10px]"></i> ${cat}</span>
-                                            <span class="font-bold">${formatCurrency(spent)}</span>
-                                        </div>
-                                        <div class="w-full bg-gray-100 rounded-full h-1.5">
-                                            <div class="${color} h-1.5 rounded-full" style="width: ${pct}%"></div>
-                                        </div>
-                                    </div>
-                                    `;
-                                }).join('')}
-                            </div>
-                        </div>
-
-                        <!-- History List -->
-                        <div>
-                            <h3 class="text-sm font-bold text-gray-800 mb-3">All History</h3>
-                            <div class="space-y-2 pb-10">
-                                ${exps.length > 0 ? exps.map(e => `
-                                    <div class="bg-white p-3 rounded-xl shadow-sm border border-gray-50 flex justify-between items-center active:scale-[0.98] transition-transform" onclick="UI.editEntry('${e.id}', 'expense')">
-                                        <div class="flex items-center gap-3">
-                                            <div class="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center">
-                                                <i class="fas ${getIconClass(e.category)} text-lg"></i>
-                                            </div>
-                                            <div>
-                                                <p class="text-sm font-semibold text-gray-800">${e.title}</p>
-                                                <p class="text-xs text-gray-400">${e.category} • ${formatDate(e.date)}</p>
-                                            </div>
-                                        </div>
-                                        <p class="text-sm font-bold text-gray-800">${formatCurrency(e.amount)}</p>
-                                    </div>
-                                `).join('') : '<p class="text-center text-gray-400 text-sm">No expenses yet.</p>'}
-                            </div>
-                        </div>
-                    </div>
-                `;
-                container.innerHTML = html;
-
-                // Render Chart
-                if(data.length > 0) {
-                    const ctx = document.getElementById('expenseChart').getContext('2d');
-                    if(App.chartInstance) App.chartInstance.destroy();
-                    
-                    App.chartInstance = new Chart(ctx, {
-                        type: 'doughnut',
-                        data: {
-                            labels: labels,
-                            datasets: [{
-                                data: data,
-                                backgroundColor: ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#6B7280'],
-                                borderWidth: 0,
-                                cutout: '75%'
-                            }]
-                        },
-                        options: {
-                            responsive: true, maintainAspectRatio: false,
-                            plugins: {
-                                legend: { position: 'right', labels: { boxWidth: 10, font: { size: 10 } } }
-                            },
-                            layout: { padding: 10 }
-                        }
-                    });
-                }
-            },
-
-            trackers(container) {
-                const activeTrackers = App.data.trackers.filter(t => t.status !== 'completed').sort((a,b) => a.dueDate.localeCompare(b.dueDate));
-                const completedTrackers = App.data.trackers.filter(t => t.status === 'completed');
-
-                // Group by type for a nicer view, or just list. Let's group by imminent date mostly, then list.
-                
-                let html = `
-                    <div class="px-4 py-4 space-y-6">
-                        <div class="flex justify-between items-end">
-                            <h2 class="text-xl font-bold text-gray-800">Trackers</h2>
-                            <div class="flex gap-2">
-                                <span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-1 rounded-full font-bold uppercase">${activeTrackers.length} Active</span>
-                            </div>
-                        </div>
-
-                        <!-- Active List -->
-                        <div class="space-y-3 pb-10">
-                            ${activeTrackers.length > 0 ? activeTrackers.map(t => {
-                                const today = getTodayStr();
-                                let status = 'upcoming';
-                                if (t.dueDate < today) status = 'overdue';
-                                else if (t.dueDate === today) status = 'today';
-                                return this.trackerCardHTML(t, status);
-                            }).join('') : `
-                                <div class="text-center py-10 bg-white rounded-2xl border border-dashed border-gray-300">
-                                    <div class="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-3 text-gray-300 text-2xl"><i class="fas fa-calendar-check"></i></div>
-                                    <p class="text-gray-500 text-sm">No active trackers.</p>
-                                    <button onclick="UI.openModal('add-modal')" class="mt-3 text-primary text-sm font-medium">Add one now</button>
-                                </div>
-                            `}
-                        </div>
-
-                        ${completedTrackers.length > 0 ? `
-                        <div>
-                            <h3 class="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider">Completed / Inactive</h3>
-                            <div class="space-y-2 opacity-60">
-                                ${completedTrackers.map(t => `
-                                    <div class="bg-gray-50 p-3 rounded-xl flex justify-between items-center" onclick="UI.editEntry('${t.id}', 'tracker')">
-                                        <div class="flex items-center gap-3">
-                                            <i class="fas ${getIconClass(t.category, t.type)} text-gray-400"></i>
-                                            <span class="text-sm font-medium line-through text-gray-500">${t.title}</span>
-                                        </div>
-                                        <i class="fas fa-check-circle text-green-500"></i>
-                                    </div>
-                                `).join('')}
-                            </div>
-                        </div>
-                        `: ''}
-                    </div>
-                `;
-                container.innerHTML = html;
-            },
-
-            calendar(container) {
-                // Combine expenses and active trackers, sort by date
-                let allItems = [];
-                App.data.expenses.forEach(e => allItems.push({ ...e, _type: 'expense' }));
-                App.data.trackers.filter(t => t.status !== 'completed').forEach(t => allItems.push({ ...t, date: t.dueDate, _type: 'tracker' }));
-
-                // Sort ascending chronologically (from oldest to furthest future)
-                allItems.sort((a,b) => a.date.localeCompare(b.date));
-
-                // Group by Month-Year
-                const grouped = {};
-                allItems.forEach(item => {
-                    const dateObj = new Date(item.date);
-                    const monthYear = dateObj.toLocaleString('default', { month: 'long', year: 'numeric' });
-                    if(!grouped[monthYear]) grouped[monthYear] = [];
-                    grouped[monthYear].push(item);
-                });
-
-                const today = getTodayStr();
-
-                let html = `<div class="px-4 py-4 space-y-6">`;
-                
-                Object.keys(grouped).forEach(month => {
-                    html += `
-                        <div>
-                            <div class="sticky top-0 bg-gray-50/90 backdrop-blur py-2 z-10 font-bold text-sm text-gray-500 uppercase tracking-wide">
-                                ${month}
-                            </div>
-                            <div class="relative border-l-2 border-gray-200 ml-3 space-y-6 py-2">
-                    `;
-                    
-                    grouped[month].forEach(item => {
-                        const isPast = item.date < today;
-                        const isToday = item.date === today;
-                        
-                        let dotColor = isPast ? 'bg-gray-300' : 'bg-primary';
-                        if(isToday) dotColor = 'bg-orange-500 ring-4 ring-orange-100';
-                        if(item._type === 'tracker' && isPast) dotColor = 'bg-red-500'; // overdue
-
-                        let icon, title, amount, subtext, action;
-                        if(item._type === 'expense') {
-                            icon = getIconClass(item.category);
-                            title = item.title;
-                            amount = `- ${formatCurrency(item.amount)}`;
-                            subtext = 'Expense';
-                            action = `UI.editEntry('${item.id}', 'expense')`;
-                        } else {
-                            icon = getIconClass(item.category, item.type);
-                            title = item.title;
-                            amount = item.amount ? formatCurrency(item.amount) : '';
-                            subtext = `Due • ${item.type}`;
-                            action = `UI.editEntry('${item.id}', 'tracker')`;
-                        }
-
-                        html += `
-                            <div class="relative pl-6" onclick="${action}">
-                                <!-- Timeline Dot -->
-                                <div class="absolute -left-[5px] top-1.5 w-2.5 h-2.5 rounded-full ${dotColor}"></div>
-                                
-                                <div class="bg-white p-3 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center active:bg-gray-50">
-                                    <div class="flex items-start gap-3">
-                                        <div class="mt-1"><i class="fas ${icon} text-sm opacity-70"></i></div>
-                                        <div>
-                                            <p class="text-sm font-bold ${isPast && item._type === 'tracker' ? 'text-red-600' : 'text-gray-800'}">${title}</p>
-                                            <p class="text-[10px] text-gray-500 uppercase">${new Date(item.date).getDate()} ${new Date(item.date).toLocaleString('default',{month:'short'})} • ${subtext}</p>
-                                        </div>
-                                    </div>
-                                    ${amount ? `<span class="text-sm font-bold ${item._type === 'expense' ? 'text-gray-600' : 'text-gray-800'}">${amount}</span>` : ''}
-                                </div>
-                            </div>
-                        `;
-                    });
-                    
-                    html += `</div></div>`;
-                });
-
-                html += `</div>`;
-                container.innerHTML = html;
-                
-                // Auto scroll to current month approximately
-                setTimeout(() => {
-                    const currentMonthEl = Array.from(document.querySelectorAll('.sticky')).find(el => el.textContent.includes(new Date().toLocaleString('default', { month: 'long', year: 'numeric' })));
-                    if(currentMonthEl) {
-                        currentMonthEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    }
-                }, 100);
-            }
-        };
-
-        // Initialize App
-        document.addEventListener('DOMContentLoaded', () => {
-            App.init();
+        const res = await fetch(endpoint, {
+          method: method,
+          headers: {
+            Authorization: `Bearer ${gdriveToken}`,
+            'Content-Type': `multipart/related; boundary=${boundary}`
+          },
+          body: multipartRequestBody
         });
 
-    </script>
+        if (res.ok) {
+          notice.innerText = 'Upload successful!';
+          notice.className = 'text-[11px] text-center text-emerald-600 font-medium h-4';
+        } else {
+          throw new Error('Upload failed. API rejected request.');
+        }
+      } catch (err) {
+        console.error(err);
+        notice.innerText = 'Error: ' + err.message;
+        notice.className = 'text-[11px] text-center text-rose-600 font-medium h-4';
+      }
+    }
+
+    async function restoreFromGoogleDrive() {
+      if (!gdriveToken) return alert('Authenticate with Google first!');
+      const notice = document.getElementById('driveSyncNotice');
+      notice.innerText = 'Searching Drive...';
+      notice.className = 'text-[11px] text-center text-blue-500 font-medium h-4';
+
+      try {
+        const folderName = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
+        const folderId = await getOrCreateFolder(folderName);
+
+        const query = `name='life_tracker_data.json' and '${folderId}' in parents and trashed=false`;
+        const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
+          headers: { Authorization: `Bearer ${gdriveToken}` }
+        });
+        const searchData = await searchRes.json();
+
+        if (!searchData.files || searchData.files.length === 0) {
+          notice.innerText = `No backup found in folder '${folderName}'.`;
+          notice.className = 'text-[11px] text-center text-rose-600 font-medium h-4';
+          return;
+        }
+
+        const fileId = searchData.files[0].id;
+        const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+          headers: { Authorization: `Bearer ${gdriveToken}` }
+        });
+
+        const cloudData = await fileRes.json();
+        if (cloudData && Array.isArray(cloudData.expenses)) {
+          if (confirm('Are you sure you want to replace your current local data with the version from Google Drive?')) {
+            appData = cloudData;
+            saveState();
+            notice.innerText = 'Data Restored Successfully!';
+            notice.className = 'text-[11px] text-center text-emerald-600 font-medium h-4';
+          }
+        }
+      } catch (err) {
+        console.error(err);
+        notice.innerText = 'Restore Error: ' + err.message;
+        notice.className = 'text-[11px] text-center text-rose-600 font-medium h-4';
+      }
+    }
+
+    // --- Stubbed Views & Forms ---
+    function renderExpenses(container) {
+      container.innerHTML = `<h2 class="text-sm font-bold text-slate-800">Expenses</h2><p class="text-xs text-slate-400 mt-2">Manage expenses here.</p>`;
+    }
+    function renderItems(container) {
+      container.innerHTML = `<h2 class="text-sm font-bold text-slate-800">Due Items</h2><p class="text-xs text-slate-400 mt-2">Manage upcoming items here.</p>`;
+    }
+    function openQuickAddModal() { document.getElementById('quickAddModal').classList.remove('hidden'); }
+    function closeQuickAddModal(e) { document.getElementById('quickAddModal').classList.add('hidden'); }
+    function openExpenseForm() {}
+    function openDueItemForm(type) {}
+
+    // Initialize
+    window.addEventListener('DOMContentLoaded', initStorage);
+  </script>
 </body>
 </html>
