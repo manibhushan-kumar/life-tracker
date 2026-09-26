@@ -29,7 +29,7 @@
       </div>
     </div>
     <div class="flex items-center gap-2">
-      <span id="globalDriveStatus" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border border-slate-200 text-slate-400 bg-white shadow-sm">
+      <span id="globalDriveStatus" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border border-slate-200 text-slate-400 bg-white shadow-sm transition-colors duration-300">
         <i class="fa-brands fa-google-drive"></i> Offline
       </span>
     </div>
@@ -101,10 +101,20 @@
     const G_CLIENT_ID_KEY = 'life_tracker_gclient_id';
     const G_FOLDER_KEY = 'life_tracker_gfolder_name';
 
+    // New Data Structure with Built-in Subcategories
     let appData = {
       expenses: [],
       items: [],
-      categories: ['Food', 'Bills', 'Groceries', 'Transport', 'Shopping', 'Entertainment', 'Health', 'Travel']
+      categories: {
+        'Food': ['Restaurant', 'Delivery', 'Snacks', 'Coffee'],
+        'Bills': ['Electricity', 'Water', 'Internet', 'Mobile', 'Rent', 'EMI'],
+        'Groceries': ['Supermarket', 'Vegetables', 'Meat'],
+        'Transport': ['Fuel', 'Taxi/Uber', 'Public Transit', 'Flights'],
+        'Shopping': ['Clothes', 'Electronics', 'Gifts', 'Amazon'],
+        'Entertainment': ['Netflix', 'Spotify', 'Movies', 'Gaming', 'Events'],
+        'Health': ['Pharmacy', 'Doctor', 'Gym', 'Insurance'],
+        'Travel': ['Hotels', 'Tickets', 'Tours']
+      }
     };
 
     let gdriveToken = null;
@@ -113,8 +123,27 @@
     function initStorage() {
       const saved = localStorage.getItem(DB_KEY);
       if (saved) {
-        try { appData = JSON.parse(saved); } catch (e) { console.error('Corrupt data:', e); }
+        try { 
+          const parsedData = JSON.parse(saved); 
+          
+          if(parsedData.expenses) appData.expenses = parsedData.expenses;
+          if(parsedData.items) appData.items = parsedData.items;
+
+          // Backwards Compatibility Migration for Categories
+          if (parsedData.categories) {
+            if (Array.isArray(parsedData.categories)) {
+              parsedData.categories.forEach(cat => {
+                if (!appData.categories[cat]) {
+                  appData.categories[cat] = [];
+                }
+              });
+            } else {
+              appData.categories = parsedData.categories;
+            }
+          }
+        } catch (e) { console.error('Corrupt data:', e); }
       }
+      
       document.getElementById('headerDate').innerText = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
       navigate('home');
     }
@@ -162,7 +191,7 @@
               <div class="p-3 flex items-center justify-between">
                 <div>
                   <p class="text-xs font-bold text-slate-800">${e.note || e.category}</p>
-                  <p class="text-[10px] text-slate-400">${e.category} •${e.date}</p>
+                  <p class="text-[10px] text-slate-400">${e.category}${e.subCategory ? ' &raquo; ' + e.subCategory : ''} &bull; ${e.date}</p>
                 </div>
                 <p class="text-xs font-bold text-slate-800">₹${Number(e.amount).toLocaleString()}</p>
               </div>
@@ -173,243 +202,7 @@
       `;
     }
 
-    // --- Settings / Google Drive View ---
-    function renderSettings(container) {
-      const savedClientId = localStorage.getItem(G_CLIENT_ID_KEY) || '';
-      const savedFolder = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
-      const isConnected = !!gdriveToken;
-
-      container.innerHTML = `
-        <h2 class="text-sm font-bold text-slate-800 mb-3">Settings & Cloud Backup</h2>
-        
-        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-4">
-          <div class="flex items-center gap-2 mb-2">
-            <i class="fa-brands fa-google-drive text-amber-500 text-lg"></i>
-            <h3 class="font-bold text-slate-800 text-sm">Google Drive Sync</h3>
-          </div>
-          
-          <div>
-            <label class="block text-[11px] font-semibold text-slate-400 mb-1">Google OAuth Client ID</label>
-            <input type="text" id="settingClientId" value="${savedClientId}" placeholder="xxxx.apps.googleusercontent.com" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
-          </div>
-
-          <div>
-            <label class="block text-[11px] font-semibold text-slate-400 mb-1">Backup Folder Name</label>
-            <input type="text" id="settingFolder" value="${savedFolder}" placeholder="Life Tracker Sync" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
-            <p class="text-[9px] text-slate-400 mt-1">Data will reside here in your Google Drive.</p>
-          </div>
-
-          <div class="flex gap-2">
-            <button onclick="saveDriveSettings()" class="flex-1 py-2 bg-slate-800 text-white rounded-xl text-xs font-medium hover:bg-slate-700 transition">Save Config</button>
-            <button onclick="authenticateGoogleDrive()" class="flex-1 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 flex items-center justify-center gap-2 hover:bg-slate-50 transition">
-               ${isConnected ? '<i class="fa-solid fa-check text-emerald-500"></i> Connected' : '<i class="fa-brands fa-google"></i> Connect Auth'}
-            </button>
-          </div>
-
-          <div class="w-full h-px bg-slate-100 my-2"></div>
-
-          <div class="grid grid-cols-2 gap-2">
-            <button onclick="backupToGoogleDrive()" class="py-2.5 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition disabled:opacity-50" ${!isConnected ? 'disabled' : ''}>
-              <i class="fa-solid fa-cloud-arrow-up mr-1"></i> Upload to Drive
-            </button>
-            <button onclick="restoreFromGoogleDrive()" class="py-2.5 border border-blue-600 text-blue-600 rounded-xl text-xs font-semibold hover:bg-blue-50 transition disabled:opacity-50" ${!isConnected ? 'disabled' : ''}>
-              <i class="fa-solid fa-cloud-arrow-down mr-1"></i> Restore Data
-            </button>
-          </div>
-          
-          <p id="driveSyncNotice" class="text-[11px] text-center text-slate-400 font-medium h-4"></p>
-        </div>
-      `;
-    }
-
-    function saveDriveSettings() {
-      const clientId = document.getElementById('settingClientId').value.trim();
-      const folderName = document.getElementById('settingFolder').value.trim() || 'Life Tracker Sync';
-      
-      if (!clientId) return alert('Client ID is required.');
-      
-      localStorage.setItem(G_CLIENT_ID_KEY, clientId);
-      localStorage.setItem(G_FOLDER_KEY, folderName);
-      document.getElementById('driveSyncNotice').innerText = 'Configuration saved!';
-      document.getElementById('driveSyncNotice').classList.add('text-emerald-500');
-    }
-
-    // --- Google Drive API Logic with Folders ---
-    function authenticateGoogleDrive() {
-      const clientId = localStorage.getItem(G_CLIENT_ID_KEY);
-      if (!clientId) return alert('Please enter and save your Google Cloud OAuth Client ID first.');
-
-      if (typeof google === 'undefined' || !google.accounts) {
-        return alert('Google scripts are loading or offline. Check internet connection.');
-      }
-
-      tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: clientId,
-        scope: 'https://www.googleapis.com/auth/drive.file',
-        callback: (response) => {
-          if (response.error) {
-            alert('Authentication failed: ' + response.error);
-            return;
-          }
-          gdriveToken = response.access_token;
-          
-          // Update global header status
-          const status = document.getElementById('globalDriveStatus');
-          status.innerHTML = '<i class="fa-brands fa-google-drive text-amber-500"></i> Connected';
-          status.classList.remove('text-slate-400');
-          status.classList.add('text-slate-700');
-
-          // Re-render settings if open
-          if(currentTab === 'settings') renderSettings(document.getElementById('mainContainer'));
-        }
-      });
-      tokenClient.requestAccessToken({ prompt: 'consent' });
-    }
-
-    // Helper: Find or create the target folder
-    async function getOrCreateFolder(folderName) {
-      // 1. Search for folder
-      const query = `mimeType='application/vnd.google-apps.folder' and name='${folderName}' and trashed=false`;
-      const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
-        headers: { Authorization: `Bearer ${gdriveToken}` }
-      });
-      const searchData = await searchRes.json();
-
-      if (searchData.files && searchData.files.length > 0) {
-        return searchData.files[0].id; // Folder exists
-      }
-
-      // 2. Create if not found
-      const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
-        method: 'POST',
-        headers: { 
-          Authorization: `Bearer ${gdriveToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          name: folderName,
-          mimeType: 'application/vnd.google-apps.folder'
-        })
-      });
-      const createData = await createRes.json();
-      return createData.id;
-    }
-
-    async function backupToGoogleDrive() {
-      if (!gdriveToken) return alert('Authenticate with Google first!');
-      const notice = document.getElementById('driveSyncNotice');
-      notice.innerText = 'Preparing backup...';
-      notice.className = 'text-[11px] text-center text-blue-500 font-medium h-4';
-
-      try {
-        const folderName = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
-        const folderId = await getOrCreateFolder(folderName);
-        notice.innerText = `Found folder '${folderName}'... uploading...`;
-
-        const fileName = 'life_tracker_data.json';
-        const fileContent = JSON.stringify(appData, null, 2);
-        
-        // Search if file already exists IN THIS FOLDER
-        const query = `name='${fileName}' and '${folderId}' in parents and trashed=false`;
-        const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
-          headers: { Authorization: `Bearer ${gdriveToken}` }
-        });
-        const searchData = await searchRes.json();
-
-        let endpoint = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
-        let method = 'POST';
-        
-        let metadata = { name: fileName, mimeType: 'application/json' };
-        
-        if (searchData.files && searchData.files.length > 0) {
-          // Update existing file
-          const fileId = searchData.files[0].id;
-          endpoint = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`;
-          method = 'PATCH';
-        } else {
-          // Create new file, specify parent folder
-          metadata.parents = [folderId];
-        }
-
-        const boundary = 'foo_bar_baz';
-        const delimiter = "\r\n--" + boundary + "\r\n";
-        const closeDelim = "\r\n--" + boundary + "--";
-        const multipartRequestBody =
-          delimiter +
-          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-          JSON.stringify(metadata) +
-          delimiter +
-          'Content-Type: application/json\r\n\r\n' +
-          fileContent +
-          closeDelim;
-
-        const res = await fetch(endpoint, {
-          method: method,
-          headers: {
-            Authorization: `Bearer ${gdriveToken}`,
-            'Content-Type': `multipart/related; boundary=${boundary}`
-          },
-          body: multipartRequestBody
-        });
-
-        if (res.ok) {
-          notice.innerText = 'Upload successful!';
-          notice.className = 'text-[11px] text-center text-emerald-600 font-medium h-4';
-        } else {
-          throw new Error('Upload failed. API rejected request.');
-        }
-      } catch (err) {
-        console.error(err);
-        notice.innerText = 'Error: ' + err.message;
-        notice.className = 'text-[11px] text-center text-rose-600 font-medium h-4';
-      }
-    }
-
-    async function restoreFromGoogleDrive() {
-      if (!gdriveToken) return alert('Authenticate with Google first!');
-      const notice = document.getElementById('driveSyncNotice');
-      notice.innerText = 'Searching Drive...';
-      notice.className = 'text-[11px] text-center text-blue-500 font-medium h-4';
-
-      try {
-        const folderName = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
-        const folderId = await getOrCreateFolder(folderName);
-
-        const query = `name='life_tracker_data.json' and '${folderId}' in parents and trashed=false`;
-        const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
-          headers: { Authorization: `Bearer ${gdriveToken}` }
-        });
-        const searchData = await searchRes.json();
-
-        if (!searchData.files || searchData.files.length === 0) {
-          notice.innerText = `No backup found in folder '${folderName}'.`;
-          notice.className = 'text-[11px] text-center text-rose-600 font-medium h-4';
-          return;
-        }
-
-        const fileId = searchData.files[0].id;
-        const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
-          headers: { Authorization: `Bearer ${gdriveToken}` }
-        });
-
-        const cloudData = await fileRes.json();
-        if (cloudData && Array.isArray(cloudData.expenses)) {
-          if (confirm('Are you sure you want to replace your current local data with the version from Google Drive?')) {
-            appData = cloudData;
-            saveState();
-            notice.innerText = 'Data Restored Successfully!';
-            notice.className = 'text-[11px] text-center text-emerald-600 font-medium h-4';
-          }
-        }
-      } catch (err) {
-        console.error(err);
-        notice.innerText = 'Restore Error: ' + err.message;
-        notice.className = 'text-[11px] text-center text-rose-600 font-medium h-4';
-      }
-    }
-
-    // --- Stubbed Views & Forms ---
-   // --- Working Views & Forms ---
+    // --- Working Expenses & Items Views ---
     function renderExpenses(container) {
       container.innerHTML = `
         <div class="flex items-center justify-between">
@@ -421,7 +214,7 @@
             <div class="bg-white p-3 rounded-xl border border-slate-100 flex items-center justify-between shadow-sm hover:bg-slate-50 transition cursor-pointer">
               <div>
                 <p class="text-xs font-bold text-slate-800">${e.note || e.category}</p>
-                <p class="text-[10px] text-slate-400">${e.category} •${e.date}</p>
+                <p class="text-[10px] text-slate-400">${e.category}${e.subCategory ? ' &raquo; ' + e.subCategory : ''} &bull; ${e.date}</p>
               </div>
               <p class="text-xs font-bold text-slate-800">₹${Number(e.amount).toLocaleString()}</p>
             </div>
@@ -463,6 +256,8 @@
       const content = document.getElementById('formModalContent');
       modal.classList.remove('hidden');
 
+      const catOptions = Object.keys(appData.categories).map(c => `<option value="${c}">${c}</option>`).join('');
+
       content.innerHTML = `
         <h3 class="text-sm font-bold text-slate-800 mb-3">Add Expense</h3>
         <form onsubmit="saveExpense(event)" class="space-y-3">
@@ -470,12 +265,22 @@
             <label class="text-[11px] font-semibold text-slate-400">Amount (₹)</label>
             <input type="number" required id="expAmount" step="any" class="w-full text-base font-bold p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
           </div>
-          <div>
-            <label class="text-[11px] font-semibold text-slate-400">Category</label>
-            <select id="expCategory" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
-              ${appData.categories.map(c => `<option value="${c}">${c}</option>`).join('')}
-            </select>
+          
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Category</label>
+              <select id="expCategory" onchange="updateSubCategoryDropdown()" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+                ${catOptions}
+              </select>
+            </div>
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Sub-category</label>
+              <select id="expSubCategory" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+                <!-- Injected via JS -->
+              </select>
+            </div>
           </div>
+
           <div>
             <label class="text-[11px] font-semibold text-slate-400">Date</label>
             <input type="date" required id="expDate" value="${new Date().toISOString().split('T')[0]}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
@@ -490,6 +295,24 @@
           </div>
         </form>
       `;
+      
+      updateSubCategoryDropdown();
+    }
+
+    function updateSubCategoryDropdown() {
+      const cat = document.getElementById('expCategory').value;
+      const subSelect = document.getElementById('expSubCategory');
+      const subs = appData.categories[cat] || [];
+      
+      if (subs.length === 0) {
+        subSelect.innerHTML = '<option value="">None</option>';
+        subSelect.disabled = true;
+        subSelect.classList.add('bg-slate-50', 'text-slate-400');
+      } else {
+        subSelect.innerHTML = '<option value="">-- Select --</option>' + subs.map(s => `<option value="${s}">${s}</option>`).join('');
+        subSelect.disabled = false;
+        subSelect.classList.remove('bg-slate-50', 'text-slate-400');
+      }
     }
 
     function saveExpense(e) {
@@ -498,6 +321,7 @@
         id: 'exp_' + Date.now(),
         amount: parseFloat(document.getElementById('expAmount').value),
         category: document.getElementById('expCategory').value,
+        subCategory: document.getElementById('expSubCategory').value || null,
         date: document.getElementById('expDate').value,
         note: document.getElementById('expNote').value
       };
@@ -582,6 +406,7 @@
           id: 'exp_' + Date.now(),
           amount: item.amount,
           category: item.type === 'Subscription' ? 'Entertainment' : 'Bills',
+          subCategory: item.title,
           date: new Date().toISOString().split('T')[0],
           note: item.title + ' payment'
         });
@@ -601,8 +426,260 @@
       navigate(currentTab);
     }
 
-    // Initialize App On Load
-    window.addEventListener('DOMContentLoaded', initStorage);
+    // --- Settings / Google Drive View ---
+    function renderSettings(container) {
+      const savedClientId = localStorage.getItem(G_CLIENT_ID_KEY) || '';
+      const savedFolder = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
+      const isConnected = !!gdriveToken;
+
+      container.innerHTML = `
+        <h2 class="text-sm font-bold text-slate-800 mb-3">Settings & Cloud Backup</h2>
+        
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-4">
+          <div class="flex items-center gap-2 mb-2">
+            <i class="fa-brands fa-google-drive text-amber-500 text-lg"></i>
+            <h3 class="font-bold text-slate-800 text-sm">Google Drive Sync</h3>
+          </div>
+          
+          <div>
+            <label class="block text-[11px] font-semibold text-slate-400 mb-1">Google OAuth Client ID</label>
+            <input type="text" id="settingClientId" value="${savedClientId}" placeholder="xxxx.apps.googleusercontent.com" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+          </div>
+
+          <div>
+            <label class="block text-[11px] font-semibold text-slate-400 mb-1">Backup Folder Name</label>
+            <input type="text" id="settingFolder" value="${savedFolder}" placeholder="Life Tracker Sync" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            <p class="text-[9px] text-slate-400 mt-1">Data will reside here in your Google Drive.</p>
+          </div>
+
+          <div class="flex gap-2">
+            <button onclick="saveDriveSettings()" class="flex-1 py-2 bg-slate-800 text-white rounded-xl text-xs font-medium hover:bg-slate-700 transition">Save Config</button>
+            
+            ${isConnected 
+              ? `<button onclick="disconnectDrive()" class="flex-1 py-2 border border-rose-200 rounded-xl text-xs font-semibold text-rose-600 flex items-center justify-center gap-2 hover:bg-rose-50 transition">
+                  <i class="fa-solid fa-link-slash"></i> Disconnect
+                 </button>`
+              : `<button onclick="authenticateGoogleDrive()" class="flex-1 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 flex items-center justify-center gap-2 hover:bg-slate-50 transition">
+                  <i class="fa-brands fa-google"></i> Connect Auth
+                 </button>`
+            }
+          </div>
+
+          <div class="w-full h-px bg-slate-100 my-2"></div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <button onclick="backupToGoogleDrive()" class="py-2.5 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition disabled:opacity-50" ${!isConnected ? 'disabled' : ''}>
+              <i class="fa-solid fa-cloud-arrow-up mr-1"></i> Upload to Drive
+            </button>
+            <button onclick="restoreFromGoogleDrive()" class="py-2.5 border border-blue-600 text-blue-600 rounded-xl text-xs font-semibold hover:bg-blue-50 transition disabled:opacity-50" ${!isConnected ? 'disabled' : ''}>
+              <i class="fa-solid fa-cloud-arrow-down mr-1"></i> Restore Data
+            </button>
+          </div>
+          
+          <p id="driveSyncNotice" class="text-[11px] text-center text-slate-400 font-medium h-4"></p>
+        </div>
+      `;
+    }
+
+    function saveDriveSettings() {
+      const clientId = document.getElementById('settingClientId').value.trim();
+      const folderName = document.getElementById('settingFolder').value.trim() || 'Life Tracker Sync';
+      
+      if (!clientId) return alert('Client ID is required.');
+      
+      localStorage.setItem(G_CLIENT_ID_KEY, clientId);
+      localStorage.setItem(G_FOLDER_KEY, folderName);
+      document.getElementById('driveSyncNotice').innerText = 'Configuration saved!';
+      document.getElementById('driveSyncNotice').className = 'text-[11px] text-center text-emerald-500 font-medium h-4';
+    }
+
+    // --- Google Drive API Logic with Folders ---
+    function authenticateGoogleDrive() {
+      const clientId = localStorage.getItem(G_CLIENT_ID_KEY);
+      if (!clientId) return alert('Please enter and save your Google Cloud OAuth Client ID first.');
+
+      if (typeof google === 'undefined' || !google.accounts) {
+        return alert('Google scripts are loading or offline. Check internet connection.');
+      }
+
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: 'https://www.googleapis.com/auth/drive.file',
+        callback: (response) => {
+          if (response.error) {
+            alert('Authentication failed: ' + response.error);
+            return;
+          }
+          gdriveToken = response.access_token;
+          
+          // Update global header status
+          const status = document.getElementById('globalDriveStatus');
+          status.innerHTML = '<i class="fa-brands fa-google-drive text-amber-500"></i> Connected';
+          status.classList.remove('text-slate-400', 'bg-white');
+          status.classList.add('text-slate-700', 'bg-amber-50', 'border-amber-100');
+
+          // Re-render settings if open
+          if(currentTab === 'settings') renderSettings(document.getElementById('mainContainer'));
+        }
+      });
+      tokenClient.requestAccessToken({ prompt: 'consent' });
+    }
+
+    function disconnectDrive() {
+      // Just wipe token from local session memory - no API revoking
+      gdriveToken = null;
+      
+      // Update global header status back to Offline
+      const status = document.getElementById('globalDriveStatus');
+      status.innerHTML = '<i class="fa-brands fa-google-drive"></i> Offline';
+      status.classList.add('text-slate-400', 'bg-white');
+      status.classList.remove('text-slate-700', 'bg-amber-50', 'border-amber-100');
+      
+      // Re-render Settings screen to show Connect button and disable Backup/Restore
+      if(currentTab === 'settings') {
+        renderSettings(document.getElementById('mainContainer'));
+        document.getElementById('driveSyncNotice').innerText = 'Drive disconnected from this session.';
+        document.getElementById('driveSyncNotice').className = 'text-[11px] text-center text-slate-500 font-medium h-4';
+      }
+    }
+
+    // Helper: Find or create the target folder
+    async function getOrCreateFolder(folderName) {
+      const query = `mimeType='application/vnd.google-apps.folder' and name='${folderName}' and trashed=false`;
+      const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
+        headers: { Authorization: `Bearer ${gdriveToken}` }
+      });
+      const searchData = await searchRes.json();
+
+      if (searchData.files && searchData.files.length > 0) {
+        return searchData.files[0].id;
+      }
+
+      const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+        method: 'POST',
+        headers: { 
+          Authorization: `Bearer ${gdriveToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: folderName,
+          mimeType: 'application/vnd.google-apps.folder'
+        })
+      });
+      const createData = await createRes.json();
+      return createData.id;
+    }
+
+    async function backupToGoogleDrive() {
+      if (!gdriveToken) return alert('Authenticate with Google first!');
+      const notice = document.getElementById('driveSyncNotice');
+      notice.innerText = 'Preparing backup...';
+      notice.className = 'text-[11px] text-center text-blue-500 font-medium h-4';
+
+      try {
+        const folderName = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
+        const folderId = await getOrCreateFolder(folderName);
+        notice.innerText = `Found folder '${folderName}'... uploading...`;
+
+        const fileName = 'life_tracker_data.json';
+        const fileContent = JSON.stringify(appData, null, 2);
+        
+        const query = `name='${fileName}' and '${folderId}' in parents and trashed=false`;
+        const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
+          headers: { Authorization: `Bearer ${gdriveToken}` }
+        });
+        const searchData = await searchRes.json();
+
+        let endpoint = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+        let method = 'POST';
+        
+        let metadata = { name: fileName, mimeType: 'application/json' };
+        
+        if (searchData.files && searchData.files.length > 0) {
+          const fileId = searchData.files[0].id;
+          endpoint = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`;
+          method = 'PATCH';
+        } else {
+          metadata.parents = [folderId];
+        }
+
+        const boundary = 'foo_bar_baz';
+        const delimiter = "\r\n--" + boundary + "\r\n";
+        const closeDelim = "\r\n--" + boundary + "--";
+        const multipartRequestBody =
+          delimiter +
+          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+          JSON.stringify(metadata) +
+          delimiter +
+          'Content-Type: application/json\r\n\r\n' +
+          fileContent +
+          closeDelim;
+
+        const res = await fetch(endpoint, {
+          method: method,
+          headers: {
+            Authorization: `Bearer ${gdriveToken}`,
+            'Content-Type': `multipart/related; boundary=${boundary}`
+          },
+          body: multipartRequestBody
+        });
+
+        if (res.ok) {
+          notice.innerText = 'Upload successful!';
+          notice.className = 'text-[11px] text-center text-emerald-600 font-medium h-4';
+        } else {
+          throw new Error('Upload failed. API rejected request.');
+        }
+      } catch (err) {
+        console.error(err);
+        notice.innerText = 'Error: ' + err.message;
+        notice.className = 'text-[11px] text-center text-rose-600 font-medium h-4';
+      }
+    }
+
+    async function restoreFromGoogleDrive() {
+      if (!gdriveToken) return alert('Authenticate with Google first!');
+      const notice = document.getElementById('driveSyncNotice');
+      notice.innerText = 'Searching Drive...';
+      notice.className = 'text-[11px] text-center text-blue-500 font-medium h-4';
+
+      try {
+        const folderName = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
+        const folderId = await getOrCreateFolder(folderName);
+
+        const query = `name='life_tracker_data.json' and '${folderId}' in parents and trashed=false`;
+        const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
+          headers: { Authorization: `Bearer ${gdriveToken}` }
+        });
+        const searchData = await searchRes.json();
+
+        if (!searchData.files || searchData.files.length === 0) {
+          notice.innerText = `No backup found in folder '${folderName}'.`;
+          notice.className = 'text-[11px] text-center text-rose-600 font-medium h-4';
+          return;
+        }
+
+        const fileId = searchData.files[0].id;
+        const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+          headers: { Authorization: `Bearer ${gdriveToken}` }
+        });
+
+        const cloudData = await fileRes.json();
+        if (cloudData && Array.isArray(cloudData.expenses)) {
+          if (confirm('Are you sure you want to replace your current local data with the version from Google Drive?')) {
+            appData = cloudData;
+            saveState();
+            notice.innerText = 'Data Restored Successfully!';
+            notice.className = 'text-[11px] text-center text-emerald-600 font-medium h-4';
+            navigate('home');
+          }
+        }
+      } catch (err) {
+        console.error(err);
+        notice.innerText = 'Restore Error: ' + err.message;
+        notice.className = 'text-[11px] text-center text-rose-600 font-medium h-4';
+      }
+    }
 
     // Initialize
     window.addEventListener('DOMContentLoaded', initStorage);
