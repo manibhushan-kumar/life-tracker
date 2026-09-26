@@ -478,35 +478,37 @@ async function restoreFromGoogleDrive() {
 
 // Small year-picker form, reusing the app's existing generic formModal
 // (same one used for Add Expense, the Expiry Check report, etc). Lets you
-// restore just one year instead of dragging in the entire history, plus an
-// optional "also grab the current year" checkbox for when you're digging
-// into an old year but still want this year's data present too.
+// restore any combination of years instead of dragging in the entire
+// history in one go - tick as many boxes as you need (e.g. restoring 2023
+// AND 2024 together so they're both on-device for comparison).
 function openYearPickerModal(years, opts) {
   const modal = document.getElementById('formModal');
   const content = document.getElementById('formModalContent');
   modal.classList.remove('hidden');
 
   const currentYear = String(new Date().getFullYear());
-  const defaultYear = years.includes(currentYear) ? currentYear : years[0];
-  const showCurrentYearOption = !(years.length === 1 && years[0] === currentYear);
+  // Always offer the current year as a tickable option even if nothing's
+  // been backed up for it yet, so "grab an old year AND this year in one
+  // go" is just two checkboxes instead of a separate bolt-on control.
+  const allYears = years.includes(currentYear) ? years : [...years, currentYear].sort().reverse();
+  const defaultChecked = new Set([years.includes(currentYear) ? currentYear : years[0]]);
 
   content.innerHTML = `
     <h3 class="text-sm font-bold text-slate-800 mb-1"><i class="fa-solid fa-cloud-arrow-down text-blue-500 mr-1"></i>Restore from Drive</h3>
     <p class="text-[11px] text-slate-400 mb-3">${opts.legacyUpgradeNotice
-      ? 'Older-format backup found - pick a year to bring in now, it upgrades to the new format automatically on your next backup.'
-      : `Found expense history across ${years.length} year(s). Pick one to restore - keeps things light instead of pulling everything.`}</p>
+      ? 'Older-format backup found - pick which year(s) to bring in now, it upgrades to the new format automatically on your next backup.'
+      : `Found expense history across ${years.length} year(s). Pick one or more to restore - keeps things light instead of pulling everything.`}</p>
 
-    <label class="block text-[10px] font-bold text-slate-500 mb-1">Year to restore</label>
-    <select id="restoreYearSelect" class="w-full p-2.5 rounded-xl border border-slate-200 text-xs mb-3">
-      ${years.map(y => `<option value="${y}" ${y === defaultYear ? 'selected' : ''}>${y}</option>`).join('')}
-    </select>
-
-    ${showCurrentYearOption ? `
-      <label class="flex items-center gap-2 mb-4 text-xs text-slate-600">
-        <input type="checkbox" id="restoreIncludeCurrentYear" class="w-4 h-4 rounded border-slate-300">
-        Also fetch current year (${currentYear}) data
-      </label>
-    ` : ''}
+    <label class="block text-[10px] font-bold text-slate-500 mb-1">Year(s) to restore</label>
+    <div class="space-y-1 max-h-48 overflow-y-auto border border-slate-200 rounded-xl p-2.5 mb-1">
+      ${allYears.map(y => `
+        <label class="flex items-center gap-2 text-xs text-slate-600 py-0.5">
+          <input type="checkbox" class="restoreYearCheckbox w-4 h-4 rounded border-slate-300" value="${y}" ${defaultChecked.has(y) ? 'checked' : ''}>
+          ${y}${!years.includes(y) ? ' <span class="text-slate-300">(no backup yet)</span>' : ''}
+        </label>
+      `).join('')}
+    </div>
+    <p id="restoreYearError" class="text-[10px] text-rose-500 mb-2 hidden">Pick at least one year.</p>
 
     <p class="text-[10px] text-slate-400 mb-3">Categories, recurring items, and due items always sync in full - they're tiny.</p>
 
@@ -519,6 +521,16 @@ function openYearPickerModal(years, opts) {
 
 async function confirmYearRestore() {
   if (!_pendingRestore) return closeFormModal();
+
+  // Validate before tearing down the modal - an empty selection should nudge
+  // the user to tick something, not silently vanish and do nothing.
+  const checked = Array.from(document.querySelectorAll('.restoreYearCheckbox:checked')).map(el => el.value);
+  if (checked.length === 0) {
+    const errorEl = document.getElementById('restoreYearError');
+    if (errorEl) errorEl.classList.remove('hidden');
+    return;
+  }
+
   const pending = _pendingRestore;
   _pendingRestore = null;
   closeFormModal();
@@ -529,13 +541,7 @@ async function confirmYearRestore() {
     notice.className = `text-[11px] text-center ${cls} font-medium h-4`;
   };
 
-  const selectedYear = document.getElementById('restoreYearSelect') ? document.getElementById('restoreYearSelect').value : null;
-  const includeCurrentYearEl = document.getElementById('restoreIncludeCurrentYear');
-  const includeCurrentYear = includeCurrentYearEl ? includeCurrentYearEl.checked : false;
-  const currentYear = String(new Date().getFullYear());
-
-  const targetYears = new Set([selectedYear]);
-  if (includeCurrentYear) targetYears.add(currentYear);
+  const targetYears = new Set(checked);
 
   try {
     if (pending.mode === 'legacy') {

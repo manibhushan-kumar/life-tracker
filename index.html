@@ -65,6 +65,10 @@
         <i class="fa-solid fa-calendar-check text-lg"></i>
         <span class="text-[10px] font-medium">Due Items</span>
       </button>
+      <button onclick="navigate('compare')" id="nav-compare" class="nav-btn flex flex-col items-center gap-1 text-slate-400 flex-1">
+        <i class="fa-solid fa-chart-column text-lg"></i>
+        <span class="text-[10px] font-medium">Compare</span>
+      </button>
       <button onclick="navigate('settings')" id="nav-settings" class="nav-btn flex flex-col items-center gap-1 text-slate-400 flex-1">
         <i class="fa-solid fa-gear text-lg"></i>
         <span class="text-[10px] font-medium">Settings</span>
@@ -101,6 +105,7 @@
   <script src="./js/idb.js"></script>
   <script src="./js/storage.js"></script>
   <script src="./js/drive-sync.js"></script>
+  <script src="./js/compare.js"></script>
 
   <script>
     // --- Application State ---
@@ -127,6 +132,7 @@
       const container = document.getElementById('mainContainer');
       if (tab === 'home') renderHome(container);
       else if (tab === 'expenses') renderExpenses(container);
+      else if (tab === 'compare') renderCompare(container);
       else if (tab === 'items') renderItems(container);
       else if (tab === 'settings') renderSettings(container);
     }
