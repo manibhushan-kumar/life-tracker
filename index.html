@@ -100,6 +100,8 @@
     const DB_KEY = 'life_tracker_pwa_data';
     const G_CLIENT_ID_KEY = 'life_tracker_gclient_id';
     const G_FOLDER_KEY = 'life_tracker_gfolder_name';
+    const G_TOKEN_KEY = 'life_tracker_gdrive_token';
+    const G_TOKEN_EXPIRY_KEY = 'life_tracker_gdrive_token_expiry';
 
     // Returns a fresh copy of the default app data shape. Used on first run
     // and as the base to rebuild onto when restoring from Google Drive.
@@ -109,8 +111,10 @@
         items: [],
         // Generic "tap a day to log it" items - milk, newspaper, whatever recurs daily.
         // Fully user-configurable in Settings, and rides along in the same backup blob.
+        // priceHistory is the source of truth for what a day COSTS; `price` is just a
+        // cached "today's price" convenience field kept in sync alongside it.
         recurringItems: [
-          { id: 'milk', name: 'Milk', category: 'Milk', subCategory: null, price: 50 }
+          { id: 'milk', name: 'Milk', category: 'Milk', subCategory: null, price: 50, priceHistory: [{ from: '1970-01-01', price: 50 }] }
         ],
         categories: {
           'Food': ['Restaurant', 'Delivery', 'Snacks', 'Coffee'],
@@ -131,6 +135,24 @@
     let gdriveToken = null;
     let tokenClient = null;
 
+    // Given a recurring item, returns whatever price was actually in effect on
+    // `dateStr` (defaults to today). This is the single source of truth for
+    // "what does a day of this item cost" - a price change only affects days
+    // on/after its effective date; earlier days (and already-logged expenses,
+    // which store their own snapshot amount anyway) are never touched.
+    function getEffectivePrice(item, dateStr) {
+      const targetDate = dateStr || new Date().toISOString().split('T')[0];
+      const history = Array.isArray(item.priceHistory) && item.priceHistory.length
+        ? item.priceHistory
+        : [{ from: '1970-01-01', price: Number(item.price) || 0 }];
+
+      const sorted = history.slice().sort((a, b) => a.from.localeCompare(b.from));
+      const applicable = sorted.filter(h => h.from <= targetDate);
+      // If the target date predates every recorded change (e.g. toggling a day
+      // before the item existed), fall back to the earliest known price.
+      return applicable.length > 0 ? applicable[applicable.length - 1].price : sorted[0].price;
+    }
+
     // Merges a parsed data blob (from localStorage or a Drive restore) into the
     // current appData, applying backwards-compatibility upgrades along the way.
     // Shared by initStorage() and restoreFromGoogleDrive() so both paths always
@@ -149,6 +171,15 @@
         // Legacy upgrade path for users who saved data before this feature existed.
         appData.recurringItems = [{ id: 'milk', name: 'Milk', category: 'Milk', subCategory: null, price: parsedData.milkPrice }];
       }
+
+      // Normalize every recurring item so it always has a proper priceHistory,
+      // even if it came from an older backup that only had a flat `price`.
+      appData.recurringItems = appData.recurringItems.map(item => {
+        const priceHistory = Array.isArray(item.priceHistory) && item.priceHistory.length
+          ? item.priceHistory.slice().sort((a, b) => a.from.localeCompare(b.from))
+          : [{ from: '1970-01-01', price: Number(item.price) || 0 }];
+        return { ...item, priceHistory, price: getEffectivePrice({ priceHistory }) };
+      });
 
       // Backwards Compatibility Migration for Categories
       if (parsedData.categories) {
@@ -176,6 +207,7 @@
       
       document.getElementById('headerDate').innerText = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
       navigate('home');
+      tryRestoreDriveSession();
     }
 
     function saveState() {
@@ -302,7 +334,7 @@
               <select id="recurringItemSelect" onchange="onRecurringItemChange(this.value)" class="flex-1 text-xs p-2 rounded-lg border border-slate-200 outline-none focus:border-blue-500 bg-white">
                 ${appData.recurringItems.map(item => `<option value="${item.id}" ${item.id === activeItem.id ? 'selected' : ''}>${item.name}</option>`).join('')}
               </select>
-              <span class="text-[10px] text-slate-400 whitespace-nowrap">₹${Number(activeItem.price).toLocaleString()}/day</span>
+              <span class="text-[10px] text-slate-400 whitespace-nowrap">₹${Number(getEffectivePrice(activeItem)).toLocaleString()}/day today</span>
             </div>
             <div id="recurringCalendarGrid" class="grid grid-cols-7 gap-1.5">
               ${buildRecurringCalendarHtml(activeItem, expenseFilterMonth)}
@@ -336,8 +368,9 @@
       for (let day = 1; day <= daysInMonth; day++) {
         const dateStr = `${monthStr}-${String(day).padStart(2, '0')}`;
         const logged = appData.expenses.some(e => e.id === item.id + '_' + dateStr);
+        const dayPrice = getEffectivePrice(item, dateStr);
         html += `
-          <button onclick="toggleRecurringDay('${item.id}', '${dateStr}')" class="aspect-square rounded-lg text-[11px] font-bold flex items-center justify-center border transition ${logged ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-blue-50'}">
+          <button onclick="toggleRecurringDay('${item.id}', '${dateStr}')" title="₹${dayPrice}/day on ${dateStr}" class="aspect-square rounded-lg text-[11px] font-bold flex items-center justify-center border transition ${logged ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-blue-50'}">
             ${day}
           </button>
         `;
@@ -357,7 +390,7 @@
       } else {
         appData.expenses.push({
           id: entryId,
-          amount: Number(item.price) || 0,
+          amount: getEffectivePrice(item, dateStr),
           category: item.category,
           subCategory: item.subCategory || null,
           date: dateStr,
@@ -593,12 +626,25 @@
 
           <div class="space-y-2">
             ${appData.recurringItems.map(item => `
-              <div class="flex items-center justify-between p-2.5 rounded-xl border border-slate-100 bg-slate-50">
-                <div>
-                  <p class="text-xs font-bold text-slate-800">${item.name}</p>
-                  <p class="text-[10px] text-slate-400">${item.category}${item.subCategory ? ' &raquo; ' + item.subCategory : ''} &bull; ₹${Number(item.price).toLocaleString()}/day</p>
+              <div class="p-2.5 rounded-xl border border-slate-100 bg-slate-50 space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <p class="text-xs font-bold text-slate-800">${item.name}</p>
+                    <p class="text-[10px] text-slate-400">${item.category}${item.subCategory ? ' &raquo; ' + item.subCategory : ''} &bull; ₹${Number(getEffectivePrice(item)).toLocaleString()}/day today</p>
+                  </div>
+                  <button onclick="deleteRecurringItem('${item.id}')" class="text-rose-500 hover:text-rose-600 px-2"><i class="fa-solid fa-trash text-xs"></i></button>
                 </div>
-                <button onclick="deleteRecurringItem('${item.id}')" class="text-rose-500 hover:text-rose-600 px-2"><i class="fa-solid fa-trash text-xs"></i></button>
+                ${(item.priceHistory || []).length > 1 ? `
+                  <div class="flex flex-wrap gap-1.5">
+                    ${item.priceHistory.map(h => `
+                      <span class="flex items-center gap-1 pl-2 pr-1 py-1 rounded-full bg-white border border-slate-200 text-[9px] font-semibold text-slate-500">
+                        ₹${h.price} from ${h.from}
+                        <button onclick="deletePriceChange('${item.id}', '${h.from}')" class="w-3.5 h-3.5 rounded-full bg-slate-200 hover:bg-rose-500 hover:text-white flex items-center justify-center text-[8px] transition"><i class="fa-solid fa-xmark"></i></button>
+                      </span>
+                    `).join('')}
+                  </div>
+                ` : ''}
+                <button onclick="openPriceChangeForm('${item.id}')" class="text-[10px] font-semibold text-blue-600 hover:text-blue-700">+ Schedule price change</button>
               </div>
             `).join('')}
             ${appData.recurringItems.length === 0 ? '<p class="text-[11px] text-slate-400 text-center py-2">No recurring items configured yet.</p>' : ''}
@@ -714,7 +760,32 @@
           
           <p id="driveSyncNotice" class="text-[11px] text-center text-slate-400 font-medium h-4"></p>
         </div>
+
+        <div class="bg-white p-4 rounded-2xl border border-rose-100 shadow-sm space-y-3 mt-4">
+          <div class="flex items-center gap-2 mb-1">
+            <i class="fa-solid fa-triangle-exclamation text-rose-500"></i>
+            <h3 class="font-bold text-rose-700 text-sm">Danger Zone</h3>
+          </div>
+          <p class="text-[10px] text-slate-400 -mt-2">Permanently deletes every logged expense (including calendar-logged recurring entries). Categories, sub-categories, recurring items, and due items are left exactly as they are.</p>
+          <button onclick="clearAllExpenses()" class="w-full py-2.5 bg-rose-50 text-rose-600 border border-rose-200 rounded-xl text-xs font-bold hover:bg-rose-100 transition">
+            <i class="fa-solid fa-trash mr-1"></i> Clear All Expenses
+          </button>
+        </div>
       `;
+    }
+
+    function clearAllExpenses() {
+      if (appData.expenses.length === 0) {
+        alert('There are no expenses to clear.');
+        return;
+      }
+      const confirmed = confirm(`This will permanently delete all ${appData.expenses.length} logged expense(s). Categories, sub-categories, recurring items, and due items will NOT be affected. This cannot be undone. Continue?`);
+      if (!confirmed) return;
+
+      appData.expenses = [];
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+      alert('All expenses cleared.');
     }
 
     function addRecurringItem(e) {
@@ -729,7 +800,8 @@
         name,
         category,
         subCategory: null,
-        price
+        price,
+        priceHistory: [{ from: new Date().toISOString().split('T')[0], price }]
       });
       saveState();
       renderSettings(document.getElementById('mainContainer'));
@@ -739,6 +811,80 @@
       if (!confirm('Remove this recurring item? Past logged expenses will NOT be affected — only future calendar toggles.')) return;
       appData.recurringItems = appData.recurringItems.filter(i => i.id !== id);
       if (selectedRecurringItemId === id) selectedRecurringItemId = null;
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    // Opens the shared form modal to schedule a price change for a recurring
+    // item, effective from a chosen date. Days before that date keep using
+    // whatever price was effective then; already-logged expenses are snapshots
+    // and are never retroactively edited.
+    function openPriceChangeForm(itemId) {
+      const item = appData.recurringItems.find(i => i.id === itemId);
+      if (!item) return;
+
+      const modal = document.getElementById('formModal');
+      const content = document.getElementById('formModalContent');
+      modal.classList.remove('hidden');
+
+      content.innerHTML = `
+        <h3 class="text-sm font-bold text-slate-800 mb-3">Change Price: ${item.name}</h3>
+        <form onsubmit="savePriceChange(event, '${itemId}')" class="space-y-3">
+          <div>
+            <label class="text-[11px] font-semibold text-slate-400">New Price per Day (₹)</label>
+            <input type="number" required id="priceChangeAmount" step="any" value="${getEffectivePrice(item)}" class="w-full text-base font-bold p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+          </div>
+          <div>
+            <label class="text-[11px] font-semibold text-slate-400">Effective From</label>
+            <input type="date" required id="priceChangeDate" value="${new Date().toISOString().split('T')[0]}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+            <p class="text-[9px] text-slate-400 mt-1">Days before this date keep the old price. Expenses already logged never change.</p>
+          </div>
+          <div class="flex gap-2 pt-2">
+            <button type="button" onclick="closeFormModal()" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
+            <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Save</button>
+          </div>
+        </form>
+      `;
+    }
+
+    function savePriceChange(e, itemId) {
+      e.preventDefault();
+      const item = appData.recurringItems.find(i => i.id === itemId);
+      if (!item) return;
+
+      const price = parseFloat(document.getElementById('priceChangeAmount').value);
+      const from = document.getElementById('priceChangeDate').value;
+      if (isNaN(price) || !from) return;
+
+      if (!Array.isArray(item.priceHistory) || item.priceHistory.length === 0) {
+        item.priceHistory = [{ from: '1970-01-01', price: Number(item.price) || 0 }];
+      }
+
+      // Replace a change already scheduled for that exact date, else append a new one.
+      const existingIdx = item.priceHistory.findIndex(h => h.from === from);
+      if (existingIdx > -1) {
+        item.priceHistory[existingIdx].price = price;
+      } else {
+        item.priceHistory.push({ from, price });
+      }
+      item.priceHistory.sort((a, b) => a.from.localeCompare(b.from));
+      item.price = getEffectivePrice(item); // keep the cached "today" price in sync
+
+      saveState();
+      closeFormModal();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    function deletePriceChange(itemId, from) {
+      const item = appData.recurringItems.find(i => i.id === itemId);
+      if (!item || !Array.isArray(item.priceHistory) || item.priceHistory.length <= 1) return;
+
+      const entry = item.priceHistory.find(h => h.from === from);
+      if (!entry) return;
+      if (!confirm(`Remove the ₹${entry.price} price change effective ${from}?`)) return;
+
+      item.priceHistory = item.priceHistory.filter(h => h.from !== from);
+      item.price = getEffectivePrice(item);
       saveState();
       renderSettings(document.getElementById('mainContainer'));
     }
@@ -818,6 +964,92 @@
     }
 
     // --- Google Drive API Logic with Folders ---
+
+    // Single place that updates the "Connected"/"Offline" pill in the header,
+    // so authenticate/restore/disconnect all agree on what it looks like.
+    function setDriveConnectedUI(connected) {
+      const status = document.getElementById('globalDriveStatus');
+      if (!status) return;
+      if (connected) {
+        status.innerHTML = '<i class="fa-brands fa-google-drive text-amber-500"></i> Connected';
+        status.classList.remove('text-slate-400', 'bg-white');
+        status.classList.add('text-slate-700', 'bg-amber-50', 'border-amber-100');
+      } else {
+        status.innerHTML = '<i class="fa-brands fa-google-drive"></i> Offline';
+        status.classList.add('text-slate-400', 'bg-white');
+        status.classList.remove('text-slate-700', 'bg-amber-50', 'border-amber-100');
+      }
+    }
+
+    // Access tokens from Google Identity Services are short-lived (~1hr) but we
+    // cache one in localStorage so a page refresh or tab switch doesn't force a
+    // fresh login every time - only once the cached token actually expires.
+    function persistDriveToken(token, expiresInSeconds) {
+      localStorage.setItem(G_TOKEN_KEY, token);
+      localStorage.setItem(G_TOKEN_EXPIRY_KEY, String(Date.now() + (Number(expiresInSeconds) || 3600) * 1000));
+    }
+
+    function clearPersistedDriveToken() {
+      localStorage.removeItem(G_TOKEN_KEY);
+      localStorage.removeItem(G_TOKEN_EXPIRY_KEY);
+    }
+
+    function loadPersistedDriveToken() {
+      const token = localStorage.getItem(G_TOKEN_KEY);
+      const expiry = Number(localStorage.getItem(G_TOKEN_EXPIRY_KEY) || 0);
+      // 30s safety buffer so we don't hand back a token that's about to expire mid-request.
+      if (token && expiry > Date.now() + 30000) return token;
+      clearPersistedDriveToken();
+      return null;
+    }
+
+    // Called once on app boot. First tries the cached token (covers the common
+    // "I just refreshed the page" case instantly, no network needed). If that's
+    // gone/expired but a Client ID is saved, it tries a silent (no popup) Google
+    // re-auth - works if the browser still has an active Google session and the
+    // user previously granted consent. Fails silently otherwise; user can still
+    // hit "Connect Auth" manually.
+    function tryRestoreDriveSession() {
+      const cached = loadPersistedDriveToken();
+      if (cached) {
+        gdriveToken = cached;
+        setDriveConnectedUI(true);
+        if (currentTab === 'settings') renderSettings(document.getElementById('mainContainer'));
+        return;
+      }
+
+      const clientId = localStorage.getItem(G_CLIENT_ID_KEY);
+      if (!clientId) return;
+
+      const attemptSilentAuth = () => {
+        if (typeof google === 'undefined' || !google.accounts) return;
+        const silentClient = google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: 'https://www.googleapis.com/auth/drive.file',
+          callback: (response) => {
+            if (!response || response.error || !response.access_token) return; // silent fail, no popup shown
+            gdriveToken = response.access_token;
+            persistDriveToken(response.access_token, response.expires_in);
+            setDriveConnectedUI(true);
+            if (currentTab === 'settings') renderSettings(document.getElementById('mainContainer'));
+          }
+        });
+        silentClient.requestAccessToken({ prompt: '' });
+      };
+
+      // The GIS script tag loads async/defer, so poll briefly until it's ready.
+      let attempts = 0;
+      const poll = setInterval(() => {
+        attempts++;
+        if (typeof google !== 'undefined' && google.accounts) {
+          clearInterval(poll);
+          attemptSilentAuth();
+        } else if (attempts > 20) {
+          clearInterval(poll); // ~6s of trying, then give up quietly
+        }
+      }, 300);
+    }
+
     function authenticateGoogleDrive() {
       const clientId = localStorage.getItem(G_CLIENT_ID_KEY);
       if (!clientId) return alert('Please enter and save your Google Cloud OAuth Client ID first.');
@@ -835,12 +1067,8 @@
             return;
           }
           gdriveToken = response.access_token;
-          
-          // Update global header status
-          const status = document.getElementById('globalDriveStatus');
-          status.innerHTML = '<i class="fa-brands fa-google-drive text-amber-500"></i> Connected';
-          status.classList.remove('text-slate-400', 'bg-white');
-          status.classList.add('text-slate-700', 'bg-amber-50', 'border-amber-100');
+          persistDriveToken(response.access_token, response.expires_in);
+          setDriveConnectedUI(true);
 
           // Re-render settings if open
           if(currentTab === 'settings') renderSettings(document.getElementById('mainContainer'));
@@ -850,14 +1078,10 @@
     }
 
     function disconnectDrive() {
-      // Just wipe token from local session memory - no API revoking
+      // Wipe the token from memory AND the persisted cache - no API revoking.
       gdriveToken = null;
-      
-      // Update global header status back to Offline
-      const status = document.getElementById('globalDriveStatus');
-      status.innerHTML = '<i class="fa-brands fa-google-drive"></i> Offline';
-      status.classList.add('text-slate-400', 'bg-white');
-      status.classList.remove('text-slate-700', 'bg-amber-50', 'border-amber-100');
+      clearPersistedDriveToken();
+      setDriveConnectedUI(false);
       
       // Re-render Settings screen to show Connect button and disable Backup/Restore
       if(currentTab === 'settings') {
