@@ -176,3 +176,50 @@ async function initStorage() {
   navigate('home');
   tryRestoreDriveSession();
 }
+
+// --- Year-scoped local deletion -------------------------------------------
+
+// Low-level primitive: drops the given years' worth of expenses from
+// in-memory appData and forgets Drive's version bookkeeping for those
+// months - but does NOT persist or touch Google Drive itself. Callers
+// decide when to save (some, like a restore, bundle this into a larger
+// operation that saves once at the end anyway, so persisting here too
+// would just be a wasted extra IndexedDB write).
+async function purgeYearsFromMemory(years) {
+  const yearSet = new Set(years);
+  if (yearSet.size === 0) return;
+
+  appData.expenses = appData.expenses.filter(e => !yearSet.has(yearMonthOf(e.date).slice(0, 4)));
+
+  const syncMeta = await getSyncMeta();
+  const remainingVersions = { ...(syncMeta.remoteChunkVersions || {}) };
+  Object.keys(remainingVersions).forEach(month => {
+    if (yearSet.has(month.slice(0, 4))) delete remainingVersions[month];
+  });
+  await saveSyncMeta({ remoteChunkVersions: remainingVersions });
+}
+
+// Drops a calendar year's expenses from appData + IndexedDB WITHOUT telling
+// Google Drive anything about it - Drive keeps the full history exactly as
+// it was, this is purely "stop keeping this year on THIS device". Restore
+// Data (Settings) can always pull it back down later.
+//
+// Skips dirty-tracking on purpose (same trick restoreFromGoogleDrive uses):
+// if we let this get marked dirty, the next backup would see the
+// now-missing months as "changed" and push that emptiness up to Drive,
+// silently deleting the very history we just chose to keep remotely.
+//
+// Hard-refuses the CURRENT year - Home and Expenses are built around always
+// having this year's data on-device, so deleting it out from under them
+// would break the main app, not just "free up space". The Settings UI
+// already never offers this button for the current year, but a function
+// this destructive shouldn't rely solely on its caller behaving - it
+// enforces the rule itself too.
+async function deleteYearDataLocally(year) {
+  if (year === currentYearStr()) {
+    throw new Error(`${year} is the active year - Home and Expenses need it, so it can't be deleted from local storage.`);
+  }
+
+  await purgeYearsFromMemory([year]);
+  await saveState({ skipDirtyTracking: true });
+}

@@ -28,6 +28,19 @@ function yearMonthOf(dateStr) {
   return (dateStr || '').slice(0, 7) || 'unknown';
 }
 
+// Today's calendar year as a string ("2026") - Home/Expenses treat this as
+// the ONLY year they render; older years are Compare/restore territory.
+function currentYearStr() {
+  return String(new Date().getFullYear());
+}
+
+// All expenses whose date falls in the given calendar year ("YYYY").
+// Single source of truth for year-filtering so Home, Expenses, and Compare
+// don't each grow their own slightly-different filter logic.
+function expensesInYear(year) {
+  return appData.expenses.filter(e => yearMonthOf(e.date).slice(0, 4) === year);
+}
+
 // Returns a fresh copy of the default app data shape. Used on first run
 // and as the base to rebuild onto when restoring from Google Drive.
 function getDefaultAppData() {

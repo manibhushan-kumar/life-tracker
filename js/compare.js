@@ -18,29 +18,30 @@ const COMPARE_MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'A
 // empty) so a brand-new install still has something sensible to show.
 function getAvailableCompareYears() {
   const years = new Set(appData.expenses.map(e => yearMonthOf(e.date).slice(0, 4)));
-  years.add(String(new Date().getFullYear()));
+  years.add(currentYearStr());
   return Array.from(years).filter(Boolean).sort().reverse();
 }
 
 function monthlyTotalsForYear(year) {
   const totals = new Array(12).fill(0);
-  appData.expenses.forEach(e => {
-    if (yearMonthOf(e.date).slice(0, 4) === year) {
-      const monthIdx = Number(e.date.slice(5, 7)) - 1;
-      if (monthIdx >= 0 && monthIdx < 12) totals[monthIdx] += Number(e.amount) || 0;
-    }
+  expensesInYear(year).forEach(e => {
+    const monthIdx = Number(e.date.slice(5, 7)) - 1;
+    if (monthIdx >= 0 && monthIdx < 12) totals[monthIdx] += Number(e.amount) || 0;
   });
   return totals;
 }
 
 function categoryTotalsForYear(year) {
   const totals = {};
-  appData.expenses.forEach(e => {
-    if (yearMonthOf(e.date).slice(0, 4) !== year) return;
+  expensesInYear(year).forEach(e => {
     const cat = e.category || 'Uncategorized';
     totals[cat] = (totals[cat] || 0) + (Number(e.amount) || 0);
   });
   return totals;
+}
+
+function sortedCategoryEntries(totals) {
+  return Object.entries(totals).sort((a, b) => b[1] - a[1]);
 }
 
 function onCompareYearChange(which, value) {
@@ -49,34 +50,9 @@ function onCompareYearChange(which, value) {
   navigate('compare');
 }
 
-function renderCompare(container) {
-  const years = getAvailableCompareYears();
-
-  // Default to the two most recent years so there's an immediate, sensible
-  // comparison on first visit instead of an empty picker.
-  if (!_compareYearA || !years.includes(_compareYearA)) _compareYearA = years[0];
-  if (!_compareYearB || !years.includes(_compareYearB)) _compareYearB = years[1] || years[0];
-
-  const monthsA = monthlyTotalsForYear(_compareYearA);
-  const monthsB = monthlyTotalsForYear(_compareYearB);
-  const totalA = monthsA.reduce((sum, v) => sum + v, 0);
-  const totalB = monthsB.reduce((sum, v) => sum + v, 0);
-  const delta = totalA - totalB;
-  const deltaPct = totalB !== 0 ? (delta / totalB) * 100 : (totalA !== 0 ? 100 : 0);
-  const maxMonthVal = Math.max(1, ...monthsA, ...monthsB);
-
-  const catA = categoryTotalsForYear(_compareYearA);
-  const catB = categoryTotalsForYear(_compareYearB);
-  const allCats = Array.from(new Set([...Object.keys(catA), ...Object.keys(catB)]))
-    .sort((c1, c2) => ((catA[c2] || 0) + (catB[c2] || 0)) - ((catA[c1] || 0) + (catB[c1] || 0)));
-
+function renderYearPicker(years) {
   const yearOptions = (selected) => years.map(y => `<option value="${y}" ${y === selected ? 'selected' : ''}>${y}</option>`).join('');
-
-  container.innerHTML = `
-    <div class="flex items-center justify-between">
-      <h2 class="text-sm font-bold text-slate-800">Compare Years</h2>
-    </div>
-
+  return `
     <div class="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm grid grid-cols-2 gap-3">
       <div>
         <label class="text-[10px] font-semibold text-slate-400 block mb-1"><span class="inline-block w-2 h-2 rounded-full bg-blue-500 mr-1"></span>Year A</label>
@@ -91,14 +67,75 @@ function renderCompare(container) {
         </select>
       </div>
     </div>
+  `;
+}
 
+// Single-year view: no second year selected (or no second year exists yet)
+// so a side-by-side delta would just be comparing a year against itself.
+// Same cards, just one column of numbers instead of two.
+function renderSingleYearSection(year) {
+  const months = monthlyTotalsForYear(year);
+  const total = months.reduce((sum, v) => sum + v, 0);
+  const maxMonthVal = Math.max(1, ...months);
+  const catEntries = sortedCategoryEntries(categoryTotalsForYear(year));
+
+  return `
+    <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm text-center">
+      <p class="text-[10px] font-semibold text-slate-400 uppercase">${year} Total Spend</p>
+      <p class="text-2xl font-bold text-blue-700 mt-1">₹${total.toLocaleString()}</p>
+      <p class="text-[10px] text-slate-400 mt-1">Pick a different Year B above to compare against another year.</p>
+    </div>
+
+    <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+      <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Month by Month</h3>
+      <div class="space-y-2">
+        ${COMPARE_MONTH_NAMES.map((m, i) => `
+          <div class="flex items-center gap-2 text-[10px]">
+            <span class="w-7 text-slate-400 font-semibold shrink-0">${m}</span>
+            <div class="flex-1 h-2 rounded-full bg-blue-50 overflow-hidden"><div class="h-full bg-blue-500 rounded-full" style="width:${(months[i] / maxMonthVal * 100).toFixed(1)}%"></div></div>
+            <span class="w-16 text-right text-slate-700 font-semibold shrink-0">₹${months[i].toLocaleString()}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+      <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">By Category</h3>
+      <div class="divide-y divide-slate-50">
+        ${catEntries.length === 0 ? '<p class="text-xs text-slate-400 text-center py-4">No expenses recorded for this year.</p>' : catEntries.map(([cat, amt]) => `
+          <div class="py-2 flex items-center justify-between gap-2">
+            <span class="text-xs font-semibold text-slate-700 truncate flex-1 min-w-0">${cat}</span>
+            <span class="text-xs font-bold text-blue-700">₹${amt.toLocaleString()}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+// Two-year side-by-side comparison view.
+function renderComparisonSection(yearA, yearB) {
+  const monthsA = monthlyTotalsForYear(yearA);
+  const monthsB = monthlyTotalsForYear(yearB);
+  const totalA = monthsA.reduce((sum, v) => sum + v, 0);
+  const totalB = monthsB.reduce((sum, v) => sum + v, 0);
+  const delta = totalA - totalB;
+  const deltaPct = totalB !== 0 ? (delta / totalB) * 100 : (totalA !== 0 ? 100 : 0);
+  const maxMonthVal = Math.max(1, ...monthsA, ...monthsB);
+
+  const catA = categoryTotalsForYear(yearA);
+  const catB = categoryTotalsForYear(yearB);
+  const allCats = Array.from(new Set([...Object.keys(catA), ...Object.keys(catB)]))
+    .sort((c1, c2) => ((catA[c2] || 0) + (catB[c2] || 0)) - ((catA[c1] || 0) + (catB[c1] || 0)));
+
+  return `
     <div class="grid grid-cols-3 gap-2">
       <div class="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center">
-        <p class="text-[9px] font-semibold text-slate-400 uppercase">${_compareYearA} Total</p>
+        <p class="text-[9px] font-semibold text-slate-400 uppercase">${yearA} Total</p>
         <p class="text-base font-bold text-blue-700 mt-0.5">₹${totalA.toLocaleString()}</p>
       </div>
       <div class="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center">
-        <p class="text-[9px] font-semibold text-slate-400 uppercase">${_compareYearB} Total</p>
+        <p class="text-[9px] font-semibold text-slate-400 uppercase">${yearB} Total</p>
         <p class="text-base font-bold text-violet-700 mt-0.5">₹${totalB.toLocaleString()}</p>
       </div>
       <div class="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center">
@@ -146,5 +183,24 @@ function renderCompare(container) {
         }).join('')}
       </div>
     </div>
+  `;
+}
+
+function renderCompare(container) {
+  const years = getAvailableCompareYears();
+
+  // Default to the two most recent years so there's an immediate, sensible
+  // comparison on first visit instead of an empty picker.
+  if (!_compareYearA || !years.includes(_compareYearA)) _compareYearA = years[0];
+  if (!_compareYearB || !years.includes(_compareYearB)) _compareYearB = years[1] || years[0];
+
+  const isSingleYear = _compareYearA === _compareYearB;
+
+  container.innerHTML = `
+    <div class="flex items-center justify-between">
+      <h2 class="text-sm font-bold text-slate-800">Compare Years</h2>
+    </div>
+    ${renderYearPicker(years)}
+    ${isSingleYear ? renderSingleYearSection(_compareYearA) : renderComparisonSection(_compareYearA, _compareYearB)}
   `;
 }

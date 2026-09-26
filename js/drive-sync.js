@@ -309,6 +309,39 @@ function mapWithConcurrency(items, limit, fn) {
   });
 }
 
+// --- Busy-state spinner helpers ---------------------------------------
+// Both Drive buttons (Upload/Restore) share the same manifest + dirty-months
+// bookkeeping, so running two Drive operations at once would race on it -
+// hence disabling BOTH together, not just the one clicked. The active
+// button's markup is swapped for a spinner + label and restored verbatim
+// afterward (via a dataset stash) rather than hardcoding what it should go
+// back to, so this stays correct even if the button's label ever changes.
+const DRIVE_ACTION_BUTTON_IDS = ['btnBackupDrive', 'btnRestoreDrive'];
+
+function setDriveActionBusy(activeButtonId, busyLabel) {
+  DRIVE_ACTION_BUTTON_IDS.forEach(id => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.disabled = true;
+    if (id === activeButtonId) {
+      btn.dataset.originalHtml = btn.innerHTML;
+      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-1"></i> ${busyLabel}`;
+    }
+  });
+}
+
+function clearDriveActionBusy() {
+  DRIVE_ACTION_BUTTON_IDS.forEach(id => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.disabled = false;
+    if (btn.dataset.originalHtml) {
+      btn.innerHTML = btn.dataset.originalHtml;
+      delete btn.dataset.originalHtml;
+    }
+  });
+}
+
 // --- Backup ----------------------------------------------------------------
 
 async function backupToGoogleDrive() {
@@ -318,6 +351,7 @@ async function backupToGoogleDrive() {
     notice.innerText = text;
     notice.className = `text-[11px] text-center ${cls} font-medium h-4`;
   };
+  setDriveActionBusy('btnBackupDrive', 'Uploading...');
   setNotice('Preparing backup...', 'text-blue-500');
 
   try {
@@ -380,6 +414,8 @@ async function backupToGoogleDrive() {
     console.error(err);
     document.getElementById('driveSyncNotice').innerText = 'Error: ' + err.message;
     document.getElementById('driveSyncNotice').className = 'text-[11px] text-center text-rose-600 font-medium h-4';
+  } finally {
+    clearDriveActionBusy();
   }
 }
 
@@ -411,6 +447,7 @@ async function restoreFromGoogleDrive() {
     notice.innerText = text;
     notice.className = `text-[11px] text-center ${cls} font-medium h-4`;
   };
+  setDriveActionBusy('btnRestoreDrive', 'Checking...');
   setNotice('Checking Drive...', 'text-blue-500');
 
   try {
@@ -473,6 +510,12 @@ async function restoreFromGoogleDrive() {
   } catch (err) {
     console.error(err);
     setNotice('Restore Error: ' + err.message, 'text-rose-600');
+  } finally {
+    // Clears regardless of outcome: error, "nothing to restore" early-return,
+    // or successfully handing off to the year-picker modal (which owns the
+    // busy/spinner state for the actual restore work from here on - see
+    // confirmYearRestore).
+    clearDriveActionBusy();
   }
 }
 
@@ -504,11 +547,13 @@ function openYearPickerModal(years, opts) {
       ${allYears.map(y => `
         <label class="flex items-center gap-2 text-xs text-slate-600 py-0.5">
           <input type="checkbox" class="restoreYearCheckbox w-4 h-4 rounded border-slate-300" value="${y}" ${defaultChecked.has(y) ? 'checked' : ''}>
-          ${y}${!years.includes(y) ? ' <span class="text-slate-300">(no backup yet)</span>' : ''}
+          ${y}${!years.includes(y) ? ' <span class="text-slate-300">(no backup yet)</span>' : ''}${y === currentYear ? ' <span class="text-amber-600 font-semibold">(full overwrite)</span>' : ''}
         </label>
       `).join('')}
     </div>
     <p id="restoreYearError" class="text-[10px] text-rose-500 mb-2 hidden">Pick at least one year.</p>
+
+    <p class="text-[10px] text-amber-600 mb-2"><i class="fa-solid fa-triangle-exclamation mr-1"></i>${currentYear} is handled differently from other years: since Home/Expenses live off it daily, restoring it fully <strong>replaces</strong> your local ${currentYear} data with Drive's version (anything not yet backed up will be lost). Other years just merge in on top - nothing else on-device gets touched.</p>
 
     <p class="text-[10px] text-slate-400 mb-3">Categories, recurring items, and due items always sync in full - they're tiny.</p>
 
@@ -522,7 +567,7 @@ function openYearPickerModal(years, opts) {
 async function confirmYearRestore() {
   if (!_pendingRestore) return closeFormModal();
 
-  // Validate before tearing down the modal - an empty selection should nudge
+  // Validate before touching the modal - an empty selection should nudge
   // the user to tick something, not silently vanish and do nothing.
   const checked = Array.from(document.querySelectorAll('.restoreYearCheckbox:checked')).map(el => el.value);
   if (checked.length === 0) {
@@ -533,17 +578,81 @@ async function confirmYearRestore() {
 
   const pending = _pendingRestore;
   _pendingRestore = null;
-  closeFormModal();
+
+  // Keep the modal open with a spinner instead of closing it immediately -
+  // the actual restore involves real network round-trips (fetching months
+  // from Drive), and closing right away made it look like the click did
+  // nothing until Home suddenly re-rendered moments later.
+  const modalContent = document.getElementById('formModalContent');
+  const showModalProgress = (text) => {
+    if (!modalContent) return;
+    modalContent.innerHTML = `
+      <div class="py-10 flex flex-col items-center justify-center gap-3 text-center">
+        <i class="fa-solid fa-circle-notch fa-spin text-3xl text-blue-500"></i>
+        <p class="text-xs font-semibold text-slate-700">${text}</p>
+      </div>
+    `;
+  };
+  const showModalError = (message) => {
+    if (!modalContent) return;
+    modalContent.innerHTML = `
+      <div class="py-6 flex flex-col items-center justify-center gap-3 text-center">
+        <i class="fa-solid fa-circle-exclamation text-3xl text-rose-500"></i>
+        <p class="text-xs font-semibold text-rose-600">Restore failed</p>
+        <p class="text-[10px] text-slate-400 px-2">${message}</p>
+        <button onclick="closeFormModal()" class="mt-2 px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">Close</button>
+      </div>
+    `;
+  };
 
   const notice = document.getElementById('driveSyncNotice');
   const setNotice = (text, cls) => {
-    notice.innerText = text;
-    notice.className = `text-[11px] text-center ${cls} font-medium h-4`;
+    if (notice) {
+      notice.innerText = text;
+      notice.className = `text-[11px] text-center ${cls} font-medium h-4`;
+    }
+    showModalProgress(text);
   };
 
   const targetYears = new Set(checked);
+  const currentYear = currentYearStr();
+  const restoringCurrentYear = targetYears.has(currentYear);
+
+  setNotice(`Restoring ${Array.from(targetYears).join(', ')}...`, 'text-blue-500');
 
   try {
+    // Local storage is capped to "current year + whatever's being restored
+    // right now" - anything else gets purged first. Two things fall out of
+    // this single step:
+    //   1. Scale: restoring a new comparison year (e.g. 2024) auto-evicts
+    //      whatever OTHER non-current year was sitting locally (e.g. 2025)
+    //      instead of piling up forever - IndexedDB rewrite cost per edit
+    //      stays bounded to roughly two years' worth of data, always, no
+    //      matter how many different years you've ever compared over time.
+    //   2. The current year, when it's the one being restored, purges its
+    //      OWN data too (not just "other" years) - that's what makes
+    //      restoring current year a full overwrite rather than a merge
+    //      (see the note further down where it gets rebuilt from Drive).
+    const localYears = new Set(appData.expenses.map(e => yearMonthOf(e.date).slice(0, 4)));
+    const keepYears = new Set([...targetYears, currentYear]);
+    const yearsToPurge = Array.from(localYears).filter(y => !keepYears.has(y));
+    if (restoringCurrentYear) yearsToPurge.push(currentYear);
+
+    if (yearsToPurge.length > 0) {
+      await purgeYearsFromMemory(yearsToPurge);
+      // Bake the eviction into the dirty-tracking snapshot RIGHT NOW, before
+      // any other logic runs. Without this, a later non-skip saveState()
+      // call (e.g. the legacy branch below, which intentionally marks its
+      // own newly-restored months dirty) would ALSO see these purged
+      // months as "changed since last snapshot" and mark them dirty too -
+      // and backupToGoogleDrive() uploads a dirty month's CURRENT local
+      // expenses verbatim, empty array and all. That would silently wipe
+      // the evicted year's real data on Drive, exactly the thing eviction
+      // is supposed to never do. Evictions must be invisible to Drive,
+      // always - not "usually fine depending on which branch runs next".
+      await saveState({ skipDirtyTracking: true });
+    }
+
     if (pending.mode === 'legacy') {
       const { legacyData, legacyExpenses } = pending;
       const filteredExpenses = legacyExpenses.filter(e => targetYears.has(yearMonthOf(e.date).slice(0, 4)));
@@ -556,8 +665,9 @@ async function confirmYearRestore() {
 
       await saveState(); // normal diff -> marks these months dirty so the next backup ships them in the new chunked format
       setNotice(`Restored ${filteredExpenses.length} expense(s) for ${Array.from(targetYears).join(', ')}. Upgrading Drive format...`, 'text-blue-500');
+      await backupToGoogleDrive(); // seeds settings.json + chunked expenses/manifest from here on - done BEFORE navigating away so its own progress notices still have a live #driveSyncNotice element to write into
+      closeFormModal();
       navigate('home');
-      await backupToGoogleDrive(); // seeds settings.json + chunked expenses/manifest from here on
       return;
     }
 
@@ -567,8 +677,15 @@ async function confirmYearRestore() {
     if (settingsData) mergeIntoAppData(settingsData);
 
     if (targetMonths.length === 0) {
+      // Local data for the selected year(s) was already purged above (and
+      // baked into the snapshot as non-dirty) even though Drive turned out
+      // to have nothing for them - that's the whole point of "overwrite":
+      // Drive's emptiness IS the answer, not a reason to keep stale local
+      // data around. Nothing changed since that bake-in, so there's
+      // nothing new to mark dirty here either.
       await saveState({ skipDirtyTracking: true });
-      setNotice(`No expense data found for ${Array.from(targetYears).join(', ')}. Settings synced.`, 'text-amber-600');
+      setNotice(`No expense data found on Drive for ${Array.from(targetYears).join(', ')}.${restoringCurrentYear ? ' Local data for it was cleared to match.' : ' Settings synced.'}`, 'text-amber-600');
+      closeFormModal();
       navigate('home');
       return;
     }
@@ -612,9 +729,14 @@ async function confirmYearRestore() {
     });
 
     setNotice(`Restored ${Array.from(targetYears).join(', ')} (${targetMonths.length} month(s)).`, 'text-emerald-600');
+    closeFormModal();
     navigate('home');
   } catch (err) {
     console.error(err);
-    setNotice('Restore Error: ' + err.message, 'text-rose-600');
+    if (notice) {
+      notice.innerText = 'Restore Error: ' + err.message;
+      notice.className = 'text-[11px] text-center text-rose-600 font-medium h-4';
+    }
+    showModalError(err.message);
   }
 }
