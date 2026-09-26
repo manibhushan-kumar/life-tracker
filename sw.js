@@ -1,17 +1,35 @@
-const CACHE_NAME = 'life-tracker-v1';
+// Bump this whenever urlsToCache changes so returning users actually pick
+// up the new app shell instead of serving a stale cached copy forever.
+const CACHE_NAME = 'life-tracker-v2';
 const urlsToCache = [
   './',
   './index.html',
-  './manifest.json'
+  './manifest.json',
+  './life-tracker-logo.png',
+  './js/data-model.js',
+  './js/idb.js',
+  './js/storage.js',
+  './js/drive-sync.js'
 ];
 
 // Install Service Worker and cache files
 self.addEventListener('install', event => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(cache => {
         return cache.addAll(urlsToCache);
       })
+  );
+});
+
+// Drop any caches from a previous version so old app-shell files (including
+// ones that no longer exist, like a stale js/ bundle) don't linger forever.
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key)))
+    ).then(() => self.clients.claim())
   );
 });
 
