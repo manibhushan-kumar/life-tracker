@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Life Tracker</title>
   <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="./life-tracker-logo.png">
+  <link rel="apple-touch-icon" href="./life-tracker-logo.png">
   <meta name="theme-color" content="#2563eb">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -1346,6 +1348,15 @@
 
     // Initialize
     window.addEventListener('DOMContentLoaded', initStorage);
+
+    // Register service worker for offline support
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(err => {
+          console.error('Service worker registration failed:', err);
+        });
+      });
+    }
   </script>
 </body>
 </html>
