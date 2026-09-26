@@ -8,7 +8,7 @@
   "theme_color": "#3b82f6",
   "icons": [
     {
-      "src": "./life-tracker-logo.png.png",
+      "src": "./life-tracker-logo.png",
       "sizes": "512x512",
       "type": "image/png"
     }
