@@ -40,6 +40,33 @@ function currentYearStr() {
 // index.html and storage.js needing to know about each other's constants.
 const LAST_TAB_STORAGE_KEY = 'lifeTracker_lastTab';
 
+// Breadcrumb suffix shown after "Life Tracker" in the main header for each
+// bottom-nav tab (see navigate() in index.html) plus Splitwise (see
+// openSplitwise/closeSplitwise in splitwise.js) - one shared lookup so
+// every "page" in the app, current or future, announces itself the SAME
+// way instead of each view inventing its own title/close-button pattern.
+// `null` for home means no suffix at all - just "Life Tracker" alone.
+const TAB_DISPLAY_NAMES = {
+  home: null,
+  expenses: 'Expenses',
+  items: 'Due Items',
+  compare: 'Compare',
+  settings: 'Settings',
+  splitwise: 'Splitwise'
+};
+
+// Sets the " / PageName" breadcrumb suffix after the clickable "Life
+// Tracker" root in the main header (see index.html). Passing a falsy value
+// (e.g. TAB_DISPLAY_NAMES.home, which is null) clears it back down to just
+// "Life Tracker" - this is what makes tapping that root feel like a real
+// breadcrumb "go home" action, and it's also why full-page views like
+// Splitwise no longer need their own separate close (X) button: the root
+// is always sitting right there doing that job for every page at once.
+function setAppHeaderCrumb(pageName) {
+  const el = document.getElementById('appHeaderCrumb');
+  if (el) el.textContent = pageName ? ` / ${pageName}` : '';
+}
+
 // All expenses whose date falls in the given calendar year ("YYYY").
 // Single source of truth for year-filtering so Home, Expenses, and Compare
 // don't each grow their own slightly-different filter logic.

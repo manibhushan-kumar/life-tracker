@@ -44,10 +44,28 @@ function _sgId(prefix) {
   return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 }
 
+// Splitwise deliberately doesn't cover the real app header/nav like a
+// typical full-screen overlay - it sits in the gap between them so both
+// stay visible/usable. That gap's size depends on the real header/nav's
+// actual rendered height (which can vary - e.g. the Drive status pill
+// wrapping, or font differences across devices) so it's measured here at
+// runtime rather than hardcoded, and applied as inline top/bottom styles.
+function _positionSplitwiseOverlay() {
+  const overlay = document.getElementById('splitwiseOverlay');
+  const header = document.querySelector('header');
+  const nav = document.getElementById('bottomNav');
+  if (!overlay) return;
+  overlay.style.top = header ? `${header.offsetHeight}px` : '0px';
+  overlay.style.bottom = nav ? `${nav.offsetHeight}px` : '0px';
+}
+
 // --- Open / close / view dispatch -----------------------------------------
 
 async function openSplitwise() {
-  document.getElementById('splitwiseOverlay').classList.remove('hidden');
+  const overlay = document.getElementById('splitwiseOverlay');
+  overlay.classList.remove('hidden');
+  _positionSplitwiseOverlay();
+  setAppHeaderCrumb(TAB_DISPLAY_NAMES.splitwise);
   splitGroups = await IDB.getAll('splitGroups');
   splitGroups.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   activeSplitGroupId = null;
@@ -72,7 +90,10 @@ async function resumeSplitwiseIfWasOpen() {
   }
   if (!state || !state.open) return;
 
-  document.getElementById('splitwiseOverlay').classList.remove('hidden');
+  const overlay = document.getElementById('splitwiseOverlay');
+  overlay.classList.remove('hidden');
+  _positionSplitwiseOverlay();
+  setAppHeaderCrumb(TAB_DISPLAY_NAMES.splitwise);
   splitGroups = await IDB.getAll('splitGroups');
   splitGroups.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 
@@ -88,6 +109,10 @@ async function resumeSplitwiseIfWasOpen() {
 function closeSplitwise() {
   document.getElementById('splitwiseOverlay').classList.add('hidden');
   _clearSplitwiseUiState();
+  // Hand the header title back to whatever tab is actually showing
+  // underneath - it never stopped being "current", Splitwise was just
+  // sitting on top of it in the shared content area.
+  setAppHeaderCrumb(TAB_DISPLAY_NAMES[currentTab]);
 }
 
 function openGroupDetail(groupId) {
@@ -113,8 +138,7 @@ function renderSplitwiseView() {
 // --- Group list view --------------------------------------------------
 
 function renderSplitwiseGroupList() {
-  document.getElementById('splitwiseBackBtn').classList.add('hidden');
-  document.getElementById('splitwiseTitle').textContent = 'Splitwise';
+  document.getElementById('splitwiseSubHeader').classList.add('hidden');
 
   const atLimit = splitGroups.length >= MAX_SPLIT_GROUPS;
   const content = document.getElementById('splitwiseContent');
@@ -263,7 +287,7 @@ function simplifySplitDebts(balances) {
 }
 
 function renderSplitGroupDetail(group) {
-  document.getElementById('splitwiseBackBtn').classList.remove('hidden');
+  document.getElementById('splitwiseSubHeader').classList.remove('hidden');
   document.getElementById('splitwiseTitle').textContent = group.name;
 
   const balances = calculateSplitBalances(group);

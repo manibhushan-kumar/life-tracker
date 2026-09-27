@@ -38,7 +38,9 @@
         <i class="fa-solid fa-layer-group text-sm"></i>
       </div>
       <div>
-        <h1 class="text-base font-bold tracking-tight leading-none text-slate-800">Life Tracker</h1>
+        <h1 class="text-base font-bold tracking-tight leading-none text-slate-800">
+          <button type="button" onclick="navigate('home')" class="hover:text-blue-600 transition" aria-label="Go to Home">Life Tracker</button><span id="appHeaderCrumb" class="text-slate-400 font-semibold"></span>
+        </h1>
         <p class="text-[10px] font-medium text-slate-400 leading-tight mt-0.5" id="headerDate">Loading...</p>
       </div>
     </div>
@@ -71,7 +73,7 @@
        and un-pinning it from the bottom of the screen. Learned that one
        the hard way - if this ever needs adjusting again, `fixed` is doing
        double duty as both "pinned to viewport" AND "FAB's anchor", on purpose. -->
-  <nav class="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-lg border-t border-slate-200 max-w-md mx-auto">
+  <nav id="bottomNav" class="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-lg border-t border-slate-200 max-w-md mx-auto">
     <div class="flex items-center justify-around py-2">
       <button onclick="navigate('home')" id="nav-home" class="nav-btn flex flex-col items-center gap-1 text-blue-600 flex-1">
         <i class="fa-solid fa-house text-lg"></i>
@@ -160,22 +162,41 @@
     </div>
   </div>
 
-  <!-- Splitwise: full-screen overlay (not a bottom-nav tab - it has its own
-       nested list -> detail navigation). z-40 so it stays UNDER formModal
-       (z-50, used above for its New Group / Add Person / Add Expense forms)
-       and stays open/visible behind those forms rather than getting hidden
-       by them. Local-only feature - see js/splitwise.js for why. -->
-  <div id="splitwiseOverlay" class="fixed inset-0 z-40 bg-slate-50 hidden flex flex-col">
-    <div class="sticky top-0 bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 py-3 flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <button id="splitwiseBackBtn" onclick="backToGroupList()" class="hidden w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 transition" aria-label="Back to groups">
-          <i class="fa-solid fa-arrow-left"></i>
-        </button>
-        <h2 id="splitwiseTitle" class="text-sm font-bold text-slate-800">Splitwise</h2>
-      </div>
-      <button onclick="closeSplitwise()" aria-label="Close Splitwise" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-100 transition">
-        <i class="fa-solid fa-xmark"></i>
+  <!-- Splitwise: a full page, not a bottom-nav tab (it has its own nested
+       list -> detail navigation) - but it deliberately does NOT cover the
+       real app header/nav like a true full-screen overlay would. Its
+       top/bottom get set inline via JS (see _positionSplitwiseOverlay in
+       splitwise.js) to exactly match the real header/nav's rendered height,
+       measured at runtime rather than guessed/hardcoded - so the standard
+       header (branding, Drive status) and bottom nav (so you can jump
+       straight to another tab) stay visible and usable the whole time
+       you're in here. z-20 keeps it under the header (z-30) and nav (z-40)
+       so it can never accidentally paint over either even if a measurement
+       is slightly off, and under formModal (z-50, used above for its New
+       Group / Add Person / Add Expense forms) so those still show on top
+       of it correctly. -->
+  <div id="splitwiseOverlay" class="fixed left-0 right-0 z-20 bg-slate-50 hidden flex flex-col overflow-hidden">
+    <!-- No standalone "close" (X) button here anymore - the main header's
+         "Life Tracker" breadcrumb root (tap it -> navigate('home')) and the
+         bottom nav itself both already exit Splitwise via navigate(), which
+         closes this overlay as a side effect. One less redundant control. -->
+    <!-- Hidden entirely in the group-LIST view (see renderSplitwiseGroupList
+         in splitwise.js) since it'd otherwise just show "Splitwise" again,
+         right underneath the main header's "Life Tracker / Splitwise"
+         breadcrumb - pure duplication with nothing else useful in it (no
+         back button either, at the list level). Only shown in group DETAIL
+         view, where it earns its keep: back button + the specific group's
+         name, neither of which the main header knows about. `hidden` +
+         `flex` coexist as static classes (same pattern as #splitwiseOverlay
+         itself) with only `hidden` ever toggled at runtime - Tailwind's
+         generated stylesheet orders `hidden` after `flex`, so `display:
+         none` always wins the cascade while present, and simply removing
+         it cleanly falls back to the already-there `flex`. -->
+    <div id="splitwiseSubHeader" class="hidden flex sticky top-0 bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 py-3 items-center gap-2">
+      <button id="splitwiseBackBtn" onclick="backToGroupList()" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 transition" aria-label="Back to groups">
+        <i class="fa-solid fa-arrow-left"></i>
       </button>
+      <h2 id="splitwiseTitle" class="text-sm font-bold text-slate-800"></h2>
     </div>
     <div id="splitwiseContent" class="flex-1 overflow-y-auto p-4 space-y-3 max-w-md mx-auto w-full"></div>
   </div>
@@ -204,8 +225,18 @@
     // snapping back to Home. LAST_TAB_STORAGE_KEY lives in data-model.js so
     // this and initStorage() in storage.js always agree on the key name.
     function navigate(tab) {
+      // Splitwise is a full page too now (not a bottom-nav tab, but it does
+      // share the header/nav), so picking any real tab while it's open has
+      // to close it first - otherwise its opaque content area would just
+      // sit there covering up whatever this call renders underneath.
+      const splitwiseOverlay = document.getElementById('splitwiseOverlay');
+      if (splitwiseOverlay && !splitwiseOverlay.classList.contains('hidden')) {
+        closeSplitwise();
+      }
+
       currentTab = tab;
       localStorage.setItem(LAST_TAB_STORAGE_KEY, tab);
+      setAppHeaderCrumb(TAB_DISPLAY_NAMES[tab]);
       document.querySelectorAll('.nav-btn').forEach(btn => {
         btn.classList.remove('text-blue-600');
         btn.classList.add('text-slate-400');
