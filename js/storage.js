@@ -66,6 +66,7 @@ async function getSyncMeta() {
     remoteChunkVersions: {},
     manifestFileId: null,
     settingsFileId: null,
+    splitwiseFileId: null,
     lastBackupAt: null,
     lastRestoreAt: null
   };

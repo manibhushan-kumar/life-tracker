@@ -5,6 +5,12 @@
 //     settings.json            <- categories + recurringItems + due items.
 //                                  Always small, so it's just overwritten
 //                                  wholesale on every backup. No chunking.
+//     splitwise.json           <- Splitwise groups (members + expenses per
+//                                  group). Capped at 5 groups total, so like
+//                                  settings.json it's just overwritten
+//                                  wholesale every backup/restore - no need
+//                                  for the chunking/dirty-tracking machinery
+//                                  built for the (unbounded) expenses list.
 //     expenses_manifest.json   <- index of every month chunk: {fileId, count,
 //                                  updatedAt}. One small file means restore
 //                                  never has to list-and-guess; it just reads
@@ -31,6 +37,7 @@ const G_TOKEN_KEY = 'life_tracker_gdrive_token';
 const G_TOKEN_EXPIRY_KEY = 'life_tracker_gdrive_token_expiry';
 
 const SETTINGS_FILE_NAME = 'settings.json';
+const SPLITWISE_FILE_NAME = 'splitwise.json';
 const MANIFEST_FILE_NAME = 'expenses_manifest.json';
 const EXPENSES_FOLDER_NAME = 'expenses';
 const LEGACY_BACKUP_FILE_NAME = 'life_tracker_data.json';
@@ -370,6 +377,18 @@ async function backupToGoogleDrive() {
     };
     const settingsFileId = await upsertJsonFile(rootId, SETTINGS_FILE_NAME, settingsPayload, syncMeta.settingsFileId);
 
+    // Splitwise groups are capped at 5 total, so - same reasoning as
+    // settings.json above - just read the whole store fresh from IndexedDB
+    // (not the in-memory `splitGroups` variable, which is only populated
+    // while the Splitwise overlay is actually open and would be stale/empty
+    // otherwise) and overwrite the Drive copy wholesale every backup.
+    setNotice('Syncing Splitwise groups...', 'text-blue-500');
+    const splitwisePayload = {
+      groups: await IDB.getAll('splitGroups'),
+      savedAt: new Date().toISOString()
+    };
+    const splitwiseFileId = await upsertJsonFile(rootId, SPLITWISE_FILE_NAME, splitwisePayload, syncMeta.splitwiseFileId);
+
     let manifestFileId = syncMeta.manifestFileId;
 
     if (dirtyMonths.length > 0) {
@@ -404,7 +423,7 @@ async function backupToGoogleDrive() {
       await clearDirtyMonths(dirtyMonths, remoteVersions);
     }
 
-    await saveSyncMeta({ settingsFileId, manifestFileId });
+    await saveSyncMeta({ settingsFileId, manifestFileId, splitwiseFileId });
 
     setNotice(
       dirtyMonths.length > 0 ? `Synced ${dirtyMonths.length} month(s) + settings.` : 'Settings synced. Expenses already up to date.',
@@ -440,6 +459,30 @@ function mergeExpensesForMonths(newExpenses, targetMonths) {
   appData.expenses = untouchedLocal.concat(newExpenses);
 }
 
+// Unlike expenses, Splitwise groups aren't year-scoped and there's no
+// diffing/merge needed - it's a full REPLACE of the local store with
+// whatever's on Drive, same wholesale treatment as settings.json. Safe to
+// call unconditionally (no-ops if there's nothing to restore) from every
+// restore code path, including the early-return "no expense history yet"
+// branches that never reach the year-picker/confirmYearRestore flow at all.
+async function applyRestoredSplitwiseData(splitwiseData) {
+  if (!splitwiseData || !Array.isArray(splitwiseData.groups)) return;
+
+  await IDB.replaceAll('splitGroups', splitwiseData.groups);
+
+  // If the Splitwise overlay happens to be open right now, refresh it in
+  // place so it doesn't keep showing stale pre-restore data until the user
+  // backs out and back in. (openSplitwise() itself always re-fetches fresh
+  // from IndexedDB anyway, so this is only needed for the "already open"
+  // case.)
+  const overlay = document.getElementById('splitwiseOverlay');
+  if (overlay && !overlay.classList.contains('hidden')) {
+    splitGroups = await IDB.getAll('splitGroups');
+    splitGroups.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    renderSplitwiseView();
+  }
+}
+
 async function restoreFromGoogleDrive() {
   if (!gdriveToken) return alert('Authenticate with Google first!');
   const notice = document.getElementById('driveSyncNotice');
@@ -453,6 +496,13 @@ async function restoreFromGoogleDrive() {
   try {
     const folderName = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
     const rootId = await getOrCreateFolder(folderName);
+
+    // Splitwise groups aren't year-scoped like expenses (max 5 groups,
+    // wholesale-synced) so this is fetched once here and applied
+    // unconditionally further down, regardless of which restore path
+    // (legacy/chunked, or which year(s)) the rest of this function takes.
+    const splitwiseFile = await findFileByName(SPLITWISE_FILE_NAME, rootId);
+    const splitwiseData = splitwiseFile ? await fetchJsonFile(splitwiseFile.id).catch(() => null) : null;
 
     const manifestFile = await findFileByName(MANIFEST_FILE_NAME, rootId);
 
@@ -475,13 +525,14 @@ async function restoreFromGoogleDrive() {
       if (years.length === 0) {
         // Nothing dated at all - nothing to pick a year for, just bring in settings.
         mergeIntoAppData({ ...legacyData, expenses: undefined });
+        await applyRestoredSplitwiseData(splitwiseData);
         await saveState({ skipDirtyTracking: true });
         setNotice('Restored settings from legacy backup (no expenses found).', 'text-emerald-600');
         navigate('home');
         return;
       }
 
-      _pendingRestore = { mode: 'legacy', legacyData, legacyExpenses };
+      _pendingRestore = { mode: 'legacy', legacyData, legacyExpenses, splitwiseData };
       setNotice('Choose a year to restore below.', 'text-blue-500');
       openYearPickerModal(years, { legacyUpgradeNotice: true });
       return;
@@ -497,6 +548,7 @@ async function restoreFromGoogleDrive() {
 
     if (remoteMonths.length === 0) {
       if (settingsData) mergeIntoAppData(settingsData);
+      await applyRestoredSplitwiseData(splitwiseData);
       await saveState({ skipDirtyTracking: true });
       setNotice('Backup found, but it has no expense history yet. Settings synced.', 'text-amber-600');
       navigate('home');
@@ -504,7 +556,7 @@ async function restoreFromGoogleDrive() {
     }
 
     const years = Array.from(new Set(remoteMonths.map(m => m.slice(0, 4)))).sort().reverse();
-    _pendingRestore = { mode: 'chunked', manifest, settingsData, manifestFile, settingsFile, remoteMonths };
+    _pendingRestore = { mode: 'chunked', manifest, settingsData, manifestFile, settingsFile, remoteMonths, splitwiseData };
     setNotice('Choose a year to restore below.', 'text-blue-500');
     openYearPickerModal(years, {});
   } catch (err) {
@@ -555,7 +607,7 @@ function openYearPickerModal(years, opts) {
 
     <p class="text-[10px] text-amber-600 mb-2"><i class="fa-solid fa-triangle-exclamation mr-1"></i>${currentYear} is handled differently from other years: since Home/Expenses live off it daily, restoring it fully <strong>replaces</strong> your local ${currentYear} data with Drive's version (anything not yet backed up will be lost). Other years just merge in on top - nothing else on-device gets touched.</p>
 
-    <p class="text-[10px] text-slate-400 mb-3">Categories, recurring items, and due items always sync in full - they're tiny.</p>
+    <p class="text-[10px] text-slate-400 mb-3">Categories, recurring items, due items, and Splitwise groups always sync in full - they're tiny.</p>
 
     <div class="grid grid-cols-2 gap-2">
       <button onclick="closeFormModal(); _pendingRestore = null;" class="py-2.5 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">Cancel</button>
@@ -621,6 +673,14 @@ async function confirmYearRestore() {
   setNotice(`Restoring ${Array.from(targetYears).join(', ')}...`, 'text-blue-500');
 
   try {
+    // Splitwise groups aren't year-scoped like expenses, so this happens
+    // unconditionally up front regardless of which year(s) were picked or
+    // which mode (legacy/chunked) the rest of this function takes below.
+    if (pending.splitwiseData) {
+      setNotice('Syncing Splitwise groups...', 'text-blue-500');
+      await applyRestoredSplitwiseData(pending.splitwiseData);
+    }
+
     // Local storage is capped to "current year + whatever's being restored
     // right now" - anything else gets purged first. Two things fall out of
     // this single step:

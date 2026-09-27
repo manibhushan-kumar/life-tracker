@@ -1,19 +1,23 @@
-// --- Splitwise (local-only bill splitting) --------------------------------
+// --- Splitwise (bill splitting) --------------------------------------------
 // A self-contained "who owes who" feature for group expenses (trips,
-// flatmates, events). Deliberately isolated from the rest of the app:
+// flatmates, events). Structurally isolated from the rest of the app even
+// though it now syncs to Drive:
 //
 //   - Its own IndexedDB store ('splitGroups', see js/idb.js) - NOT part of
-//     `appData`, so saveState()/backupToGoogleDrive()/restoreFromGoogleDrive()
-//     in storage.js/drive-sync.js never see it, touch it, or know it exists.
-//     That's the whole point: this data is local-to-this-device only, and a
-//     Drive restore must never create, modify, or wipe a single group.
+//     `appData`, so saveState() and all the expense/settings-specific logic
+//     in storage.js/drive-sync.js never has to know its shape. It DOES sync
+//     to Google Drive, just via its own dedicated splitwise.json file
+//     (uploaded/restored wholesale, same pattern as settings.json - see
+//     backupToGoogleDrive/restoreFromGoogleDrive in drive-sync.js) rather
+//     than being folded into the expenses/settings sync machinery.
 //   - Its own full-screen overlay (#splitwiseOverlay in index.html), not a
 //     tab, since it has its own two-level nested navigation (group list ->
 //     group detail) that doesn't fit the app's single-level bottom nav.
 //
 // Each group document embeds its own members + expenses (small, capped
 // dataset - max 5 groups total) so "delete a group" is one IDB.delete call
-// that removes everything in it, with nothing left to orphan elsewhere.
+// that removes everything in it, with nothing left to orphan elsewhere -
+// and so a Drive restore can just replace the WHOLE store in one shot too.
 
 let splitGroups = [];
 let activeSplitGroupId = null;
@@ -115,7 +119,7 @@ function renderSplitwiseGroupList() {
   const atLimit = splitGroups.length >= MAX_SPLIT_GROUPS;
   const content = document.getElementById('splitwiseContent');
   content.innerHTML = `
-    <p class="text-[11px] text-slate-400">Lives only on this device - never backed up or touched by Google Drive restore. Deleting a group wipes everything in it, right here.</p>
+    <p class="text-[11px] text-slate-400">Backs up to Google Drive along with the rest of your data (Settings → Upload/Restore). Deleting a group wipes everything in it, right here and on Drive next sync.</p>
 
     <button onclick="openNewGroupForm()" ${atLimit ? 'disabled' : ''} class="w-full py-2.5 rounded-xl text-xs font-bold transition ${atLimit ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}">
       <i class="fa-solid fa-plus mr-1"></i> ${atLimit ? 'Max 5 groups reached' : 'New Group'}

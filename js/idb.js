@@ -37,10 +37,11 @@ const IDB = (() => {
         }
         if (!db.objectStoreNames.contains('splitGroups')) {
           // Splitwise-style group-expense-splitting feature (js/splitwise.js).
-          // Deliberately its OWN store, never touched by appData/saveState,
-          // backupToGoogleDrive, or restoreFromGoogleDrive - this is
-          // local-device-only data by design, so it simply doesn't exist as
-          // far as the Drive sync code is concerned.
+          // Its own store (not part of appData/saveState) since it has a
+          // completely different shape (nested members/expenses per group)
+          // and its own tiny 5-group cap - but it DOES sync to Google Drive,
+          // via its own dedicated splitwise.json file (see drive-sync.js),
+          // wholesale on every backup/restore just like settings.json.
           db.createObjectStore('splitGroups', { keyPath: 'id' });
         }
       };
