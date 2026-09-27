@@ -46,14 +46,23 @@
   </main>
 
   <!-- Bottom Navigation -->
-  <!-- `relative` here (not on the inner flex row) so the FAB below can be
-       absolutely centered against the FULL nav width. Exactly 2 nav-btns on
-       each side of the spacer (Home/Expenses | Due Items/Compare) - Settings
-       moved to the side drawer specifically so this split stays even. With
-       an uneven 2-vs-3 split (Settings included), the single spacer only
-       buffered the LEFT of the FAB, leaving Due Items crammed right up
-       against it on the right - symmetric counts is what actually fixes that. -->
-  <nav class="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-lg border-t border-slate-200 max-w-md mx-auto relative">
+  <!-- Exactly 2 nav-btns on each side of the spacer (Home/Expenses | Due
+       Items/Compare) - Settings moved to the side drawer specifically so
+       this split stays even. With an uneven 2-vs-3 split (Settings
+       included), the single spacer only buffered the LEFT of the FAB,
+       leaving Due Items crammed right up against it on the right -
+       symmetric counts is what actually fixes that. -->
+  <!-- `fixed` alone already gives the FAB below a valid positioning anchor
+       (any position value other than `static` establishes a containing
+       block for absolutely-positioned descendants) - do NOT also add
+       `relative` here. Tailwind's generated stylesheet orders position
+       utilities as static/fixed/absolute/relative/sticky, so `relative`
+       comes AFTER `fixed` in the actual CSS and silently wins the cascade,
+       flipping this whole bar from `position: fixed` to `position: relative`
+       and un-pinning it from the bottom of the screen. Learned that one
+       the hard way - if this ever needs adjusting again, `fixed` is doing
+       double duty as both "pinned to viewport" AND "FAB's anchor", on purpose. -->
+  <nav class="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-lg border-t border-slate-200 max-w-md mx-auto">
     <div class="flex items-center justify-around py-2">
       <button onclick="navigate('home')" id="nav-home" class="nav-btn flex flex-col items-center gap-1 text-blue-600 flex-1">
         <i class="fa-solid fa-house text-lg"></i>

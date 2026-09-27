@@ -169,11 +169,51 @@ function calculateSplitBalances(group) {
   return balances;
 }
 
+// Turns net balances into the SMALLEST set of "X pays Y" transactions that
+// settles everyone up - the classic Splitwise "simplify debts" move.
+// Without this, a group shows every member's balance in isolation ("Alice
+// owes ₹300", "Bob owes ₹200", "Charlie is owed ₹500") and leaves the actual
+// who-pays-who math to the humans. This greedily matches the biggest debtor
+// against the biggest creditor each round, which in practice collapses most
+// groups down to far fewer actual payments than there are members - e.g. 3
+// people who all owe each other different amounts can often settle in just
+// 1-2 transactions instead of everyone paying everyone.
+function simplifySplitDebts(balances) {
+  const EPSILON = 0.01;
+  const creditors = [];
+  const debtors = [];
+
+  Object.entries(balances).forEach(([id, amount]) => {
+    if (amount > EPSILON) creditors.push({ id, amount });
+    else if (amount < -EPSILON) debtors.push({ id, amount: -amount });
+  });
+  creditors.sort((a, b) => b.amount - a.amount);
+  debtors.sort((a, b) => b.amount - a.amount);
+
+  const transactions = [];
+  let i = 0;
+  let j = 0;
+  while (i < debtors.length && j < creditors.length) {
+    const debtor = debtors[i];
+    const creditor = creditors[j];
+    const settled = Math.min(debtor.amount, creditor.amount);
+    if (settled > EPSILON) {
+      transactions.push({ from: debtor.id, to: creditor.id, amount: settled });
+    }
+    debtor.amount -= settled;
+    creditor.amount -= settled;
+    if (debtor.amount <= EPSILON) i++;
+    if (creditor.amount <= EPSILON) j++;
+  }
+  return transactions;
+}
+
 function renderSplitGroupDetail(group) {
   document.getElementById('splitwiseBackBtn').classList.remove('hidden');
   document.getElementById('splitwiseTitle').textContent = group.name;
 
   const balances = calculateSplitBalances(group);
+  const settleUp = simplifySplitDebts(balances);
   const memberName = id => (group.members.find(m => m.id === id) || {}).name || 'Removed member';
   const canAddExpense = group.members.length >= 2;
 
@@ -208,6 +248,26 @@ function renderSplitGroupDetail(group) {
         </div>
       `}
     </div>
+
+    ${group.expenses.length > 0 ? `
+      <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-2">
+        <h3 class="text-xs font-bold text-slate-800">Settle Up <span class="font-normal text-slate-400">(simplified)</span></h3>
+        ${settleUp.length === 0 ? `
+          <p class="text-[11px] text-emerald-600 font-semibold text-center py-1"><i class="fa-solid fa-circle-check mr-1"></i>Everyone's settled up!</p>
+        ` : `
+          <div class="space-y-1.5">
+            ${settleUp.map(t => `
+              <div class="flex items-center gap-2 p-2 rounded-lg bg-violet-50 border border-violet-100 text-[11px]">
+                <span class="font-bold text-slate-700">${memberName(t.from)}</span>
+                <i class="fa-solid fa-arrow-right text-violet-400"></i>
+                <span class="font-bold text-slate-700">${memberName(t.to)}</span>
+                <span class="ml-auto font-bold text-violet-700">₹${t.amount.toFixed(2)}</span>
+              </div>
+            `).join('')}
+          </div>
+        `}
+      </div>
+    ` : ''}
 
     <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-2">
       <div class="flex items-center justify-between">
