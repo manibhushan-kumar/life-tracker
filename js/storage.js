@@ -169,11 +169,23 @@ async function saveState(opts) {
 // Called once on boot (see the DOMContentLoaded listener at the bottom of
 // index.html). Loads/migrates data FIRST, then renders - so Home never
 // flashes an empty state while IndexedDB is still opening.
+//
+// Resumes whatever tab the user was last on (see navigate() in index.html,
+// which keeps LAST_TAB_STORAGE_KEY in sync on every switch) instead of
+// always snapping back to Home. Mainly a backstop for the rare reload that
+// slips past the overscroll-behavior CSS fix (e.g. the OS itself killing
+// and relaunching the PWA) - validated against a known-tabs list so a
+// stale/corrupted localStorage value can never navigate somewhere invalid.
+const VALID_TABS = ['home', 'expenses', 'compare', 'items', 'settings'];
+
 async function initStorage() {
   await loadAppData();
 
   document.getElementById('headerDate').innerText = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-  navigate('home');
+
+  const lastTab = localStorage.getItem(LAST_TAB_STORAGE_KEY);
+  navigate(VALID_TABS.includes(lastTab) ? lastTab : 'home');
+
   tryRestoreDriveSession();
 }
 

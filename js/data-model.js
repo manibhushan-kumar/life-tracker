@@ -34,6 +34,12 @@ function currentYearStr() {
   return String(new Date().getFullYear());
 }
 
+// Where the currently-viewed bottom-nav tab gets persisted (see navigate()
+// in index.html and initStorage() below in storage.js). Living here - the
+// first script loaded - means both of those agree on the key name without
+// index.html and storage.js needing to know about each other's constants.
+const LAST_TAB_STORAGE_KEY = 'lifeTracker_lastTab';
+
 // All expenses whose date falls in the given calendar year ("YYYY").
 // Single source of truth for year-filtering so Home, Expenses, and Compare
 // don't each grow their own slightly-different filter logic.

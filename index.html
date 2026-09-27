@@ -12,6 +12,15 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
+    /* Kills the browser's native pull-to-refresh gesture. Without this, a
+       simple overscroll bounce at the top of ANY tab (not even a deliberate
+       "refresh" swipe) triggers a full page reload - which wipes every bit
+       of in-memory JS state (currentTab, open modals, everything) and
+       re-boots the app straight back to Home. This is the primary fix for
+       that; see also the currentTab persistence in navigate()/initStorage()
+       as a backstop for the rare reload that still happens some other way
+       (e.g. the OS reclaiming memory and relaunching the PWA). -->
+    html, body { overscroll-behavior-y: contain; }
     body { -webkit-tap-highlight-color: transparent; }
     .hide-scrollbar::-webkit-scrollbar { display: none; }
     .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
@@ -188,8 +197,15 @@
     // handlers only.
 
     let currentTab = 'home';
+    // Backstop for the overscroll-behavior fix above: if a reload DOES
+    // happen despite it (e.g. the OS itself killed and relaunched the PWA,
+    // or a manual hard refresh), this is what lets initStorage() resume on
+    // whatever tab the user was actually looking at instead of always
+    // snapping back to Home. LAST_TAB_STORAGE_KEY lives in data-model.js so
+    // this and initStorage() in storage.js always agree on the key name.
     function navigate(tab) {
       currentTab = tab;
+      localStorage.setItem(LAST_TAB_STORAGE_KEY, tab);
       document.querySelectorAll('.nav-btn').forEach(btn => {
         btn.classList.remove('text-blue-600');
         btn.classList.add('text-slate-400');
