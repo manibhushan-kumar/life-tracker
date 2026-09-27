@@ -80,13 +80,13 @@ function getDefaultAppData() {
   return {
     expenses: [],
     items: [],
-    // Generic "tap a day to log it" items - milk, newspaper, whatever recurs daily.
-    // Fully user-configurable in Settings, and rides along in the same backup blob.
+    // Generic "tap a day to log it" items - milk, newspaper, whatever recurs
+    // daily. Fully user-configurable in Settings (starts empty - no seeded
+    // example item, since nothing here is meant to be a hardcoded default
+    // anyone has to work around) and rides along in the same backup blob.
     // priceHistory is the source of truth for what a day COSTS; `price` is just a
     // cached "today's price" convenience field kept in sync alongside it.
-    recurringItems: [
-      { id: 'milk', name: 'Milk', category: 'Milk', subCategory: null, price: 50, startDate: '1970-01-01', priceHistory: [{ from: '1970-01-01', price: 50 }] }
-    ],
+    recurringItems: [],
     categories: {
       'Food': ['Restaurant', 'Delivery', 'Snacks', 'Coffee'],
       'Bills': ['Electricity', 'Water', 'Internet', 'Mobile', 'Rent', 'EMI'],
@@ -95,15 +95,20 @@ function getDefaultAppData() {
       'Shopping': ['Clothes', 'Electronics', 'Gifts', 'Amazon'],
       'Entertainment': ['Netflix', 'Spotify', 'Movies', 'Gaming', 'Events'],
       'Health': ['Pharmacy', 'Doctor', 'Gym', 'Insurance'],
-      'Travel': ['Hotels', 'Tickets', 'Tours'],
-      'Milk': ['Cow Milk', 'Buffalo Milk', 'Toned Milk']
+      'Travel': ['Hotels', 'Tickets', 'Tours']
     },
     // Monthly budget tracking. `global` is the fallback used by any month
     // that doesn't have its own entry in `monthly` - see getBudgetForMonth().
     // A value of 0 means "not configured", not "a real ₹0 budget" - callers
     // treat that as "don't render a budget bar yet". `frozenThroughMonth` is
     // freezePastMonthBudgets()'s bookmark - see there for why it exists.
-    budgets: { global: 0, monthly: {}, frozenThroughMonth: null }
+    budgets: { global: 0, monthly: {}, frozenThroughMonth: null },
+    // Optional "who actually paid" tagging for expenses/due-item payments -
+    // see getFamilyMemberName() below. Purely a label list ({id, name}), no
+    // relation to Splitwise's per-group members (js/splitwise.js) - that's a
+    // separate, unrelated concept (splitting a shared bill vs just noting
+    // who paid for something out of one household's own money).
+    familyMembers: []
   };
 }
 
@@ -148,13 +153,18 @@ function mergeIntoAppData(parsedData) {
   if (parsedData.expenses) appData.expenses = parsedData.expenses;
   if (parsedData.items) appData.items = parsedData.items;
 
-  // Recurring Daily Items (generic, user-configurable replacement for the
-  // old hardcoded single "milkPrice" setting)
+  // Family members: full OVERWRITE on restore (not merged on top of
+  // defaults like categories are) - the whole point of restoring is
+  // "Drive's list wins", including someone having been deleted there. Same
+  // wholesale-replace treatment `items` above already gets.
+  if (Array.isArray(parsedData.familyMembers)) {
+    appData.familyMembers = parsedData.familyMembers;
+  }
+
+  // Recurring Daily Items - fully generic and user-configurable, so a
+  // straight overwrite when present is all that's needed here.
   if (Array.isArray(parsedData.recurringItems)) {
     appData.recurringItems = parsedData.recurringItems;
-  } else if (typeof parsedData.milkPrice === 'number') {
-    // Legacy upgrade path for users who saved data before this feature existed.
-    appData.recurringItems = [{ id: 'milk', name: 'Milk', category: 'Milk', subCategory: null, price: parsedData.milkPrice }];
   }
 
   // Normalize every recurring item so it always has a proper priceHistory,
@@ -178,8 +188,8 @@ function mergeIntoAppData(parsedData) {
         }
       });
     } else {
-      // Merge saved categories on top of defaults so newly introduced
-      // built-in categories (e.g. Milk) still show up for existing users.
+      // Merge saved categories on top of defaults so any newly introduced
+      // built-in default category still shows up for existing users.
       appData.categories = { ...appData.categories, ...parsedData.categories };
     }
   }
@@ -276,4 +286,16 @@ function freezePastMonthBudgets() {
   }
   budgets.frozenThroughMonth = currentMonth;
   return true;
+}
+
+// Display name for a family-member id, with a graceful fallback for ids
+// that no longer resolve (the member was deleted after being tagged on an
+// expense or due-item payment) - keeps Expenses/Compare from ever choking
+// on a dangling reference. Returns null for a falsy id (i.e. "nobody was
+// tagged") so callers can cleanly decide whether to show a "Paid by" bit
+// at all.
+function getFamilyMemberName(memberId) {
+  if (!memberId) return null;
+  const member = (appData.familyMembers || []).find(m => m.id === memberId);
+  return member ? member.name : 'Former member';
 }

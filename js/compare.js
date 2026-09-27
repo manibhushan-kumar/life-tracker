@@ -44,6 +44,84 @@ function sortedCategoryEntries(totals) {
   return Object.entries(totals).sort((a, b) => b[1] - a[1]);
 }
 
+// --- Spend by Family Member (per year) --------------------------------------
+// Only expenses that actually have a `paidBy` tag count here (see the
+// optional "Paid By" dropdown on Add Expense / due-item payments in
+// index.html) - untagged expenses simply don't show up in either total,
+// same spirit as categories only counting expenses that have one.
+
+function memberTotalsForYear(year) {
+  const totals = {};
+  expensesInYear(year).forEach(e => {
+    if (!e.paidBy) return;
+    totals[e.paidBy] = (totals[e.paidBy] || 0) + (Number(e.amount) || 0);
+  });
+  return totals;
+}
+
+// One entry per month, each an {memberId: amount} map - the "month wise"
+// half of the member breakdown; memberTotalsForYear() above covers the
+// "annually" half. Kept as two small functions rather than one that
+// computes both, since Home/other future call sites may only ever want one.
+function monthlyMemberTotalsForYear(year) {
+  const months = Array.from({ length: 12 }, () => ({}));
+  expensesInYear(year).forEach(e => {
+    if (!e.paidBy) return;
+    const idx = Number(e.date.slice(5, 7)) - 1;
+    if (idx < 0 || idx >= 12) return;
+    months[idx][e.paidBy] = (months[idx][e.paidBy] || 0) + (Number(e.amount) || 0);
+  });
+  return months;
+}
+
+// Month-by-month "who paid what" chips plus an annual per-member total
+// list - covers both the "month wise" and "year wise" halves of the member
+// comparison in one card, same pattern as renderBudgetVsActualCard above.
+// Renders nothing at all if there are no family members configured yet
+// (YAGNI - no point showing an empty "by member" card to someone not using
+// the feature) or if none of this year's expenses were tagged with one.
+function renderMemberSpendCard(year) {
+  if (!appData.familyMembers || appData.familyMembers.length === 0) return '';
+
+  const monthlyTotals = monthlyMemberTotalsForYear(year);
+  const yearTotals = memberTotalsForYear(year);
+  const hasAnyPaidByData = Object.keys(yearTotals).length > 0;
+
+  return `
+    <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+      <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">${year} Spend by Family Member</h3>
+      ${!hasAnyPaidByData ? '<p class="text-xs text-slate-400 text-center py-4">No expenses have a "Paid By" tag for this year yet.</p>' : `
+        <div class="space-y-2 mb-4">
+          ${COMPARE_MONTH_NAMES.map((m, i) => {
+            const entries = Object.entries(monthlyTotals[i]).sort((a, b) => b[1] - a[1]);
+            if (entries.length === 0) return '';
+            return `
+              <div class="flex items-start gap-2 text-[10px]">
+                <span class="w-7 text-slate-400 font-semibold shrink-0 pt-1">${m}</span>
+                <div class="flex-1 flex flex-wrap gap-1.5">
+                  ${entries.map(([memberId, amt]) => `
+                    <span class="px-2 py-1 rounded-full bg-slate-50 border border-slate-100 font-semibold text-slate-600">${getFamilyMemberName(memberId)}: ₹${amt.toLocaleString()}</span>
+                  `).join('')}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+
+        <div class="pt-3 border-t border-slate-100 space-y-1.5">
+          <p class="text-[10px] font-semibold text-slate-400 uppercase mb-1.5">Annual Total by Member</p>
+          ${Object.entries(yearTotals).sort((a, b) => b[1] - a[1]).map(([memberId, amt]) => `
+            <div class="flex items-center justify-between text-xs">
+              <span class="font-semibold text-slate-700">${getFamilyMemberName(memberId)}</span>
+              <span class="font-bold text-blue-700">₹${amt.toLocaleString()}</span>
+            </div>
+          `).join('')}
+        </div>
+      `}
+    </div>
+  `;
+}
+
 // --- Budget vs Actual (per year) -------------------------------------------
 // Reuses the exact same effective-budget lookup and color thresholds Home
 // uses (see getBudgetForMonth/getBudgetStatus in js/data-model.js) - one
@@ -187,6 +265,8 @@ function renderSingleYearSection(year) {
 
     ${renderBudgetVsActualCard(year, months, monthlyBudgetsForYear(year))}
 
+    ${renderMemberSpendCard(year)}
+
     <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
       <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">By Category</h3>
       <div class="divide-y divide-slate-50">
@@ -258,6 +338,9 @@ function renderComparisonSection(yearA, yearB) {
 
     ${renderBudgetVsActualCard(yearA, monthsA, budgetsA)}
     ${renderBudgetVsActualCard(yearB, monthsB, budgetsB)}
+
+    ${renderMemberSpendCard(yearA)}
+    ${renderMemberSpendCard(yearB)}
 
     <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
       <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">By Category</h3>

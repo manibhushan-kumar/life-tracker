@@ -275,7 +275,7 @@
         <div class="${wrapperClass} flex items-center justify-between gap-2">
           <div class="min-w-0">
             <p class="text-xs font-bold text-slate-800 truncate">${e.note || e.category}</p>
-            <p class="text-[10px] text-slate-400 truncate">${e.category}${e.subCategory ? ' &raquo; ' + e.subCategory : ''} &bull; ${e.date}</p>
+            <p class="text-[10px] text-slate-400 truncate">${e.category}${e.subCategory ? ' &raquo; ' + e.subCategory : ''} &bull; ${e.date}${e.paidBy ? ' &bull; Paid by ' + getFamilyMemberName(e.paidBy) : ''}</p>
           </div>
           <div class="flex items-center gap-2 shrink-0">
             <p class="text-xs font-bold text-slate-800">₹${Number(e.amount).toLocaleString()}</p>
@@ -565,6 +565,7 @@
                 </div>
                 <div class="flex items-center gap-1.5 shrink-0">
                   <button onclick="markItemComplete('${i.id}')" class="text-[10px] px-2.5 py-1.5 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-lg font-bold hover:bg-emerald-100 transition">Done</button>
+                  <button onclick="openDueItemForm(undefined, '${i.id}')" class="w-7 h-7 rounded-lg flex items-center justify-center text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition" title="Edit"><i class="fa-solid fa-pencil text-[11px]"></i></button>
                   <button onclick="deleteDueItem('${i.id}')" class="w-7 h-7 rounded-lg flex items-center justify-center text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition" title="Delete"><i class="fa-solid fa-trash text-[11px]"></i></button>
                 </div>
               </div>
@@ -593,6 +594,7 @@
               </div>
               <div class="flex items-center gap-1.5">
                 <button onclick="closeFormModal(); markItemComplete('${i.id}')" class="text-[10px] px-2 py-1 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-lg font-bold hover:bg-emerald-100 transition">Done</button>
+                <button onclick="closeFormModal(); openDueItemForm(undefined, '${i.id}')" class="w-6 h-6 rounded-lg flex items-center justify-center text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition" title="Edit"><i class="fa-solid fa-pencil text-[10px]"></i></button>
                 <button onclick="deleteDueItem('${i.id}'); checkExpiryStatus();" class="w-6 h-6 rounded-lg flex items-center justify-center text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition" title="Delete"><i class="fa-solid fa-trash text-[10px]"></i></button>
               </div>
             </div>
@@ -668,6 +670,15 @@
             <label class="text-[11px] font-semibold text-slate-400">Date</label>
             <input type="date" required id="expDate" value="${getTodayStr()}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
           </div>
+          ${appData.familyMembers.length > 0 ? `
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Paid By (Optional)</label>
+              <select id="expPaidBy" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+                <option value="">-- Not specified --</option>
+                ${appData.familyMembers.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
+              </select>
+            </div>
+          ` : ''}
           <div>
             <label class="text-[11px] font-semibold text-slate-400">Description / Note (Optional)</label>
             <input type="text" id="expNote" placeholder="e.g. Lunch, Fuel, Groceries" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
@@ -700,13 +711,18 @@
 
     function saveExpense(e) {
       e.preventDefault();
+      // The Paid By select only renders when there's at least one family
+      // member (see openExpenseForm) - null-safe read so this still works
+      // fine when it's absent from the DOM entirely.
+      const paidByEl = document.getElementById('expPaidBy');
       const newExp = {
         id: 'exp_' + Date.now(),
         amount: parseFloat(document.getElementById('expAmount').value),
         category: document.getElementById('expCategory').value,
         subCategory: document.getElementById('expSubCategory').value || null,
         date: document.getElementById('expDate').value,
-        note: document.getElementById('expNote').value
+        note: document.getElementById('expNote').value,
+        paidBy: (paidByEl && paidByEl.value) || null
       };
       appData.expenses.push(newExp);
       saveState();
@@ -715,66 +731,82 @@
     }
 
     // Logic: Due Items
-    function openDueItemForm(defaultType = 'Bill') {
+    // Shared by both "Add Item" and the pencil/Edit button on an existing
+    // item - pass an `editId` to pre-fill every field from that item and
+    // switch the form into update mode (see saveDueItem below). Handy for
+    // fixing a typo'd title, a wrong amount, or - the main reason this got
+    // added - correcting a recurring item's due date after the fact (e.g.
+    // the auto-calculated next date from a payment wasn't quite right and
+    // nobody caught it in the payment modal at the time).
+    function openDueItemForm(defaultType = 'Bill', editId = null) {
       const modal = document.getElementById('formModal');
       const content = document.getElementById('formModalContent');
       modal.classList.remove('hidden');
 
+      const existing = editId ? appData.items.find(i => i.id === editId) : null;
+      const type = existing ? existing.type : defaultType;
+      const recurrence = existing ? existing.recurrence : 'None';
+
       content.innerHTML = `
-        <h3 class="text-sm font-bold text-slate-800 mb-3">Add Reminder / Due Item</h3>
-        <form onsubmit="saveDueItem(event)" class="space-y-3">
+        <h3 class="text-sm font-bold text-slate-800 mb-3">${existing ? 'Edit' : 'Add'} Reminder / Due Item</h3>
+        <form onsubmit="saveDueItem(event, ${existing ? `'${editId}'` : 'null'})" class="space-y-3">
           <div>
             <label class="text-[11px] font-semibold text-slate-400">Title / Name</label>
-            <input type="text" required id="itemTitle" placeholder="e.g. Car Insurance, Electricity Bill" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            <input type="text" required id="itemTitle" value="${existing ? existing.title : ''}" placeholder="e.g. Car Insurance, Electricity Bill" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
           </div>
           <div class="grid grid-cols-2 gap-2">
             <div>
               <label class="text-[11px] font-semibold text-slate-400">Type</label>
               <select id="itemType" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
-                <option value="Bill" ${defaultType==='Bill'?'selected':''}>Bill</option>
-                <option value="Subscription" ${defaultType==='Subscription'?'selected':''}>Subscription</option>
-                <option value="Document" ${defaultType==='Document'?'selected':''}>Document</option>
-                <option value="Warranty">Warranty</option>
+                <option value="Bill" ${type === 'Bill' ? 'selected' : ''}>Bill</option>
+                <option value="Subscription" ${type === 'Subscription' ? 'selected' : ''}>Subscription</option>
+                <option value="Document" ${type === 'Document' ? 'selected' : ''}>Document</option>
+                <option value="Warranty" ${type === 'Warranty' ? 'selected' : ''}>Warranty</option>
               </select>
             </div>
             <div>
               <label class="text-[11px] font-semibold text-slate-400">Amount (Optional)</label>
-              <input type="number" id="itemAmount" placeholder="₹0" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+              <input type="number" id="itemAmount" value="${existing && existing.amount != null ? existing.amount : ''}" placeholder="₹0" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
             </div>
           </div>
           <div>
             <label class="text-[11px] font-semibold text-slate-400">Due / Expiry Date</label>
-            <input type="date" required id="itemDueDate" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+            <input type="date" required id="itemDueDate" value="${existing ? existing.dueDate : ''}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
           </div>
           <div>
             <label class="text-[11px] font-semibold text-slate-400">Recurrence</label>
             <select id="itemRecurrence" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
-              <option value="None">None (One time)</option>
-              <option value="Monthly">Monthly</option>
-              <option value="Quarterly">Every 3 Months</option>
-              <option value="Yearly">Yearly</option>
+              <option value="None" ${recurrence === 'None' ? 'selected' : ''}>None (One time)</option>
+              <option value="Monthly" ${recurrence === 'Monthly' ? 'selected' : ''}>Monthly</option>
+              <option value="Quarterly" ${recurrence === 'Quarterly' ? 'selected' : ''}>Every 3 Months</option>
+              <option value="Yearly" ${recurrence === 'Yearly' ? 'selected' : ''}>Yearly</option>
             </select>
           </div>
           <div class="flex gap-2 pt-2">
             <button type="button" onclick="closeFormModal()" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
-            <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Save Item</button>
+            <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">${existing ? 'Save Changes' : 'Save Item'}</button>
           </div>
         </form>
       `;
     }
 
-    function saveDueItem(e) {
+    function saveDueItem(e, editId) {
       e.preventDefault();
-      const newItem = {
-        id: 'item_' + Date.now(),
+      const fields = {
         title: document.getElementById('itemTitle').value,
         type: document.getElementById('itemType').value,
         amount: document.getElementById('itemAmount').value ? parseFloat(document.getElementById('itemAmount').value) : null,
         dueDate: document.getElementById('itemDueDate').value,
-        recurrence: document.getElementById('itemRecurrence').value,
-        completed: false
+        recurrence: document.getElementById('itemRecurrence').value
       };
-      appData.items.push(newItem);
+
+      if (editId) {
+        const item = appData.items.find(i => i.id === editId);
+        if (item) Object.assign(item, fields);
+      } else {
+        appData.items.push({ id: 'item_' + Date.now(), completed: false, ...fields });
+      }
+
       saveState();
       closeFormModal();
       navigate(currentTab);
@@ -784,29 +816,115 @@
       const item = appData.items.find(i => i.id === id);
       if (!item) return;
 
-      if (item.amount && confirm(`Add ₹${item.amount} payment to your Expense Log?`)) {
-        appData.expenses.push({
-          id: 'exp_' + Date.now(),
-          amount: item.amount,
-          category: item.type === 'Subscription' ? 'Entertainment' : 'Bills',
-          subCategory: item.title,
-          date: getTodayStr(),
-          note: item.title + ' payment'
-        });
+      // Only a real payment (item has an amount) needs the "who paid"
+      // question - a plain reminder/document with no amount just gets
+      // advanced/completed immediately, same as before.
+      if (item.amount) {
+        openDueItemPaymentModal(id);
+        return;
       }
 
+      advanceOrCompleteDueItem(item);
+      saveState();
+      navigate(currentTab);
+    }
+
+    // Small confirmation step before logging a due item's payment as an
+    // expense - lets the user optionally tag who actually paid it (same
+    // "Paid By" concept as the regular Add Expense form) AND, for recurring
+    // items, review/edit the auto-calculated next due date before it's
+    // locked in. Skipped entirely for items with no amount (see
+    // markItemComplete above).
+    function openDueItemPaymentModal(id) {
+      const item = appData.items.find(i => i.id === id);
+      if (!item) return;
+
+      const modal = document.getElementById('formModal');
+      const content = document.getElementById('formModalContent');
+      modal.classList.remove('hidden');
+
+      const isRecurring = item.recurrence && item.recurrence !== 'None';
+      const suggestedNextDate = isRecurring ? calculateNextRecurrenceDate(item.dueDate, item.recurrence) : null;
+
+      content.innerHTML = `
+        <h3 class="text-sm font-bold text-slate-800 mb-1">Log Payment: ${item.title}</h3>
+        <p class="text-[11px] text-slate-400 mb-3">This adds ₹${Number(item.amount).toLocaleString()} to your Expense Log.</p>
+        <form onsubmit="confirmDueItemPayment(event, '${id}')" class="space-y-3">
+          ${isRecurring ? `
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Next Due Date</label>
+              <input type="date" id="dueItemNextDate" value="${suggestedNextDate}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+              <p class="text-[9px] text-slate-400 mt-1">Defaults to ${item.dueDate} + ${item.recurrence.toLowerCase()} - change it if the real next due date is different, or leave it as-is.</p>
+            </div>
+          ` : '<p class="text-[10px] text-slate-400">This is a one-time item - it will be marked completed after logging.</p>'}
+          ${appData.familyMembers.length > 0 ? `
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Paid By (Optional)</label>
+              <select id="dueItemPaidBy" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+                <option value="">-- Not specified --</option>
+                ${appData.familyMembers.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
+              </select>
+            </div>
+          ` : '<p class="text-[10px] text-slate-400">Add family members in Settings to track who paid this.</p>'}
+          <div class="flex gap-2 pt-2">
+            <button type="button" onclick="closeFormModal()" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
+            <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Log Payment</button>
+          </div>
+        </form>
+      `;
+    }
+
+    function confirmDueItemPayment(e, id) {
+      e.preventDefault();
+      const item = appData.items.find(i => i.id === id);
+      if (!item) { closeFormModal(); return; }
+
+      const paidByEl = document.getElementById('dueItemPaidBy');
+      const nextDateEl = document.getElementById('dueItemNextDate');
+      appData.expenses.push({
+        id: 'exp_' + Date.now(),
+        amount: item.amount,
+        category: item.type === 'Subscription' ? 'Entertainment' : 'Bills',
+        subCategory: item.title,
+        date: getTodayStr(),
+        note: item.title + ' payment',
+        paidBy: (paidByEl && paidByEl.value) || null
+      });
+
+      // Empty/missing field (user cleared it, or it's a one-time item that
+      // never had the field at all) falls back to the auto-calculated date -
+      // only an explicit non-empty value overrides it.
+      advanceOrCompleteDueItem(item, nextDateEl && nextDateEl.value);
+      saveState();
+      closeFormModal();
+      navigate(currentTab);
+    }
+
+    // Pure date math: what's the next due date after `dueDate`, given a
+    // recurrence interval. Pulled out on its own so openDueItemPaymentModal
+    // can use it to PRE-FILL an editable field instead of the next date just
+    // being silently decided with no way to correct it (e.g. paid a few
+    // days early/late, or the real next bill date doesn't land exactly on
+    // the interval).
+    function calculateNextRecurrenceDate(dueDate, recurrence) {
+      const nextDate = new Date(dueDate);
+      if (recurrence === 'Monthly') nextDate.setMonth(nextDate.getMonth() + 1);
+      else if (recurrence === 'Quarterly') nextDate.setMonth(nextDate.getMonth() + 3);
+      else if (recurrence === 'Yearly') nextDate.setFullYear(nextDate.getFullYear() + 1);
+      return formatDateLocal(nextDate);
+    }
+
+    // Shared "what happens to the due item ITSELF after a payment was
+    // logged (or skipped, for amount-less items)" step - advances a
+    // recurring item's due date (to `explicitNextDate` if one was given, e.g.
+    // from the payment modal's editable field, else auto-calculated from the
+    // interval), or marks a one-off item complete.
+    function advanceOrCompleteDueItem(item, explicitNextDate) {
       if (item.recurrence && item.recurrence !== 'None') {
-        const nextDate = new Date(item.dueDate);
-        if (item.recurrence === 'Monthly') nextDate.setMonth(nextDate.getMonth() + 1);
-        else if (item.recurrence === 'Quarterly') nextDate.setMonth(nextDate.getMonth() + 3);
-        else if (item.recurrence === 'Yearly') nextDate.setFullYear(nextDate.getFullYear() + 1);
-        item.dueDate = formatDateLocal(nextDate);
+        item.dueDate = explicitNextDate || calculateNextRecurrenceDate(item.dueDate, item.recurrence);
       } else {
         item.completed = true;
       }
-
-      saveState();
-      navigate(currentTab);
     }
 
     function deleteDueItem(id) {
@@ -882,6 +1000,29 @@
             </div>
             <button type="submit" class="w-full py-2 bg-slate-800 text-white rounded-xl text-xs font-medium hover:bg-slate-700 transition">+ Add Recurring Item</button>
           </form>
+        </div>
+
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3 mb-4">
+          <div class="flex items-center gap-2 mb-1">
+            <i class="fa-solid fa-people-roof text-blue-400"></i>
+            <h3 class="font-bold text-slate-800 text-sm">Family Members</h3>
+          </div>
+          <p class="text-[10px] text-slate-400 -mt-2">Optional "Paid By" tag you can attach to an expense or a due-item payment - handy for tracking who actually paid what. Deleting someone only hides them from new entries - past expenses keep showing their name.</p>
+
+          <div class="flex flex-wrap gap-2">
+            ${appData.familyMembers.map(m => `
+              <span class="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
+                ${m.name}
+                <button onclick="deleteFamilyMember('${m.id}')" class="w-4 h-4 rounded-full bg-slate-200 hover:bg-rose-500 hover:text-white text-slate-500 flex items-center justify-center text-[9px] transition"><i class="fa-solid fa-xmark"></i></button>
+              </span>
+            `).join('')}
+            ${appData.familyMembers.length === 0 ? '<p class="text-[11px] text-slate-400">No family members added yet.</p>' : ''}
+          </div>
+
+          <div class="flex gap-2 pt-1">
+            <input type="text" id="newFamilyMemberName" placeholder="e.g. Mom, Dad, Priya" class="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            <button onclick="addFamilyMember()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition">Add</button>
+          </div>
         </div>
 
         <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3 mb-4">
@@ -1144,6 +1285,38 @@
       if (!confirm('Remove this recurring item? Past logged expenses will NOT be affected — only future calendar toggles.')) return;
       appData.recurringItems = appData.recurringItems.filter(i => i.id !== id);
       if (selectedRecurringItemId === id) selectedRecurringItemId = null;
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    // --- Family Members (Settings) ------------------------------------------
+    // Plain {id, name} labels - see getFamilyMemberName() in
+    // js/data-model.js for the display-side lookup used by expense rows,
+    // the Add Expense/due-item-payment "Paid By" dropdowns, and Compare.
+    function addFamilyMember() {
+      const input = document.getElementById('newFamilyMemberName');
+      const name = input.value.trim();
+      if (!name) return;
+      if (appData.familyMembers.some(m => m.name.toLowerCase() === name.toLowerCase())) {
+        alert('That family member already exists.');
+        return;
+      }
+      appData.familyMembers.push({ id: 'member_' + Date.now(), name });
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    function deleteFamilyMember(id) {
+      const member = appData.familyMembers.find(m => m.id === id);
+      if (!member) return;
+
+      const inUseCount = appData.expenses.filter(e => e.paidBy === id).length;
+      const msg = inUseCount > 0
+        ? `"${member.name}" is tagged as "Paid By" on ${inUseCount} existing expense(s). Those will keep showing "${member.name}" — you just won't be able to pick them for new entries. Delete anyway?`
+        : `Delete family member "${member.name}"?`;
+      if (!confirm(msg)) return;
+
+      appData.familyMembers = appData.familyMembers.filter(m => m.id !== id);
       saveState();
       renderSettings(document.getElementById('mainContainer'));
     }

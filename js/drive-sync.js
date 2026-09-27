@@ -3,9 +3,10 @@
 //
 //   <Sync Folder>/
 //     settings.json            <- categories + recurringItems + due items +
-//                                  budgets (global + per-month overrides).
-//                                  Always small, so it's just overwritten
-//                                  wholesale on every backup. No chunking.
+//                                  budgets (global + per-month overrides) +
+//                                  familyMembers. Always small, so it's just
+//                                  overwritten wholesale on every backup.
+//                                  No chunking.
 //     splitwise.json           <- Splitwise groups (members + expenses per
 //                                  group). Capped at 5 groups total, so like
 //                                  settings.json it's just overwritten
@@ -492,15 +493,16 @@ async function backupToGoogleDrive() {
       setNotice('Drive backup not found - re-uploading full history...', 'text-amber-600');
     }
 
-    // Settings (categories + recurringItems + due items + budgets) are
-    // always small, so they're just overwritten wholesale every backup - no
-    // chunking needed.
+    // Settings (categories + recurringItems + due items + budgets + family
+    // members) are always small, so they're just overwritten wholesale every
+    // backup - no chunking needed.
     setNotice('Syncing settings...', 'text-blue-500');
     const settingsPayload = {
       categories: appData.categories,
       recurringItems: appData.recurringItems,
       items: appData.items,
       budgets: appData.budgets,
+      familyMembers: appData.familyMembers,
       savedAt: new Date().toISOString()
     };
     const settingsFileId = await upsertJsonFile(rootId, SETTINGS_FILE_NAME, settingsPayload, syncMeta.settingsFileId);
@@ -568,7 +570,7 @@ async function backupToGoogleDrive() {
 // this, then just hit Backup - it should silently rebuild everything).
 async function deleteAllDriveBackupsExceptSettings() {
   if (!gdriveToken) return alert('Authenticate with Google first!');
-  if (!confirm('This permanently deletes your Drive backup - all expense history and Splitwise groups stored there - EXCEPT settings.json (categories/recurring items/due items/budgets). Data on THIS device is untouched. This cannot be undone. Continue?')) return;
+  if (!confirm('This permanently deletes your Drive backup - all expense history and Splitwise groups stored there - EXCEPT settings.json (categories/recurring items/due items/budgets/family members). Data on THIS device is untouched. This cannot be undone. Continue?')) return;
 
   const notice = document.getElementById('driveSyncNotice');
   const setNotice = (text, cls) => {

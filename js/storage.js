@@ -160,7 +160,7 @@ async function saveState(opts) {
     await Promise.all([
       IDB.replaceAll('expenses', appData.expenses),
       IDB.replaceAll('items', appData.items),
-      IDB.put('meta', { key: 'settings', recurringItems: appData.recurringItems, categories: appData.categories, budgets: appData.budgets })
+      IDB.put('meta', { key: 'settings', recurringItems: appData.recurringItems, categories: appData.categories, budgets: appData.budgets, familyMembers: appData.familyMembers })
     ]);
   } catch (e) {
     console.error('Life Tracker: failed to persist to IndexedDB.', e);
