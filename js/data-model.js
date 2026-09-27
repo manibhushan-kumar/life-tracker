@@ -53,7 +53,8 @@ const TAB_DISPLAY_NAMES = {
   compare: 'Compare',
   settings: 'Settings',
   splitwise: 'Splitwise',
-  reports: 'Reports'
+  reports: 'Reports',
+  fuel: 'Fuel Log'
 };
 
 // Sets the " / PageName" breadcrumb suffix after the clickable "Life
@@ -121,7 +122,31 @@ function getDefaultAppData() {
     // an expense either belongs to a given trip/project or it doesn't; if
     // it genuinely spans two, that's arguably two expenses, not one
     // multi-tagged one. Full OVERWRITE on restore, same as familyMembers.
-    tags: []
+    tags: [],
+    // Vehicles ({id, number}) a fuel-log entry can be filed under - same
+    // plain-label-list shape/spirit as familyMembers/tags. Full OVERWRITE
+    // on restore too.
+    vehicles: [],
+    // Fuel Tracker entries - see Fuel Log view in index.html. Each is a
+    // SELF-CONTAINED mileage record (deliberately not a chain of "next
+    // entry continues where the last left off" - simpler to reason about
+    // and edit independently): startKm is the odometer reading AT this
+    // fill-up, endKm is the odometer reading at the NEXT fill-up (set
+    // later via "Update End KM", starts null), and the fuel added THIS
+    // fill-up (`liters`, derived from amount/pricePerLiter) is what
+    // powered the distance driven between startKm and endKm - classic
+    // full-to-full mileage accounting. See computeFuelKmRun/
+    // computeFuelMileage below for the actual math.
+    //   { id, vehicleId, fuelType ('Petrol'|'Diesel'|'Gas'), date,
+    //     startKm, endKm (null until set), pricePerLiter, amount,
+    //     liters (derived, cached), paidBy, expenseId }
+    // `expenseId` links to the real Expense auto-created when this entry
+    // was added (category Transport > Fuel) - see saveFuelLog(). That
+    // linked expense is a SNAPSHOT, same principle as everywhere else in
+    // this app (price-history changes, category/tag/member deletes never
+    // rewrite past expenses): editing or deleting a fuel entry later never
+    // touches the expense it already created. Full OVERWRITE on restore.
+    fuelLogs: []
   };
 }
 
@@ -179,6 +204,15 @@ function mergeIntoAppData(parsedData) {
   // that was deleted there since the last backup.
   if (Array.isArray(parsedData.tags)) {
     appData.tags = parsedData.tags;
+  }
+
+  // Vehicles and fuel log entries: same wholesale-overwrite treatment as
+  // tags/familyMembers - restoring means "Drive's list wins" for both.
+  if (Array.isArray(parsedData.vehicles)) {
+    appData.vehicles = parsedData.vehicles;
+  }
+  if (Array.isArray(parsedData.fuelLogs)) {
+    appData.fuelLogs = parsedData.fuelLogs;
   }
 
   // Recurring Daily Items - fully generic and user-configurable, so a
@@ -328,4 +362,55 @@ function getTagName(tagId) {
   if (!tagId) return null;
   const tag = (appData.tags || []).find(t => t.id === tagId);
   return tag ? tag.name : 'Former tag';
+}
+
+// Display number for a vehicle id, same "Former X" fallback pattern as
+// getFamilyMemberName/getTagName above - keeps the Fuel Log view and any
+// fuel-entry row from choking on a dangling reference after the vehicle
+// itself was deleted in Settings. Returns null for a falsy id.
+function getVehicleNumber(vehicleId) {
+  if (!vehicleId) return null;
+  const vehicle = (appData.vehicles || []).find(v => v.id === vehicleId);
+  return vehicle ? vehicle.number : 'Former vehicle';
+}
+
+// --- Fuel Tracker math -----------------------------------------------------
+// Pure helpers so the Fuel Log view (index.html) and any future consumer
+// (e.g. a Compare-style mileage-over-time chart) share the exact same math,
+// never two slightly-different copies. See the `fuelLogs` shape comment in
+// getDefaultAppData above for what each field means and why endKm/liters
+// are computed the way they are.
+
+// Liters filled, derived from what was actually entered at the pump
+// (amount paid + price/liter) rather than typed in directly - matches the
+// explicit ask that liters should be a calculated, not a manual, field.
+// Rounded to 2 decimals purely for display sanity; guards divide-by-zero
+// (a 0 or missing price just means "can't derive liters yet").
+function computeFuelLiters(amount, pricePerLiter) {
+  const amt = Number(amount) || 0;
+  const price = Number(pricePerLiter) || 0;
+  if (price <= 0) return 0;
+  return Math.round((amt / price) * 100) / 100;
+}
+
+// Distance covered on the fuel put in at THIS entry - null (not 0) until
+// endKm is actually recorded, so callers can tell "not driven yet" apart
+// from "drove zero km" (the latter would be a data-entry mistake worth
+// flagging, not silently rendering as a valid mileage of 0).
+function computeFuelKmRun(entry) {
+  if (entry.endKm === null || entry.endKm === undefined) return null;
+  const run = Number(entry.endKm) - Number(entry.startKm);
+  return run >= 0 ? run : null; // a negative run means bad data (endKm < startKm) - treat as "not computable" rather than showing a nonsense negative mileage
+}
+
+// Classic full-to-full mileage: km covered since this fill-up, per liter
+// that THIS fill-up put in the tank. Null whenever either half of the
+// fraction isn't known/valid yet (no endKm recorded, or liters is 0/absent
+// because price wasn't entered) - same "null means not computable" contract
+// as computeFuelKmRun above.
+function computeFuelMileage(entry) {
+  const kmRun = computeFuelKmRun(entry);
+  const liters = Number(entry.liters) || 0;
+  if (kmRun === null || liters <= 0) return null;
+  return Math.round((kmRun / liters) * 100) / 100;
 }

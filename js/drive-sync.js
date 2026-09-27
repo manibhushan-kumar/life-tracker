@@ -4,9 +4,10 @@
 //   <Sync Folder>/
 //     settings.json            <- categories + recurringItems + due items +
 //                                  budgets (global + per-month overrides) +
-//                                  familyMembers + tags. Always small, so
-//                                  it's just overwritten wholesale on every
-//                                  backup. No chunking.
+//                                  familyMembers + tags + vehicles +
+//                                  fuelLogs. Always small, so it's just
+//                                  overwritten wholesale on every backup.
+//                                  No chunking.
 //     splitwise.json           <- Splitwise groups (members + expenses per
 //                                  group). Capped at 5 groups total, so like
 //                                  settings.json it's just overwritten
@@ -494,8 +495,8 @@ async function backupToGoogleDrive() {
     }
 
     // Settings (categories + recurringItems + due items + budgets + family
-    // members + tags) are always small, so they're just overwritten
-    // wholesale every backup - no chunking needed.
+    // members + tags + vehicles + fuelLogs) are always small, so they're
+    // just overwritten wholesale every backup - no chunking needed.
     setNotice('Syncing settings...', 'text-blue-500');
     const settingsPayload = {
       categories: appData.categories,
@@ -504,6 +505,8 @@ async function backupToGoogleDrive() {
       budgets: appData.budgets,
       familyMembers: appData.familyMembers,
       tags: appData.tags,
+      vehicles: appData.vehicles,
+      fuelLogs: appData.fuelLogs,
       savedAt: new Date().toISOString()
     };
     const settingsFileId = await upsertJsonFile(rootId, SETTINGS_FILE_NAME, settingsPayload, syncMeta.settingsFileId);

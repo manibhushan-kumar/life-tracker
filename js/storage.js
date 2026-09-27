@@ -160,7 +160,7 @@ async function saveState(opts) {
     await Promise.all([
       IDB.replaceAll('expenses', appData.expenses),
       IDB.replaceAll('items', appData.items),
-      IDB.put('meta', { key: 'settings', recurringItems: appData.recurringItems, categories: appData.categories, budgets: appData.budgets, familyMembers: appData.familyMembers, tags: appData.tags })
+      IDB.put('meta', { key: 'settings', recurringItems: appData.recurringItems, categories: appData.categories, budgets: appData.budgets, familyMembers: appData.familyMembers, tags: appData.tags, vehicles: appData.vehicles, fuelLogs: appData.fuelLogs })
     ]);
   } catch (e) {
     console.error('Life Tracker: failed to persist to IndexedDB.', e);
@@ -177,7 +177,7 @@ async function saveState(opts) {
 // slips past the overscroll-behavior CSS fix (e.g. the OS itself killing
 // and relaunching the PWA) - validated against a known-tabs list so a
 // stale/corrupted localStorage value can never navigate somewhere invalid.
-const VALID_TABS = ['home', 'expenses', 'compare', 'items', 'settings', 'reports'];
+const VALID_TABS = ['home', 'expenses', 'compare', 'items', 'settings', 'reports', 'fuel'];
 
 async function initStorage() {
   await loadAppData();

@@ -166,6 +166,10 @@
         <div class="w-9 h-9 rounded-lg bg-amber-500/10 text-amber-600 flex items-center justify-center"><i class="fa-solid fa-chart-pie text-sm"></i></div>
         <div class="text-left"><p class="text-xs font-bold text-slate-800">Reports</p><p class="text-[10px] text-slate-400">See spending under a tag, e.g. Trip-Goa</p></div>
       </button>
+      <button onclick="navigate('fuel'); closeQuickAddModal()" class="w-full p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
+        <div class="w-9 h-9 rounded-lg bg-sky-500/10 text-sky-600 flex items-center justify-center"><i class="fa-solid fa-gas-pump text-sm"></i></div>
+        <div class="text-left"><p class="text-xs font-bold text-slate-800">Fuel Log</p><p class="text-[10px] text-slate-400">Track fill-ups & mileage per vehicle</p></div>
+      </button>
     </div>
   </div>
 
@@ -269,6 +273,7 @@
       else if (tab === 'items') renderItems(container);
       else if (tab === 'settings') renderSettings(container);
       else if (tab === 'reports') renderReports(container);
+      else if (tab === 'fuel') renderFuel(container);
     }
 
     // --- Home Screen View ---
@@ -1046,6 +1051,257 @@
       renderReports(document.getElementById('mainContainer'));
     }
 
+    // --- Fuel Log View ----------------------------------------------------
+    // Opened via the Quick Add (+) sheet, same pattern as Reports (not a
+    // bottom-nav tab - see TAB_DISPLAY_NAMES.fuel / VALID_TABS). Each entry
+    // is a self-contained mileage record - see the `fuelLogs` shape comment
+    // in js/data-model.js for the full reasoning, and computeFuelKmRun/
+    // computeFuelMileage there for the actual math this view just displays.
+    // No vehicle filter here by design - the list just shows everything;
+    // vehicle is only picked when adding/editing a fill-up (see
+    // openFuelForm), same spirit as Reports not needing a category filter.
+    const FUEL_TYPE_BADGE = {
+      Petrol: 'bg-orange-500/10 text-orange-600',
+      Diesel: 'bg-slate-500/10 text-slate-600',
+      Gas: 'bg-emerald-500/10 text-emerald-600'
+    };
+
+    function renderFuel(container) {
+      const sorted = appData.fuelLogs.slice().sort((a, b) => b.date.localeCompare(a.date));
+
+      container.innerHTML = `
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-bold text-slate-800">Fuel Log</h2>
+          <button onclick="openFuelForm()" class="px-3 py-1.5 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition">+ Add Fill-up</button>
+        </div>
+
+        <div class="space-y-2">
+          ${sorted.map(f => renderFuelRow(f)).join('')}
+          ${sorted.length === 0 ? '<p class="text-xs text-slate-400 text-center py-6">No fill-ups logged yet.</p>' : ''}
+        </div>
+      `;
+    }
+
+    function renderFuelRow(f) {
+      const kmRun = computeFuelKmRun(f);
+      const mileage = computeFuelMileage(f);
+      const badge = FUEL_TYPE_BADGE[f.fuelType] || 'bg-slate-500/10 text-slate-600';
+      return `
+        <div class="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm space-y-2">
+          <div class="flex items-center justify-between gap-2">
+            <div class="min-w-0">
+              <div class="flex items-center gap-1.5">
+                <span class="px-2 py-0.5 rounded-full text-[9px] font-bold ${badge}">${f.fuelType}</span>
+                ${f.vehicleId ? `<span class="text-[10px] text-slate-400">${getVehicleNumber(f.vehicleId)}</span>` : ''}
+              </div>
+              <p class="text-[10px] text-slate-400 mt-1">${f.date}${f.paidBy ? ' &bull; Paid by ' + getFamilyMemberName(f.paidBy) : ''}</p>
+            </div>
+            <div class="flex items-center gap-1 shrink-0">
+              <button onclick="openFuelForm('${f.id}')" class="w-6 h-6 rounded-full flex items-center justify-center text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition" title="Edit"><i class="fa-solid fa-pen text-[11px]"></i></button>
+              <button onclick="deleteFuelLog('${f.id}')" class="w-6 h-6 rounded-full flex items-center justify-center text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition" title="Delete"><i class="fa-solid fa-trash text-[11px]"></i></button>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-[11px]">
+            <div class="p-2 rounded-xl bg-slate-50">
+              <p class="text-slate-400">Start &rarr; End KM</p>
+              <p class="font-bold text-slate-800">${f.startKm.toLocaleString()} &rarr; ${f.endKm !== null && f.endKm !== undefined ? f.endKm.toLocaleString() : 'Pending'}</p>
+            </div>
+            <div class="p-2 rounded-xl bg-slate-50">
+              <p class="text-slate-400">KM Run / Mileage</p>
+              <p class="font-bold text-slate-800">${kmRun !== null ? kmRun.toLocaleString() + ' km' : '-'} ${mileage !== null ? ' &bull; ' + mileage + ' km/L' : ''}</p>
+            </div>
+          </div>
+          <div class="flex items-center justify-between text-[11px] pt-1 border-t border-slate-50">
+            <span class="text-slate-400">₹${Number(f.pricePerLiter).toLocaleString()}/L &bull; ${f.liters}L</span>
+            <span class="font-bold text-slate-800">₹${Number(f.amount).toLocaleString()}</span>
+          </div>
+          <button onclick="openUpdateEndKmForm('${f.id}')" class="w-full py-2 text-[11px] font-semibold text-blue-600 hover:text-blue-700 bg-blue-50 rounded-xl transition">
+            ${f.endKm !== null && f.endKm !== undefined ? 'Update End KM' : '+ Set End KM (next fill-up)'}
+          </button>
+        </div>
+      `;
+    }
+
+    function openFuelForm(editId = null) {
+      const modal = document.getElementById('formModal');
+      const content = document.getElementById('formModalContent');
+      modal.classList.remove('hidden');
+
+      const existing = editId ? appData.fuelLogs.find(f => f.id === editId) : null;
+
+      content.innerHTML = `
+        <h3 class="text-sm font-bold text-slate-800 mb-3">${existing ? 'Edit' : 'Add'} Fill-up</h3>
+        <form onsubmit="saveFuelLog(event, ${existing ? `'${editId}'` : 'null'})" class="space-y-3">
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Fuel Type</label>
+              <select id="fuelType" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+                <option value="Petrol" ${existing && existing.fuelType === 'Petrol' ? 'selected' : ''}>Petrol</option>
+                <option value="Diesel" ${existing && existing.fuelType === 'Diesel' ? 'selected' : ''}>Diesel</option>
+                <option value="Gas" ${existing && existing.fuelType === 'Gas' ? 'selected' : ''}>Gas</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Date</label>
+              <input type="date" required id="fuelDate" value="${existing ? existing.date : getTodayStr()}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+            </div>
+          </div>
+          <div>
+            <label class="text-[11px] font-semibold text-slate-400">Vehicle</label>
+            ${appData.vehicles.length > 0 ? `
+              <select id="fuelVehicle" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+                <option value="">-- Not specified --</option>
+                ${appData.vehicles.map(v => `<option value="${v.id}" ${existing && existing.vehicleId === v.id ? 'selected' : ''}>${v.number}</option>`).join('')}
+              </select>
+            ` : `
+              <select id="fuelVehicle" disabled class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none bg-slate-50 text-slate-400">
+                <option value="">No vehicles configured yet</option>
+              </select>
+              <button type="button" onclick="closeFormModal(); navigate('settings')" class="text-[10px] font-semibold text-blue-600 hover:text-blue-700 mt-1">+ Add a vehicle in Settings &rarr;</button>
+            `}
+          </div>
+          <div>
+            <label class="text-[11px] font-semibold text-slate-400">Start KM (odometer now)</label>
+            <input type="number" required id="fuelStartKm" step="any" value="${existing ? existing.startKm : ''}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Price / Liter (₹)</label>
+              <input type="number" required id="fuelPrice" step="any" oninput="updateFuelLitersPreview()" value="${existing ? existing.pricePerLiter : ''}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            </div>
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Amount Paid (₹)</label>
+              <input type="number" required id="fuelAmount" step="any" oninput="updateFuelLitersPreview()" value="${existing ? existing.amount : ''}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            </div>
+          </div>
+          <p class="text-[11px] text-slate-400">Liters filled: <span id="fuelLitersPreview" class="font-bold text-slate-700">${existing ? existing.liters : '0'}</span> L (auto-calculated)</p>
+          ${appData.familyMembers.length > 0 ? `
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Paid By (Optional)</label>
+              <select id="fuelPaidBy" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+                <option value="">-- Not specified --</option>
+                ${appData.familyMembers.map(m => `<option value="${m.id}" ${existing && existing.paidBy === m.id ? 'selected' : ''}>${m.name}</option>`).join('')}
+              </select>
+            </div>
+          ` : ''}
+          ${!existing ? '<p class="text-[10px] text-slate-400">This will also log a Transport &raquo; Fuel expense right away.</p>' : '<p class="text-[10px] text-slate-400">Editing here only updates this fuel log entry - the expense already logged for it stays untouched, same as everywhere else in the app.</p>'}
+          <div class="flex gap-2 pt-2">
+            <button type="button" onclick="closeFormModal()" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
+            <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Save</button>
+          </div>
+        </form>
+      `;
+    }
+
+    function updateFuelLitersPreview() {
+      const price = document.getElementById('fuelPrice').value;
+      const amount = document.getElementById('fuelAmount').value;
+      document.getElementById('fuelLitersPreview').textContent = computeFuelLiters(amount, price);
+    }
+
+    function saveFuelLog(e, editId) {
+      e.preventDefault();
+      const vehicleEl = document.getElementById('fuelVehicle');
+      const paidByEl = document.getElementById('fuelPaidBy');
+      const pricePerLiter = parseFloat(document.getElementById('fuelPrice').value);
+      const amount = parseFloat(document.getElementById('fuelAmount').value);
+      const liters = computeFuelLiters(amount, pricePerLiter);
+      const fuelType = document.getElementById('fuelType').value;
+      const date = document.getElementById('fuelDate').value;
+      const vehicleId = (vehicleEl && vehicleEl.value) || null;
+      const paidBy = (paidByEl && paidByEl.value) || null;
+      const startKm = parseFloat(document.getElementById('fuelStartKm').value);
+
+      if (editId) {
+        // Editing never touches endKm or expenseId - only openUpdateEndKmForm
+        // owns endKm, and the linked expense is a permanent snapshot (see
+        // the comment above the form's submit button).
+        const entry = appData.fuelLogs.find(f => f.id === editId);
+        if (!entry) return;
+        Object.assign(entry, { fuelType, date, vehicleId, startKm, pricePerLiter, amount, liters, paidBy });
+      } else {
+        const newEntry = {
+          id: 'fuel_' + Date.now(),
+          fuelType, date, vehicleId, startKm, pricePerLiter, amount, liters, paidBy,
+          endKm: null,
+          expenseId: null
+        };
+
+        // Auto-log the matching expense immediately (Transport > Fuel), per
+        // the same "just log it, don't ask" flow the rest of the app uses
+        // for anything with a real cost - see saveExpense for the sibling
+        // pattern this mirrors field-for-field.
+        const newExp = {
+          id: 'exp_' + Date.now(),
+          amount,
+          category: 'Transport',
+          subCategory: 'Fuel',
+          date,
+          note: `${fuelType} fill-up${vehicleId ? ' - ' + getVehicleNumber(vehicleId) : ''}`,
+          paidBy,
+          tag: null
+        };
+        appData.expenses.push(newExp);
+        newEntry.expenseId = newExp.id;
+        appData.fuelLogs.push(newEntry);
+      }
+
+      saveState();
+      closeFormModal();
+      navigate(currentTab);
+    }
+
+    function openUpdateEndKmForm(id) {
+      const entry = appData.fuelLogs.find(f => f.id === id);
+      if (!entry) return;
+
+      const modal = document.getElementById('formModal');
+      const content = document.getElementById('formModalContent');
+      modal.classList.remove('hidden');
+
+      content.innerHTML = `
+        <h3 class="text-sm font-bold text-slate-800 mb-1">Update End KM</h3>
+        <p class="text-[11px] text-slate-400 mb-3">Odometer reading at your NEXT fill-up for this entry (started at ${entry.startKm.toLocaleString()} km on ${entry.date}). This closes out the distance/mileage for this fill-up.</p>
+        <form onsubmit="saveEndKm(event, '${id}')" class="space-y-3">
+          <div>
+            <label class="text-[11px] font-semibold text-slate-400">End KM</label>
+            <input type="number" required id="fuelEndKm" step="any" value="${entry.endKm !== null && entry.endKm !== undefined ? entry.endKm : ''}" class="w-full text-base font-bold p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+          </div>
+          <div class="flex gap-2 pt-2">
+            <button type="button" onclick="closeFormModal()" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
+            <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Save</button>
+          </div>
+        </form>
+      `;
+    }
+
+    function saveEndKm(e, id) {
+      e.preventDefault();
+      const entry = appData.fuelLogs.find(f => f.id === id);
+      if (!entry) return;
+
+      const endKm = parseFloat(document.getElementById('fuelEndKm').value);
+      if (endKm <= entry.startKm) {
+        alert(`End KM must be greater than the Start KM (${entry.startKm.toLocaleString()}).`);
+        return;
+      }
+
+      entry.endKm = endKm;
+      saveState();
+      closeFormModal();
+      navigate(currentTab);
+    }
+
+    function deleteFuelLog(id) {
+      const entry = appData.fuelLogs.find(f => f.id === id);
+      if (!entry) return;
+      if (!confirm(`Delete this fuel log entry (${entry.date})? The Transport \u203a Fuel expense already logged for it will NOT be deleted - same "delete never rewrites history" rule as everywhere else.`)) return;
+
+      appData.fuelLogs = appData.fuelLogs.filter(f => f.id !== id);
+      saveState();
+      navigate(currentTab);
+    }
+
     // --- Settings / Google Drive View ---
     let selectedCategoryForSub = null;
 
@@ -1131,6 +1387,29 @@
           <div class="flex gap-2 pt-1">
             <input type="text" id="newFamilyMemberName" placeholder="e.g. Mom, Dad, Priya" class="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
             <button onclick="addFamilyMember()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition">Add</button>
+          </div>
+        </div>
+
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3 mb-4">
+          <div class="flex items-center gap-2 mb-1">
+            <i class="fa-solid fa-car text-blue-400"></i>
+            <h3 class="font-bold text-slate-800 text-sm">Vehicles</h3>
+          </div>
+          <p class="text-[10px] text-slate-400 -mt-2">Optional vehicle number for Fuel Log entries (tap the + button → Fuel Log). Deleting a vehicle only hides it from new fill-ups - past fuel entries keep showing its number.</p>
+
+          <div class="flex flex-wrap gap-2">
+            ${appData.vehicles.map(v => `
+              <span class="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
+                ${v.number}
+                <button onclick="deleteVehicle('${v.id}')" class="w-4 h-4 rounded-full bg-slate-200 hover:bg-rose-500 hover:text-white text-slate-500 flex items-center justify-center text-[9px] transition"><i class="fa-solid fa-xmark"></i></button>
+              </span>
+            `).join('')}
+            ${appData.vehicles.length === 0 ? '<p class="text-[11px] text-slate-400">No vehicles added yet.</p>' : ''}
+          </div>
+
+          <div class="flex gap-2 pt-1">
+            <input type="text" id="newVehicleNumber" placeholder="e.g. KA-05-MN-1234" class="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            <button onclick="addVehicle()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition">Add</button>
           </div>
         </div>
 
@@ -1449,6 +1728,39 @@
       if (!confirm(msg)) return;
 
       appData.familyMembers = appData.familyMembers.filter(m => m.id !== id);
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    // --- Vehicles (Settings) --------------------------------------------
+    // Plain {id, number} labels, same shape/spirit as Family Members and
+    // Tags above - see getVehicleNumber() in js/data-model.js for the
+    // display-side lookup used by Fuel Log entries and the Add Fill-up
+    // "Vehicle" dropdown.
+    function addVehicle() {
+      const input = document.getElementById('newVehicleNumber');
+      const number = input.value.trim();
+      if (!number) return;
+      if (appData.vehicles.some(v => v.number.toLowerCase() === number.toLowerCase())) {
+        alert('That vehicle already exists.');
+        return;
+      }
+      appData.vehicles.push({ id: 'veh_' + Date.now(), number });
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    function deleteVehicle(id) {
+      const vehicle = appData.vehicles.find(v => v.id === id);
+      if (!vehicle) return;
+
+      const inUseCount = appData.fuelLogs.filter(f => f.vehicleId === id).length;
+      const msg = inUseCount > 0
+        ? `"${vehicle.number}" is used on ${inUseCount} existing fuel log entry(ies). Those will keep showing "${vehicle.number}" but it will disappear from the Fuel Log picker and can't be picked for new fill-ups. Delete anyway?`
+        : `Delete vehicle "${vehicle.number}"?`;
+      if (!confirm(msg)) return;
+
+      appData.vehicles = appData.vehicles.filter(v => v.id !== id);
       saveState();
       renderSettings(document.getElementById('mainContainer'));
     }
