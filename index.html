@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Life Tracker</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="icon" href="./life-tracker-logo.png">
-  <link rel="apple-touch-icon" href="./life-tracker-logo.png">
+  <link rel="icon" href="./icons/icon-192.png">
+  <link rel="apple-touch-icon" href="./icons/icon-192.png">
   <meta name="theme-color" content="#2563eb">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -269,7 +269,9 @@
 
         <div class="space-y-2 mt-3">
           <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">${monthLabel} Expenses</h3>
-          ${monthExpenses.slice().reverse().map(e => renderExpenseRow(e, 'bg-white p-3 rounded-xl border border-slate-100 shadow-sm hover:bg-slate-50 transition')).join('')}
+          <!-- Sorted by date (newest first), NOT insertion order - a backdated manual
+               entry or an out-of-order calendar tap must never scramble the list. -->
+          ${monthExpenses.slice().sort((a, b) => b.date.localeCompare(a.date)).map(e => renderExpenseRow(e, 'bg-white p-3 rounded-xl border border-slate-100 shadow-sm hover:bg-slate-50 transition')).join('')}
           ${monthExpenses.length === 0 ? '<div class="text-center py-10 bg-white rounded-xl border border-dashed border-slate-200"><p class="text-xs text-slate-400">No expenses recorded for this month.</p></div>' : ''}
         </div>
       `;
@@ -295,9 +297,21 @@
     function buildRecurringCalendarHtml(item, monthStr) {
       const [year, month] = monthStr.split('-').map(Number);
       const daysInMonth = new Date(year, month, 0).getDate();
+      const startDate = getItemStartDate(item);
       let html = '';
       for (let day = 1; day <= daysInMonth; day++) {
         const dateStr = `${monthStr}-${String(day).padStart(2, '0')}`;
+        // Item didn't exist yet on this day - show it as a non-interactive
+        // blank cell instead of a clickable button. Keeps the calendar grid
+        // aligned while making it obvious those days are simply off-limits.
+        if (dateStr < startDate) {
+          html += `
+            <div title="${item.name} was added on ${startDate} - nothing to log before that" class="aspect-square rounded-lg text-[11px] font-bold flex items-center justify-center border border-dashed border-slate-100 text-slate-300 bg-slate-50/50 cursor-not-allowed">
+              ${day}
+            </div>
+          `;
+          continue;
+        }
         const logged = appData.expenses.some(e => e.id === item.id + '_' + dateStr);
         const dayPrice = getEffectivePrice(item, dateStr);
         html += `
@@ -312,6 +326,11 @@
     function toggleRecurringDay(itemId, dateStr) {
       const item = appData.recurringItems.find(i => i.id === itemId);
       if (!item) return;
+
+      // Belt-and-suspenders: the calendar itself never renders a clickable
+      // button for days before the item's start date, but guard here too in
+      // case of stale/cached HTML.
+      if (dateStr < getItemStartDate(item)) return;
 
       const entryId = itemId + '_' + dateStr;
       const existingIdx = appData.expenses.findIndex(e => e.id === entryId);
@@ -648,7 +667,7 @@
                 <div class="flex items-center justify-between">
                   <div>
                     <p class="text-xs font-bold text-slate-800">${item.name}</p>
-                    <p class="text-[10px] text-slate-400">${item.category}${item.subCategory ? ' &raquo; ' + item.subCategory : ''} &bull; ₹${Number(getEffectivePrice(item)).toLocaleString()}/day today</p>
+                    <p class="text-[10px] text-slate-400">${item.category}${item.subCategory ? ' &raquo; ' + item.subCategory : ''} &bull; ₹${Number(getEffectivePrice(item)).toLocaleString()}/day today &bull; started ${getItemStartDate(item)}</p>
                   </div>
                   <button onclick="deleteRecurringItem('${item.id}')" class="text-rose-500 hover:text-rose-600 px-2"><i class="fa-solid fa-trash text-xs"></i></button>
                 </div>
@@ -677,6 +696,11 @@
                 ${Object.keys(appData.categories).map(c => `<option value="${c}">${c}</option>`).join('')}
               </select>
               <input type="number" step="any" required id="newRecurringPrice" placeholder="Price/day (₹)" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            </div>
+            <div>
+              <label class="text-[10px] font-semibold text-slate-400">Start Date</label>
+              <input type="date" required id="newRecurringStartDate" value="${getTodayStr()}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+              <p class="text-[9px] text-slate-400 mt-1">Its calendar will only allow logging on/after this date.</p>
             </div>
             <button type="submit" class="w-full py-2 bg-slate-800 text-white rounded-xl text-xs font-medium hover:bg-slate-700 transition">+ Add Recurring Item</button>
           </form>
@@ -867,6 +891,7 @@
       const name = document.getElementById('newRecurringName').value.trim();
       const category = document.getElementById('newRecurringCategory').value;
       const price = parseFloat(document.getElementById('newRecurringPrice').value) || 0;
+      const startDate = document.getElementById('newRecurringStartDate').value || getTodayStr();
       if (!name) return;
 
       appData.recurringItems.push({
@@ -875,7 +900,8 @@
         category,
         subCategory: null,
         price,
-        priceHistory: [{ from: getTodayStr(), price }]
+        startDate,
+        priceHistory: [{ from: startDate, price }]
       });
       saveState();
       renderSettings(document.getElementById('mainContainer'));
@@ -910,8 +936,8 @@
           </div>
           <div>
             <label class="text-[11px] font-semibold text-slate-400">Effective From</label>
-            <input type="date" required id="priceChangeDate" value="${getTodayStr()}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
-            <p class="text-[9px] text-slate-400 mt-1">Days before this date keep the old price. Expenses already logged never change.</p>
+            <input type="date" required id="priceChangeDate" min="${getItemStartDate(item)}" value="${getTodayStr() < getItemStartDate(item) ? getItemStartDate(item) : getTodayStr()}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+            <p class="text-[9px] text-slate-400 mt-1">Days before this date keep the old price. Expenses already logged never change. Can't be earlier than ${getItemStartDate(item)}, when this item started.</p>
           </div>
           <div class="flex gap-2 pt-2">
             <button type="button" onclick="closeFormModal()" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
@@ -930,6 +956,12 @@
       const from = document.getElementById('priceChangeDate').value;
       if (isNaN(price) || !from) return;
 
+      const startDate = getItemStartDate(item);
+      if (from < startDate) {
+        alert(`This item started on ${startDate} - a price change can't be effective before that. Pick ${startDate} or later.`);
+        return;
+      }
+
       if (!Array.isArray(item.priceHistory) || item.priceHistory.length === 0) {
         item.priceHistory = [{ from: '1970-01-01', price: Number(item.price) || 0 }];
       }
@@ -941,6 +973,9 @@
       } else {
         item.priceHistory.push({ from, price });
       }
+      // Always re-sort chronologically - entries can be added/edited in any
+      // order, but everything downstream (getEffectivePrice, the badge list
+      // in Settings) assumes ascending-by-date order.
       item.priceHistory.sort((a, b) => a.from.localeCompare(b.from));
       item.price = getEffectivePrice(item); // keep the cached "today" price in sync
 

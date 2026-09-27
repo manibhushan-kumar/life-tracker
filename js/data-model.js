@@ -52,7 +52,7 @@ function getDefaultAppData() {
     // priceHistory is the source of truth for what a day COSTS; `price` is just a
     // cached "today's price" convenience field kept in sync alongside it.
     recurringItems: [
-      { id: 'milk', name: 'Milk', category: 'Milk', subCategory: null, price: 50, priceHistory: [{ from: '1970-01-01', price: 50 }] }
+      { id: 'milk', name: 'Milk', category: 'Milk', subCategory: null, price: 50, startDate: '1970-01-01', priceHistory: [{ from: '1970-01-01', price: 50 }] }
     ],
     categories: {
       'Food': ['Restaurant', 'Delivery', 'Snacks', 'Coffee'],
@@ -66,6 +66,16 @@ function getDefaultAppData() {
       'Milk': ['Cow Milk', 'Buffalo Milk', 'Toned Milk']
     }
   };
+}
+
+// The date a recurring item became loggable. Deliberately its own field
+// (not just "priceHistory[0].from") so scheduling an earlier price change
+// later can never silently drag the item's start date backwards - see
+// savePriceChange in index.html, which enforces `from >= startDate`.
+// Days before this date are never toggleable on the calendar; days on/after
+// it are fair game, priced via getEffectivePrice.
+function getItemStartDate(item) {
+  return item.startDate || (Array.isArray(item.priceHistory) && item.priceHistory[0] && item.priceHistory[0].from) || '1970-01-01';
 }
 
 // Given a recurring item, returns whatever price was actually in effect on
@@ -114,7 +124,10 @@ function mergeIntoAppData(parsedData) {
     const priceHistory = Array.isArray(item.priceHistory) && item.priceHistory.length
       ? item.priceHistory.slice().sort((a, b) => a.from.localeCompare(b.from))
       : [{ from: '1970-01-01', price: Number(item.price) || 0 }];
-    return { ...item, priceHistory, price: getEffectivePrice({ priceHistory }) };
+    // Backfill startDate for items saved before this field existed, so
+    // existing users' historical calendar toggles don't suddenly get locked out.
+    const startDate = item.startDate || priceHistory[0].from;
+    return { ...item, priceHistory, startDate, price: getEffectivePrice({ priceHistory }) };
   });
 
   // Backwards Compatibility Migration for Categories
