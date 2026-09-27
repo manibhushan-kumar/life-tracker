@@ -160,7 +160,7 @@ async function saveState(opts) {
     await Promise.all([
       IDB.replaceAll('expenses', appData.expenses),
       IDB.replaceAll('items', appData.items),
-      IDB.put('meta', { key: 'settings', recurringItems: appData.recurringItems, categories: appData.categories })
+      IDB.put('meta', { key: 'settings', recurringItems: appData.recurringItems, categories: appData.categories, budgets: appData.budgets })
     ]);
   } catch (e) {
     console.error('Life Tracker: failed to persist to IndexedDB.', e);
@@ -181,6 +181,12 @@ const VALID_TABS = ['home', 'expenses', 'compare', 'items', 'settings'];
 
 async function initStorage() {
   await loadAppData();
+
+  // Lock in any months that became "the past" since the last time the app
+  // was opened, BEFORE anything renders - so Home/Compare/Settings all see
+  // already-frozen history, never a race where they'd read a not-yet-frozen
+  // month. See freezePastMonthBudgets in js/data-model.js.
+  if (freezePastMonthBudgets()) await saveState();
 
   document.getElementById('headerDate').innerText = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 

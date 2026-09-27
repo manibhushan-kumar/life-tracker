@@ -297,6 +297,42 @@
       navigate(currentTab);
     }
 
+    // Renders Home's color-coded monthly budget progress bar. Pulled out of
+    // renderHome so the color-coding thresholds (see getBudgetStatus in
+    // js/data-model.js) and the "no budget configured yet" empty state both
+    // live in exactly one place.
+    function buildBudgetBarHtml(monthSpending, currentMonthStr) {
+      const budget = getBudgetForMonth(currentMonthStr);
+      if (budget <= 0) {
+        return `
+          <div class="bg-white p-3 rounded-2xl border border-dashed border-slate-200 flex items-center justify-between gap-3">
+            <p class="text-[11px] text-slate-400"><i class="fa-solid fa-wallet mr-1"></i> No monthly budget set yet.</p>
+            <button onclick="navigate('settings')" class="text-[11px] font-semibold text-blue-600 hover:text-blue-700 whitespace-nowrap">Set Budget &rarr;</button>
+          </div>
+        `;
+      }
+
+      const percent = (monthSpending / budget) * 100;
+      const status = getBudgetStatus(percent);
+      const barWidth = Math.min(100, percent);
+
+      return `
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-2">
+          <div class="flex items-center justify-between">
+            <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Monthly Budget</p>
+            <span class="text-[10px] font-bold ${status.text}">${status.label} &bull; ${Math.round(percent)}%</span>
+          </div>
+          <div class="w-full h-2.5 rounded-full ${status.track} overflow-hidden">
+            <div class="h-full ${status.bar} rounded-full transition-all" style="width: ${barWidth}%"></div>
+          </div>
+          <div class="flex items-center justify-between text-[11px]">
+            <span class="text-slate-500">₹${monthSpending.toLocaleString()} spent</span>
+            <span class="text-slate-400">of ₹${budget.toLocaleString()}</span>
+          </div>
+        </div>
+      `;
+    }
+
     // Home is a "this year" workspace by design - older years get pulled
     // into IndexedDB purely for the Compare tab (or on request via Restore),
     // not to clutter the day-to-day view. See expensesInYear() in
@@ -319,6 +355,8 @@
             <p class="text-2xl font-bold text-slate-800 mt-1">₹${monthSpending.toLocaleString()}</p>
           </div>
         </div>
+
+        ${buildBudgetBarHtml(monthSpending, currentMonthStr)}
 
         <div class="space-y-2">
           <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Recent Spending</h3>
@@ -899,6 +937,49 @@
           `}
         </div>
         
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3 mb-4">
+          <div class="flex items-center gap-2 mb-1">
+            <i class="fa-solid fa-wallet text-blue-400"></i>
+            <h3 class="font-bold text-slate-800 text-sm">Monthly Budget</h3>
+          </div>
+          <p class="text-[10px] text-slate-400 -mt-2">The global budget applies to every month unless that month has its own override below. Home shows a color-coded progress bar against whichever one applies to the current month.</p>
+
+          <div>
+            <label class="text-[10px] font-semibold text-slate-400 block mb-1">Global Monthly Budget (₹)</label>
+            <div class="flex gap-2">
+              <input type="number" step="any" min="0" id="globalBudgetInput" value="${appData.budgets.global || ''}" placeholder="e.g. 30000" class="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+              <button onclick="saveGlobalBudget()" class="px-4 py-2 bg-slate-800 text-white rounded-xl text-xs font-semibold hover:bg-slate-700 transition">Save</button>
+            </div>
+          </div>
+
+          <div class="w-full h-px bg-slate-100 my-1"></div>
+
+          <div>
+            <label class="text-[10px] font-semibold text-slate-400 block mb-1">Override the Running or a Future Month</label>
+            <p class="text-[9px] text-slate-400 -mt-0.5 mb-1.5">Past months are locked once they end - see the &#128274; chips below.</p>
+            <div class="flex gap-2">
+              <input type="month" id="budgetOverrideMonth" min="${getTodayStr().slice(0, 7)}" value="${getTodayStr().slice(0, 7)}" class="text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+              <input type="number" step="any" min="0" id="budgetOverrideAmount" placeholder="₹ amount" class="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+              <button onclick="saveMonthlyBudgetOverride()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition">Set</button>
+            </div>
+          </div>
+
+          ${Object.keys(appData.budgets.monthly || {}).length > 0 ? `
+            <div class="flex flex-wrap gap-2 pt-1">
+              ${Object.entries(appData.budgets.monthly).sort((a, b) => b[0].localeCompare(a[0])).map(([month, amount]) => isBudgetMonthEditable(month) ? `
+                <span class="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
+                  ${month}: ₹${Number(amount).toLocaleString()}
+                  <button onclick="deleteMonthlyBudgetOverride('${month}')" class="w-4 h-4 rounded-full bg-slate-200 hover:bg-rose-500 hover:text-white text-slate-500 flex items-center justify-center text-[9px] transition"><i class="fa-solid fa-xmark"></i></button>
+                </span>
+              ` : `
+                <span title="Past months are locked and can't be changed." class="flex items-center gap-1.5 pl-3 pr-2.5 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-[11px] font-semibold text-slate-400">
+                  <i class="fa-solid fa-lock text-[9px]"></i> ${month}: ₹${Number(amount).toLocaleString()}
+                </span>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+
         <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-4">
           <div class="flex items-center gap-2 mb-2">
             <i class="fa-brands fa-google-drive text-amber-500 text-lg"></i>
@@ -1178,6 +1259,49 @@
 
     function onSubCategoryCategoryChange(name) {
       selectedCategoryForSub = name;
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    // --- Monthly Budget (Settings) -----------------------------------------
+    // See getBudgetForMonth/getBudgetStatus in js/data-model.js for how these
+    // two numbers (global default + per-month overrides) turn into Home's
+    // color-coded progress bar.
+    function saveGlobalBudget() {
+      const input = document.getElementById('globalBudgetInput');
+      const amount = parseFloat(input.value) || 0;
+      appData.budgets.global = amount;
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    function saveMonthlyBudgetOverride() {
+      const month = document.getElementById('budgetOverrideMonth').value;
+      const amount = parseFloat(document.getElementById('budgetOverrideAmount').value) || 0;
+      if (!month) return;
+      // Belt-and-suspenders alongside the input's min= attribute - a locked
+      // past month must never be editable, full stop, regardless of how the
+      // value made it into the field.
+      if (!isBudgetMonthEditable(month)) {
+        alert(`${month} is a past month and its budget is locked - only the running month and future months can be set.`);
+        return;
+      }
+      if (amount <= 0) {
+        alert('Enter an amount greater than 0 - to remove an existing override, use the x button on its chip instead.');
+        return;
+      }
+      appData.budgets.monthly[month] = amount;
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    function deleteMonthlyBudgetOverride(month) {
+      if (!isBudgetMonthEditable(month)) {
+        alert(`${month} is a past month and its budget is locked - it can't be removed.`);
+        return;
+      }
+      if (!confirm(`Remove the budget override for ${month}? It'll fall back to the global monthly budget.`)) return;
+      delete appData.budgets.monthly[month];
+      saveState();
       renderSettings(document.getElementById('mainContainer'));
     }
 

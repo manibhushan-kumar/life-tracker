@@ -44,6 +44,92 @@ function sortedCategoryEntries(totals) {
   return Object.entries(totals).sort((a, b) => b[1] - a[1]);
 }
 
+// --- Budget vs Actual (per year) -------------------------------------------
+// Reuses the exact same effective-budget lookup and color thresholds Home
+// uses (see getBudgetForMonth/getBudgetStatus in js/data-model.js) - one
+// definition of "what's this month's budget" and "how worried should this
+// look", used everywhere in the app instead of Compare inventing its own.
+
+function monthlyBudgetsForYear(year) {
+  return COMPARE_MONTH_NAMES.map((_, i) => getBudgetForMonth(`${year}-${String(i + 1).padStart(2, '0')}`));
+}
+
+// One year's month-by-month budget-vs-actual bars plus a year-total roll-up
+// row at the bottom - this single card covers BOTH halves of "month wise
+// budget comparison for a year" and "year wise budget comparison" for that
+// year; the two-year comparison view then renders one of these per year
+// side-by-side-ish (stacked, given the narrow mobile layout) plus its own
+// extra head-to-head summary - see renderYearBudgetTotalsComparison below.
+function renderBudgetVsActualCard(year, monthsActual, monthsBudget) {
+  const yearActual = monthsActual.reduce((s, v) => s + v, 0);
+  const yearBudget = monthsBudget.reduce((s, v) => s + v, 0);
+  const yearPercent = yearBudget > 0 ? (yearActual / yearBudget) * 100 : 0;
+  const yearStatus = getBudgetStatus(yearPercent);
+
+  return `
+    <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">${year} Budget vs Actual</h3>
+        ${yearBudget > 0 ? `<span class="text-[10px] font-bold ${yearStatus.text}">${yearStatus.label}</span>` : '<span class="text-[10px] font-semibold text-slate-300">No budget set</span>'}
+      </div>
+
+      <div class="space-y-2 mb-4">
+        ${COMPARE_MONTH_NAMES.map((m, i) => {
+          const actual = monthsActual[i];
+          const budget = monthsBudget[i];
+          const percent = budget > 0 ? (actual / budget) * 100 : 0;
+          const status = getBudgetStatus(percent);
+          const barWidth = budget > 0 ? Math.min(100, percent) : (actual > 0 ? 100 : 0);
+          return `
+            <div class="flex items-center gap-2 text-[10px]">
+              <span class="w-7 text-slate-400 font-semibold shrink-0">${m}</span>
+              <div class="flex-1 h-2 rounded-full ${budget > 0 ? status.track : 'bg-slate-100'} overflow-hidden">
+                <div class="h-full ${budget > 0 ? status.bar : 'bg-slate-300'} rounded-full" style="width:${barWidth.toFixed(1)}%"></div>
+              </div>
+              <span class="w-28 text-right shrink-0 text-slate-700 font-semibold">
+                ₹${actual.toLocaleString()}${budget > 0 ? ` / ₹${budget.toLocaleString()}` : ' (no budget)'}
+              </span>
+            </div>
+          `;
+        }).join('')}
+      </div>
+
+      <div class="pt-3 border-t border-slate-100 flex items-center justify-between">
+        <span class="text-[10px] font-semibold text-slate-400 uppercase">Year Total</span>
+        <span class="text-xs font-bold text-slate-800">
+          ₹${yearActual.toLocaleString()}${yearBudget > 0 ? ` / ₹${yearBudget.toLocaleString()} (${yearPercent.toFixed(0)}%)` : ' (no budget set)'}
+        </span>
+      </div>
+    </div>
+  `;
+}
+
+// Head-to-head "who did better against their own budget" summary for the
+// two-year comparison view - the explicit "final year wise budget
+// comparison" the two per-year cards above don't directly give you, since
+// each only compares itself to itself.
+function renderYearBudgetTotalsComparison(yearA, yearB, budgetA, actualA, budgetB, actualB) {
+  const pctA = budgetA > 0 ? (actualA / budgetA) * 100 : 0;
+  const pctB = budgetB > 0 ? (actualB / budgetB) * 100 : 0;
+  const statusA = getBudgetStatus(pctA);
+  const statusB = getBudgetStatus(pctB);
+
+  const col = (year, budget, actual, pct, status, accentClass) => `
+    <div class="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center">
+      <p class="text-[9px] font-semibold text-slate-400 uppercase">${year} Budget Used</p>
+      <p class="text-base font-bold mt-0.5 ${budget > 0 ? status.text : 'text-slate-300'}">${budget > 0 ? pct.toFixed(0) + '%' : 'N/A'}</p>
+      <p class="text-[9px] ${accentClass} mt-0.5 font-semibold">₹${actual.toLocaleString()}${budget > 0 ? ` of ₹${budget.toLocaleString()}` : ' (no budget)'}</p>
+    </div>
+  `;
+
+  return `
+    <div class="grid grid-cols-2 gap-2">
+      ${col(yearA, budgetA, actualA, pctA, statusA, 'text-blue-600')}
+      ${col(yearB, budgetB, actualB, pctB, statusB, 'text-violet-600')}
+    </div>
+  `;
+}
+
 function onCompareYearChange(which, value) {
   if (which === 'A') _compareYearA = value;
   else _compareYearB = value;
@@ -99,6 +185,8 @@ function renderSingleYearSection(year) {
       </div>
     </div>
 
+    ${renderBudgetVsActualCard(year, months, monthlyBudgetsForYear(year))}
+
     <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
       <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">By Category</h3>
       <div class="divide-y divide-slate-50">
@@ -122,6 +210,9 @@ function renderComparisonSection(yearA, yearB) {
   const delta = totalA - totalB;
   const deltaPct = totalB !== 0 ? (delta / totalB) * 100 : (totalA !== 0 ? 100 : 0);
   const maxMonthVal = Math.max(1, ...monthsA, ...monthsB);
+
+  const budgetsA = monthlyBudgetsForYear(yearA);
+  const budgetsB = monthlyBudgetsForYear(yearB);
 
   const catA = categoryTotalsForYear(yearA);
   const catB = categoryTotalsForYear(yearB);
@@ -162,6 +253,11 @@ function renderComparisonSection(yearA, yearB) {
         `).join('')}
       </div>
     </div>
+
+    ${renderYearBudgetTotalsComparison(yearA, yearB, budgetsA.reduce((s, v) => s + v, 0), totalA, budgetsB.reduce((s, v) => s + v, 0), totalB)}
+
+    ${renderBudgetVsActualCard(yearA, monthsA, budgetsA)}
+    ${renderBudgetVsActualCard(yearB, monthsB, budgetsB)}
 
     <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
       <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">By Category</h3>

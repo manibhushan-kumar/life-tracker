@@ -97,7 +97,13 @@ function getDefaultAppData() {
       'Health': ['Pharmacy', 'Doctor', 'Gym', 'Insurance'],
       'Travel': ['Hotels', 'Tickets', 'Tours'],
       'Milk': ['Cow Milk', 'Buffalo Milk', 'Toned Milk']
-    }
+    },
+    // Monthly budget tracking. `global` is the fallback used by any month
+    // that doesn't have its own entry in `monthly` - see getBudgetForMonth().
+    // A value of 0 means "not configured", not "a real ₹0 budget" - callers
+    // treat that as "don't render a budget bar yet". `frozenThroughMonth` is
+    // freezePastMonthBudgets()'s bookmark - see there for why it exists.
+    budgets: { global: 0, monthly: {}, frozenThroughMonth: null }
   };
 }
 
@@ -177,4 +183,97 @@ function mergeIntoAppData(parsedData) {
       appData.categories = { ...appData.categories, ...parsedData.categories };
     }
   }
+
+  // Budgets: only overwrite if the incoming blob actually has one (older
+  // Drive settings.json files won't) - otherwise the default/current
+  // in-memory budgets (already seeded by getDefaultAppData) stand as-is.
+  if (parsedData.budgets) {
+    appData.budgets = {
+      global: Number(parsedData.budgets.global) || 0,
+      monthly: { ...(parsedData.budgets.monthly || {}) },
+      frozenThroughMonth: parsedData.budgets.frozenThroughMonth || null
+    };
+  }
+}
+
+// Effective budget (in rupees) for a given "YYYY-MM" month: an explicit
+// per-month override wins, otherwise it falls back to the global monthly
+// default. Returns 0 if neither is configured - the single source of truth
+// for "is there even a budget to compare against here", shared by Home's
+// progress bar and the Settings budget editor.
+function getBudgetForMonth(yearMonth) {
+  const budgets = appData.budgets || { global: 0, monthly: {} };
+  const override = budgets.monthly && budgets.monthly[yearMonth];
+  return (typeof override === 'number' && override > 0) ? override : (Number(budgets.global) || 0);
+}
+
+// Color-coding thresholds for "how worried should this bar look" given a
+// %-of-budget-spent figure. One shared lookup so the thresholds only ever
+// need tuning in a single place:
+//   < 50%  emerald  - plenty of room left
+//   50-74% amber    - past the halfway mark, worth a glance
+//   75-89% orange   - getting close, start being deliberate
+//   90%+   rose     - right at/over the edge (100%+ still rose, just labeled differently)
+function getBudgetStatus(percentSpent) {
+  if (percentSpent >= 100) return { bar: 'bg-rose-600', track: 'bg-rose-100', text: 'text-rose-600', label: 'Over budget' };
+  if (percentSpent >= 90) return { bar: 'bg-rose-500', track: 'bg-rose-100', text: 'text-rose-600', label: 'Almost there' };
+  if (percentSpent >= 75) return { bar: 'bg-orange-500', track: 'bg-orange-100', text: 'text-orange-600', label: 'Getting close' };
+  if (percentSpent >= 50) return { bar: 'bg-amber-500', track: 'bg-amber-100', text: 'text-amber-600', label: 'On watch' };
+  return { bar: 'bg-emerald-500', track: 'bg-emerald-100', text: 'text-emerald-600', label: 'On track' };
+}
+
+// "YYYY-MM" + 1 month, rolling over into the next year as needed. Generic
+// enough to belong here rather than inside freezePastMonthBudgets() alone -
+// it's just date math, nothing budget-specific about it.
+function nextYearMonth(yearMonth) {
+  const [y, m] = yearMonth.split('-').map(Number);
+  const rolledOver = m === 12;
+  return `${rolledOver ? y + 1 : y}-${String(rolledOver ? 1 : m + 1).padStart(2, '0')}`;
+}
+
+// A month is only editable in Settings' budget override picker if it's the
+// current ("running") month or a future one - see saveMonthlyBudgetOverride/
+// deleteMonthlyBudgetOverride in index.html, which both enforce this too
+// (not just the UI's min= attribute, which a determined user could bypass).
+function isBudgetMonthEditable(yearMonth) {
+  return yearMonth >= getTodayStr().slice(0, 7);
+}
+
+// Locks in the ACTUAL effective budget for every month that has now become
+// "the past" since the last time this ran, by writing it into
+// budgets.monthly as an explicit override. Without this, a later edit to
+// the global default would silently rewrite the budget for months the user
+// already lived through - which defeats the point of ever looking back at
+// "did I stay on budget in March". Called once on boot (see initStorage in
+// storage.js) - cheap and idempotent, so booting twice in the same month
+// (the common case) does nothing after the first call.
+//
+// Deliberately does NOT retroactively freeze anything on the very first run
+// (frozenThroughMonth starts null) - we have no idea what budget was
+// "actually in effect" for months before this feature existed, so inventing
+// overrides for them from today's global value would just be guessing.
+// Freezing only kicks in for months that pass FROM HERE ON.
+function freezePastMonthBudgets() {
+  if (!appData.budgets) appData.budgets = { global: 0, monthly: {}, frozenThroughMonth: null };
+  const budgets = appData.budgets;
+  const currentMonth = getTodayStr().slice(0, 7);
+
+  if (!budgets.frozenThroughMonth) {
+    budgets.frozenThroughMonth = currentMonth;
+    return true; // bookmark itself is a real mutation - must be persisted so it isn't lost if nothing else triggers a save this session
+  }
+  if (budgets.frozenThroughMonth >= currentMonth) return false;
+
+  let changed = false;
+  for (let month = budgets.frozenThroughMonth; month < currentMonth; month = nextYearMonth(month)) {
+    if (!(month in budgets.monthly)) {
+      const effective = getBudgetForMonth(month);
+      if (effective > 0) {
+        budgets.monthly[month] = effective;
+        changed = true;
+      }
+    }
+  }
+  budgets.frozenThroughMonth = currentMonth;
+  return true;
 }
