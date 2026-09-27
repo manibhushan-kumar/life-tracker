@@ -31,8 +31,6 @@
 // rewrite) are still recognized on restore and transparently upgraded to
 // this format on the next backup.
 
-const G_CLIENT_ID_KEY = 'life_tracker_gclient_id';
-const G_FOLDER_KEY = 'life_tracker_gfolder_name';
 const G_TOKEN_KEY = 'life_tracker_gdrive_token';
 const G_TOKEN_EXPIRY_KEY = 'life_tracker_gdrive_token_expiry';
 // Caches the resolved ROOT sync folder's id, keyed to the folder NAME it was
@@ -55,18 +53,6 @@ const LEGACY_BACKUP_FILE_NAME = 'life_tracker_data.json';
 
 let gdriveToken = null;
 let tokenClient = null;
-
-function saveDriveSettings() {
-  const clientId = document.getElementById('settingClientId').value.trim();
-  const folderName = document.getElementById('settingFolder').value.trim() || 'Life Tracker Sync';
-
-  if (!clientId) return alert('Client ID is required.');
-
-  localStorage.setItem(G_CLIENT_ID_KEY, clientId);
-  localStorage.setItem(G_FOLDER_KEY, folderName);
-  document.getElementById('driveSyncNotice').innerText = 'Configuration saved!';
-  document.getElementById('driveSyncNotice').className = 'text-[11px] text-center text-emerald-500 font-medium h-4';
-}
 
 // Single place that updates the "Connected"/"Offline" pill in the header,
 // so authenticate/restore/disconnect all agree on what it looks like. Also
@@ -128,13 +114,12 @@ function tryRestoreDriveSession() {
     return;
   }
 
-  const clientId = localStorage.getItem(G_CLIENT_ID_KEY);
-  if (!clientId) return;
+  if (!isGoogleDriveConfigured()) return;
 
   const attemptSilentAuth = () => {
     if (typeof google === 'undefined' || !google.accounts) return;
     const silentClient = google.accounts.oauth2.initTokenClient({
-      client_id: clientId,
+      client_id: GOOGLE_OAUTH_CLIENT_ID,
       scope: 'https://www.googleapis.com/auth/drive.file',
       callback: (response) => {
         if (!response || response.error || !response.access_token) return; // silent fail, no popup shown
@@ -161,15 +146,14 @@ function tryRestoreDriveSession() {
 }
 
 function authenticateGoogleDrive() {
-  const clientId = localStorage.getItem(G_CLIENT_ID_KEY);
-  if (!clientId) return alert('Please enter and save your Google Cloud OAuth Client ID first.');
+  if (!isGoogleDriveConfigured()) return alert('Google Drive backup is not configured yet. Set GOOGLE_OAUTH_CLIENT_ID in js/config.js first.');
 
   if (typeof google === 'undefined' || !google.accounts) {
     return alert('Google scripts are loading or offline. Check internet connection.');
   }
 
   tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: clientId,
+    client_id: GOOGLE_OAUTH_CLIENT_ID,
     scope: 'https://www.googleapis.com/auth/drive.file',
     callback: (response) => {
       if (response.error) {
@@ -249,7 +233,7 @@ async function deleteDriveFile(fileId) {
 // per-call (not across calls) since folder ids rarely matter outside a
 // single backup/restore run.
 async function ensureSyncFolders() {
-  const folderName = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
+  const folderName = GOOGLE_DRIVE_BACKUP_FOLDER_NAME;
   const rootId = await resolveRootFolderId(folderName);
   const expensesFolderId = await getOrCreateFolder(EXPENSES_FOLDER_NAME, rootId);
   return { rootId, expensesFolderId };
@@ -593,7 +577,7 @@ async function deleteAllDriveBackupsExceptSettings() {
   setNotice('Deleting Drive backup...', 'text-blue-500');
 
   try {
-    const folderName = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
+    const folderName = GOOGLE_DRIVE_BACKUP_FOLDER_NAME;
     const rootId = await resolveRootFolderId(folderName);
     const syncMeta = await getSyncMeta();
 
@@ -686,7 +670,7 @@ async function restoreFromGoogleDrive() {
   setNotice('Checking Drive...', 'text-blue-500');
 
   try {
-    const folderName = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
+    const folderName = GOOGLE_DRIVE_BACKUP_FOLDER_NAME;
     const rootId = await resolveRootFolderId(folderName);
     const syncMeta = await getSyncMeta();
 
