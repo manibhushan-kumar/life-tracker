@@ -52,7 +52,8 @@ const TAB_DISPLAY_NAMES = {
   items: 'Due Items',
   compare: 'Compare',
   settings: 'Settings',
-  splitwise: 'Splitwise'
+  splitwise: 'Splitwise',
+  reports: 'Reports'
 };
 
 // Sets the " / PageName" breadcrumb suffix after the clickable "Life
@@ -108,7 +109,19 @@ function getDefaultAppData() {
     // relation to Splitwise's per-group members (js/splitwise.js) - that's a
     // separate, unrelated concept (splitting a shared bill vs just noting
     // who paid for something out of one household's own money).
-    familyMembers: []
+    familyMembers: [],
+    // Single-select "project/trip" labels ({id, name}) an expense can be
+    // tagged with (see Reports view in index.html, which is the whole
+    // reason these exist - "show me every expense under Trip-Goa"). A
+    // deliberately SEPARATE concept from categories: categories answer
+    // "what kind of spend is this" (Food, Bills, ...) and stay useful
+    // forever, while tags answer "what one-off thing was this spend part
+    // of" (Trip-Goa, House-Renovation, ...) and are meant to come and go.
+    // Exactly one tag per expense, by design - same reasoning as paidBy:
+    // an expense either belongs to a given trip/project or it doesn't; if
+    // it genuinely spans two, that's arguably two expenses, not one
+    // multi-tagged one. Full OVERWRITE on restore, same as familyMembers.
+    tags: []
   };
 }
 
@@ -159,6 +172,13 @@ function mergeIntoAppData(parsedData) {
   // wholesale-replace treatment `items` above already gets.
   if (Array.isArray(parsedData.familyMembers)) {
     appData.familyMembers = parsedData.familyMembers;
+  }
+
+  // Tags: same wholesale-overwrite treatment as familyMembers, for the
+  // same reason - restoring means "Drive's list wins", including any tag
+  // that was deleted there since the last backup.
+  if (Array.isArray(parsedData.tags)) {
+    appData.tags = parsedData.tags;
   }
 
   // Recurring Daily Items - fully generic and user-configurable, so a
@@ -298,4 +318,14 @@ function getFamilyMemberName(memberId) {
   if (!memberId) return null;
   const member = (appData.familyMembers || []).find(m => m.id === memberId);
   return member ? member.name : 'Former member';
+}
+
+// Display name for a tag id, with the same graceful "Former tag" fallback
+// getFamilyMemberName above gives paidBy - keeps the Reports view and any
+// expense row from choking on a dangling reference after the tag itself
+// was deleted in Settings. Returns null for a falsy id ("no tag set").
+function getTagName(tagId) {
+  if (!tagId) return null;
+  const tag = (appData.tags || []).find(t => t.id === tagId);
+  return tag ? tag.name : 'Former tag';
 }

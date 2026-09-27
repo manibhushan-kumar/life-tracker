@@ -162,6 +162,10 @@
         <div class="w-9 h-9 rounded-lg bg-violet-500/10 text-violet-600 flex items-center justify-center"><i class="fa-solid fa-people-group text-sm"></i></div>
         <div class="text-left"><p class="text-xs font-bold text-slate-800">Splitwise</p><p class="text-[10px] text-slate-400">Split a bill with friends - local only</p></div>
       </button>
+      <button onclick="navigate('reports'); closeQuickAddModal()" class="w-full p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
+        <div class="w-9 h-9 rounded-lg bg-amber-500/10 text-amber-600 flex items-center justify-center"><i class="fa-solid fa-chart-pie text-sm"></i></div>
+        <div class="text-left"><p class="text-xs font-bold text-slate-800">Reports</p><p class="text-[10px] text-slate-400">See spending under a tag, e.g. Trip-Goa</p></div>
+      </button>
     </div>
   </div>
 
@@ -264,6 +268,7 @@
       else if (tab === 'compare') renderCompare(container);
       else if (tab === 'items') renderItems(container);
       else if (tab === 'settings') renderSettings(container);
+      else if (tab === 'reports') renderReports(container);
     }
 
     // --- Home Screen View ---
@@ -275,7 +280,7 @@
         <div class="${wrapperClass} flex items-center justify-between gap-2">
           <div class="min-w-0">
             <p class="text-xs font-bold text-slate-800 truncate">${e.note || e.category}</p>
-            <p class="text-[10px] text-slate-400 truncate">${e.category}${e.subCategory ? ' &raquo; ' + e.subCategory : ''} &bull; ${e.date}${e.paidBy ? ' &bull; Paid by ' + getFamilyMemberName(e.paidBy) : ''}</p>
+            <p class="text-[10px] text-slate-400 truncate">${e.category}${e.subCategory ? ' &raquo; ' + e.subCategory : ''} &bull; ${e.date}${e.paidBy ? ' &bull; Paid by ' + getFamilyMemberName(e.paidBy) : ''}${e.tag ? ' &bull; <i class=\'fa-solid fa-tag\'></i> ' + getTagName(e.tag) : ''}</p>
           </div>
           <div class="flex items-center gap-2 shrink-0">
             <p class="text-xs font-bold text-slate-800">₹${Number(e.amount).toLocaleString()}</p>
@@ -679,6 +684,15 @@
               </select>
             </div>
           ` : ''}
+          ${appData.tags.length > 0 ? `
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Tag (Optional)</label>
+              <select id="expTag" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+                <option value="">-- No tag --</option>
+                ${appData.tags.map(t => `<option value="${t.id}">${t.name}</option>`).join('')}
+              </select>
+            </div>
+          ` : ''}
           <div>
             <label class="text-[11px] font-semibold text-slate-400">Description / Note (Optional)</label>
             <input type="text" id="expNote" placeholder="e.g. Lunch, Fuel, Groceries" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
@@ -715,6 +729,7 @@
       // member (see openExpenseForm) - null-safe read so this still works
       // fine when it's absent from the DOM entirely.
       const paidByEl = document.getElementById('expPaidBy');
+      const tagEl = document.getElementById('expTag');
       const newExp = {
         id: 'exp_' + Date.now(),
         amount: parseFloat(document.getElementById('expAmount').value),
@@ -722,7 +737,8 @@
         subCategory: document.getElementById('expSubCategory').value || null,
         date: document.getElementById('expDate').value,
         note: document.getElementById('expNote').value,
-        paidBy: (paidByEl && paidByEl.value) || null
+        paidBy: (paidByEl && paidByEl.value) || null,
+        tag: (tagEl && tagEl.value) || null
       };
       appData.expenses.push(newExp);
       saveState();
@@ -937,6 +953,99 @@
       navigate(currentTab);
     }
 
+    // --- Reports View (tag-based) ---------------------------------------
+    // Opened via the Quick Add (+) sheet, not a bottom-nav tab - same
+    // pattern Settings uses (see TAB_DISPLAY_NAMES.reports in
+    // js/data-model.js for the breadcrumb, and VALID_TABS in js/storage.js
+    // so a reload resumes here). Picks exactly ONE tag at a time - an
+    // expense can only ever carry one (see saveExpense) - and shows every
+    // expense filed under it: a grand total, a category-wise breakdown,
+    // and the raw list, reusing renderExpenseRow so a single expense's
+    // markup never drifts out of sync with Home/Expenses.
+    let reportSelectedTagId = null;
+
+    function renderReports(container) {
+      // Default to the first tag (or fall back to it if the previously
+      // selected one got deleted in Settings) - avoids a pointless "pick a
+      // tag" step when there's only one obvious choice.
+      if (reportSelectedTagId && !appData.tags.some(t => t.id === reportSelectedTagId)) {
+        reportSelectedTagId = null;
+      }
+      if (!reportSelectedTagId && appData.tags.length > 0) {
+        reportSelectedTagId = appData.tags[0].id;
+      }
+
+      if (appData.tags.length === 0) {
+        container.innerHTML = `
+          <h2 class="text-sm font-bold text-slate-800 mb-3">Reports</h2>
+          <div class="bg-white p-6 rounded-2xl border border-dashed border-slate-200 text-center space-y-2">
+            <i class="fa-solid fa-tag text-2xl text-slate-300"></i>
+            <p class="text-xs text-slate-400">No tags yet. Add one in Settings (e.g. "Trip-Goa"), tag an expense with it, and its report will show up here.</p>
+            <button onclick="navigate('settings')" class="text-xs font-semibold text-blue-600 hover:text-blue-700">Go to Settings &rarr;</button>
+          </div>
+        `;
+        return;
+      }
+
+      const tagExpenses = appData.expenses.filter(e => e.tag === reportSelectedTagId);
+      const total = tagExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+
+      // Category-wise breakdown, biggest spend first.
+      const byCategory = {};
+      tagExpenses.forEach(e => {
+        byCategory[e.category] = (byCategory[e.category] || 0) + Number(e.amount);
+      });
+      const categoryRows = Object.entries(byCategory).sort((a, b) => b[1] - a[1]);
+
+      container.innerHTML = `
+        <h2 class="text-sm font-bold text-slate-800 mb-3">Reports</h2>
+
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-2 mb-4">
+          <label class="text-[11px] font-semibold text-slate-400">Tag</label>
+          <select id="reportTagSelect" onchange="selectReportTag(this.value)" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+            ${appData.tags.map(t => `<option value="${t.id}" ${t.id === reportSelectedTagId ? 'selected' : ''}>${t.name}</option>`).join('')}
+          </select>
+        </div>
+
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm text-center mb-4">
+          <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Total under "${getTagName(reportSelectedTagId)}"</p>
+          <p class="text-2xl font-bold text-slate-800 mt-1">₹${total.toLocaleString()}</p>
+          <p class="text-[10px] text-slate-400 mt-1">${tagExpenses.length} expense${tagExpenses.length === 1 ? '' : 's'}</p>
+        </div>
+
+        <div class="space-y-2 mb-4">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">By Category</h3>
+          <div class="bg-white rounded-2xl border border-slate-100 divide-y divide-slate-50 overflow-hidden shadow-xs">
+            ${categoryRows.map(([cat, amt]) => `
+              <div class="p-3 flex items-center justify-between gap-2">
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs font-bold text-slate-800 truncate">${cat}</p>
+                  <div class="w-full h-1.5 rounded-full bg-slate-100 overflow-hidden mt-1">
+                    <div class="h-full bg-blue-500 rounded-full" style="width: ${total > 0 ? Math.round((amt / total) * 100) : 0}%"></div>
+                  </div>
+                </div>
+                <p class="text-xs font-bold text-slate-800 shrink-0">₹${amt.toLocaleString()}</p>
+              </div>
+            `).join('')}
+            ${categoryRows.length === 0 ? '<p class="text-xs text-slate-400 text-center py-4">No expenses under this tag yet.</p>' : ''}
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">All Expenses</h3>
+          <div class="bg-white rounded-2xl border border-slate-100 divide-y divide-slate-50 overflow-y-auto hide-scrollbar shadow-xs" style="max-height: 420px;">
+            ${tagExpenses.slice().sort((a, b) => b.date.localeCompare(a.date)).map(e => renderExpenseRow(e, 'p-3')).join('')}
+            ${tagExpenses.length === 0 ? '<p class="text-xs text-slate-400 text-center py-4">No expenses under this tag yet.</p>' : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    function selectReportTag(tagId) {
+      reportSelectedTagId = tagId;
+      renderReports(document.getElementById('mainContainer'));
+    }
+
     // --- Settings / Google Drive View ---
     let selectedCategoryForSub = null;
 
@@ -1022,6 +1131,29 @@
           <div class="flex gap-2 pt-1">
             <input type="text" id="newFamilyMemberName" placeholder="e.g. Mom, Dad, Priya" class="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
             <button onclick="addFamilyMember()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition">Add</button>
+          </div>
+        </div>
+
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3 mb-4">
+          <div class="flex items-center gap-2 mb-1">
+            <i class="fa-solid fa-tag text-blue-400"></i>
+            <h3 class="font-bold text-slate-800 text-sm">Tags (Projects / Trips)</h3>
+          </div>
+          <p class="text-[10px] text-slate-400 -mt-2">Optional single tag you can attach to an expense - e.g. "Trip-Goa" - so you can pull up its total spend in Reports (tap the + button). Deleting a tag only hides it from new entries - past expenses keep showing it.</p>
+
+          <div class="flex flex-wrap gap-2">
+            ${appData.tags.map(t => `
+              <span class="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
+                ${t.name}
+                <button onclick="deleteTag('${t.id}')" class="w-4 h-4 rounded-full bg-slate-200 hover:bg-rose-500 hover:text-white text-slate-500 flex items-center justify-center text-[9px] transition"><i class="fa-solid fa-xmark"></i></button>
+              </span>
+            `).join('')}
+            ${appData.tags.length === 0 ? '<p class="text-[11px] text-slate-400">No tags added yet.</p>' : ''}
+          </div>
+
+          <div class="flex gap-2 pt-1">
+            <input type="text" id="newTagName" placeholder="e.g. Trip-Goa" class="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            <button onclick="addTag()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition">Add</button>
           </div>
         </div>
 
@@ -1317,6 +1449,38 @@
       if (!confirm(msg)) return;
 
       appData.familyMembers = appData.familyMembers.filter(m => m.id !== id);
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    // --- Tags (Settings) -----------------------------------------------------
+    // Plain {id, name} labels, same shape/spirit as Family Members above -
+    // see getTagName() in js/data-model.js for the display-side lookup used
+    // by expense rows, the Add Expense "Tag" dropdown, and the Reports view.
+    function addTag() {
+      const input = document.getElementById('newTagName');
+      const name = input.value.trim();
+      if (!name) return;
+      if (appData.tags.some(t => t.name.toLowerCase() === name.toLowerCase())) {
+        alert('That tag already exists.');
+        return;
+      }
+      appData.tags.push({ id: 'tag_' + Date.now(), name });
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    function deleteTag(id) {
+      const tag = appData.tags.find(t => t.id === id);
+      if (!tag) return;
+
+      const inUseCount = appData.expenses.filter(e => e.tag === id).length;
+      const msg = inUseCount > 0
+        ? `"${tag.name}" is used on ${inUseCount} existing expense(s). Those will keep showing "${tag.name}" but it will disappear from the Reports tag picker and can't be picked for new entries. Delete anyway?`
+        : `Delete tag "${tag.name}"?`;
+      if (!confirm(msg)) return;
+
+      appData.tags = appData.tags.filter(t => t.id !== id);
       saveState();
       renderSettings(document.getElementById('mainContainer'));
     }
