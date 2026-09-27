@@ -1147,5 +1147,95 @@
       });
     }
   </script>
+
+<div id="testout" style="position:fixed;top:0;left:0;right:0;background:black;color:lime;z-index:99999;font-size:10px;padding:4px;white-space:pre-wrap;font-family:monospace;"></div>
+<script>
+window.addEventListener("load", async () => {
+  const log = [];
+  const out = (s) => log.push(s);
+  try {
+    await new Promise(r => setTimeout(r, 300)); // let initStorage settle
+    out("splitGroups initial: " + JSON.stringify(splitGroups));
+
+    openSplitwise();
+    await new Promise(r => setTimeout(r, 50));
+    out("overlay hidden? " + document.getElementById("splitwiseOverlay").classList.contains("hidden"));
+
+    // Create group
+    document.getElementById("newSplitGroupName") // placeholder, form not open yet
+    openNewGroupForm();
+    document.getElementById("newSplitGroupName").value = "Goa Trip";
+    document.querySelector("#formModalContent form").requestSubmit();
+    await new Promise(r => setTimeout(r, 50));
+    out("groups after create: " + splitGroups.length + " activeId=" + activeSplitGroupId);
+
+    // Add 2 members
+    openAddMemberForm(activeSplitGroupId);
+    document.getElementById("newSplitMemberName").value = "Alice";
+    document.querySelector("#formModalContent form").requestSubmit();
+    await new Promise(r => setTimeout(r, 50));
+
+    openAddMemberForm(activeSplitGroupId);
+    document.getElementById("newSplitMemberName").value = "Bob";
+    document.querySelector("#formModalContent form").requestSubmit();
+    await new Promise(r => setTimeout(r, 50));
+
+    const group = splitGroups.find(g => g.id === activeSplitGroupId);
+    out("members: " + JSON.stringify(group.members.map(m=>m.name)));
+
+    // Add expense paid by Alice, split between both
+    openAddSplitExpenseForm(activeSplitGroupId);
+    document.getElementById("splitExpAmount").value = "1000";
+    document.getElementById("splitExpPaidBy").value = group.members[0].id;
+    document.querySelector("#formModalContent form").requestSubmit();
+    await new Promise(r => setTimeout(r, 50));
+
+    const balances = calculateSplitBalances(group);
+    out("balances: " + JSON.stringify(balances));
+    out("expenses count: " + group.expenses.length);
+
+    // Verify IDB actually persisted it
+    const fromDb = await IDB.getAll("splitGroups");
+    out("IDB splitGroups count: " + fromDb.length);
+    out("IDB group expenses: " + JSON.stringify(fromDb[0].expenses));
+
+    // Try deleting a member who is used (should block)
+    window.confirm = () => true; // auto-confirm any confirm() dialogs
+    window.alert = (msg) => out("ALERT: " + msg);
+    await deleteSplitMember(activeSplitGroupId, group.members[0].id);
+    out("members after blocked delete attempt: " + group.members.length);
+
+    // Delete the expense, then the now-unused member should be removable
+    await deleteSplitExpense(activeSplitGroupId, group.expenses[0].id);
+    out("expenses after delete: " + group.expenses.length);
+    await deleteSplitMember(activeSplitGroupId, group.members[0].id);
+    out("members after real delete: " + group.members.length);
+
+    // Test max group limit
+    for (let i = 0; i < 5; i++) {
+      if (splitGroups.length >= MAX_SPLIT_GROUPS) break;
+      openNewGroupForm();
+      if (!document.getElementById("newSplitGroupName")) { out("BLOCKED at group " + i); break; }
+      document.getElementById("newSplitGroupName").value = "G" + i;
+      document.querySelector("#formModalContent form").requestSubmit();
+      await new Promise(r => setTimeout(r, 30));
+    }
+    out("total groups now: " + splitGroups.length + " (max=" + MAX_SPLIT_GROUPS + ")");
+    openNewGroupForm();
+    out("form opened at limit? nameInput exists=" + !!document.getElementById("newSplitGroupName"));
+
+    // Delete a group and confirm cascade
+    const idToDelete = splitGroups[0].id;
+    await deleteSplitGroup(idToDelete);
+    const stillInDb = await IDB.get("splitGroups", idToDelete);
+    out("group still in IDB after delete? " + JSON.stringify(stillInDb));
+    out("groups remaining: " + splitGroups.length);
+
+  } catch (err) {
+    out("ERROR: " + err.message + "\n" + err.stack);
+  }
+  document.getElementById("testout").textContent = log.join("\n");
+});
+</script>
 </body>
 </html>

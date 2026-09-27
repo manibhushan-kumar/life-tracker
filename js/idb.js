@@ -7,7 +7,7 @@
 // IndexedDB work" (single responsibility, nothing fancier than that).
 const IDB = (() => {
   const DB_NAME = 'life_tracker_db';
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
   let dbPromise = null;
 
   function openDB() {
@@ -34,6 +34,14 @@ const IDB = (() => {
           // chunk versions, cached file ids, etc). Rows are tiny and few,
           // so this store never needs chunking.
           db.createObjectStore('meta', { keyPath: 'key' });
+        }
+        if (!db.objectStoreNames.contains('splitGroups')) {
+          // Splitwise-style group-expense-splitting feature (js/splitwise.js).
+          // Deliberately its OWN store, never touched by appData/saveState,
+          // backupToGoogleDrive, or restoreFromGoogleDrive - this is
+          // local-device-only data by design, so it simply doesn't exist as
+          // far as the Drive sync code is concerned.
+          db.createObjectStore('splitGroups', { keyPath: 'id' });
         }
       };
 

@@ -1,0 +1,383 @@
+// --- Splitwise (local-only bill splitting) --------------------------------
+// A self-contained "who owes who" feature for group expenses (trips,
+// flatmates, events). Deliberately isolated from the rest of the app:
+//
+//   - Its own IndexedDB store ('splitGroups', see js/idb.js) - NOT part of
+//     `appData`, so saveState()/backupToGoogleDrive()/restoreFromGoogleDrive()
+//     in storage.js/drive-sync.js never see it, touch it, or know it exists.
+//     That's the whole point: this data is local-to-this-device only, and a
+//     Drive restore must never create, modify, or wipe a single group.
+//   - Its own full-screen overlay (#splitwiseOverlay in index.html), not a
+//     tab, since it has its own two-level nested navigation (group list ->
+//     group detail) that doesn't fit the app's single-level bottom nav.
+//
+// Each group document embeds its own members + expenses (small, capped
+// dataset - max 5 groups total) so "delete a group" is one IDB.delete call
+// that removes everything in it, with nothing left to orphan elsewhere.
+
+let splitGroups = [];
+let activeSplitGroupId = null;
+const MAX_SPLIT_GROUPS = 5;
+
+// Short, collision-safe-enough id for a dataset this small (max 5 groups,
+// a handful of members/expenses each) - no need for a UUID library.
+function _sgId(prefix) {
+  return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+}
+
+// --- Open / close / view dispatch -----------------------------------------
+
+async function openSplitwise() {
+  document.getElementById('splitwiseOverlay').classList.remove('hidden');
+  splitGroups = await IDB.getAll('splitGroups');
+  splitGroups.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  activeSplitGroupId = null;
+  renderSplitwiseView();
+}
+
+function closeSplitwise() {
+  document.getElementById('splitwiseOverlay').classList.add('hidden');
+}
+
+function openGroupDetail(groupId) {
+  activeSplitGroupId = groupId;
+  renderSplitwiseView();
+}
+
+function backToGroupList() {
+  activeSplitGroupId = null;
+  renderSplitwiseView();
+}
+
+// Single render entry point so every mutation function below just calls
+// this instead of deciding for itself which view is "current".
+function renderSplitwiseView() {
+  const group = splitGroups.find(g => g.id === activeSplitGroupId);
+  if (group) renderSplitGroupDetail(group);
+  else renderSplitwiseGroupList();
+}
+
+// --- Group list view --------------------------------------------------
+
+function renderSplitwiseGroupList() {
+  document.getElementById('splitwiseBackBtn').classList.add('hidden');
+  document.getElementById('splitwiseTitle').textContent = 'Splitwise';
+
+  const atLimit = splitGroups.length >= MAX_SPLIT_GROUPS;
+  const content = document.getElementById('splitwiseContent');
+  content.innerHTML = `
+    <p class="text-[11px] text-slate-400">Lives only on this device - never backed up or touched by Google Drive restore. Deleting a group wipes everything in it, right here.</p>
+
+    <button onclick="openNewGroupForm()" ${atLimit ? 'disabled' : ''} class="w-full py-2.5 rounded-xl text-xs font-bold transition ${atLimit ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}">
+      <i class="fa-solid fa-plus mr-1"></i> ${atLimit ? 'Max 5 groups reached' : 'New Group'}
+    </button>
+
+    <div class="space-y-2">
+      ${splitGroups.length === 0 ? '<p class="text-center text-xs text-slate-400 py-10">No split groups yet.<br>Create one for a trip, flatmates, or an event.</p>' : ''}
+      ${splitGroups.map(g => {
+        const total = g.expenses.reduce((sum, e) => sum + Number(e.amount), 0);
+        return `
+          <div onclick="openGroupDetail('${g.id}')" class="p-3.5 rounded-xl border border-slate-100 bg-white shadow-sm flex items-center justify-between cursor-pointer hover:bg-slate-50 transition">
+            <div>
+              <p class="text-xs font-bold text-slate-800">${g.name}</p>
+              <p class="text-[10px] text-slate-400">${g.members.length} member(s) &bull; ₹${total.toLocaleString()} logged</p>
+            </div>
+            <button onclick="event.stopPropagation(); deleteSplitGroup('${g.id}')" class="text-rose-500 hover:text-rose-600 px-2"><i class="fa-solid fa-trash text-xs"></i></button>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function openNewGroupForm() {
+  if (splitGroups.length >= MAX_SPLIT_GROUPS) {
+    alert(`You can only have ${MAX_SPLIT_GROUPS} split groups at a time. Delete one first.`);
+    return;
+  }
+  const modal = document.getElementById('formModal');
+  const content = document.getElementById('formModalContent');
+  modal.classList.remove('hidden');
+  content.innerHTML = `
+    <h3 class="text-sm font-bold text-slate-800 mb-3">New Split Group</h3>
+    <form onsubmit="saveNewSplitGroup(event)" class="space-y-3">
+      <div>
+        <label class="text-[11px] font-semibold text-slate-400">Group Name</label>
+        <input type="text" required id="newSplitGroupName" placeholder="e.g. Goa Trip, Flatmates" class="w-full text-sm p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+      </div>
+      <div class="flex gap-2 pt-2">
+        <button type="button" onclick="closeFormModal()" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
+        <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Create</button>
+      </div>
+    </form>
+  `;
+}
+
+async function saveNewSplitGroup(e) {
+  e.preventDefault();
+  if (splitGroups.length >= MAX_SPLIT_GROUPS) {
+    alert(`You can only have ${MAX_SPLIT_GROUPS} split groups at a time. Delete one first.`);
+    closeFormModal();
+    return;
+  }
+  const name = document.getElementById('newSplitGroupName').value.trim();
+  if (!name) return;
+
+  const group = { id: _sgId('sg'), name, createdAt: new Date().toISOString(), members: [], expenses: [] };
+  splitGroups.push(group);
+  await IDB.put('splitGroups', group);
+
+  closeFormModal();
+  activeSplitGroupId = group.id;
+  renderSplitwiseView();
+}
+
+// Deletes a group and everything embedded in it (members + expenses) - one
+// IDB.delete call is all it takes since the whole group is one document.
+// Called from both the list row's trash icon AND the detail view's danger
+// button - same operation either way, so no need for two functions.
+async function deleteSplitGroup(groupId) {
+  const group = splitGroups.find(g => g.id === groupId);
+  if (!group) return;
+  if (!confirm(`Delete "${group.name}" and everything in it (members + expenses)? This can't be undone.`)) return;
+
+  splitGroups = splitGroups.filter(g => g.id !== groupId);
+  await IDB.delete('splitGroups', groupId);
+  if (activeSplitGroupId === groupId) activeSplitGroupId = null;
+  renderSplitwiseView();
+}
+
+// --- Group detail view --------------------------------------------------
+
+// Net balance per member across every expense in the group: whoever PAID an
+// expense is credited the full amount, everyone it's split among is debited
+// an equal share of it. Positive = this person is owed money overall,
+// negative = they owe. Purely derived from expenses each render - nothing
+// cached, so there's no separate "balance" state that could drift.
+function calculateSplitBalances(group) {
+  const balances = {};
+  group.members.forEach(m => { balances[m.id] = 0; });
+
+  group.expenses.forEach(e => {
+    const participants = e.splitAmong.filter(id => Object.prototype.hasOwnProperty.call(balances, id));
+    if (participants.length === 0) return;
+    const share = Number(e.amount) / participants.length;
+    if (Object.prototype.hasOwnProperty.call(balances, e.paidBy)) balances[e.paidBy] += Number(e.amount);
+    participants.forEach(id => { balances[id] -= share; });
+  });
+
+  return balances;
+}
+
+function renderSplitGroupDetail(group) {
+  document.getElementById('splitwiseBackBtn').classList.remove('hidden');
+  document.getElementById('splitwiseTitle').textContent = group.name;
+
+  const balances = calculateSplitBalances(group);
+  const memberName = id => (group.members.find(m => m.id === id) || {}).name || 'Removed member';
+  const canAddExpense = group.members.length >= 2;
+
+  const content = document.getElementById('splitwiseContent');
+  content.innerHTML = `
+    <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-2">
+      <div class="flex items-center justify-between">
+        <h3 class="text-xs font-bold text-slate-800">Members</h3>
+        <button onclick="openAddMemberForm('${group.id}')" class="text-[10px] font-semibold text-blue-600 hover:text-blue-700">+ Add Person</button>
+      </div>
+      ${group.members.length === 0 ? `
+        <p class="text-[11px] text-slate-400">No members yet - add people before logging expenses.</p>
+      ` : `
+        <div class="space-y-1.5">
+          ${group.members.map(m => {
+            const bal = balances[m.id] || 0;
+            const balLabel = bal > 0.5
+              ? `<span class="text-emerald-600 font-semibold">gets back ₹${bal.toFixed(2)}</span>`
+              : bal < -0.5
+                ? `<span class="text-rose-600 font-semibold">owes ₹${Math.abs(bal).toFixed(2)}</span>`
+                : `<span class="text-slate-400">settled up</span>`;
+            return `
+              <div class="flex items-center justify-between p-2 rounded-lg bg-slate-50 border border-slate-100">
+                <span class="text-xs font-semibold text-slate-700">${m.name}</span>
+                <div class="flex items-center gap-2">
+                  <span class="text-[10px]">${balLabel}</span>
+                  <button onclick="deleteSplitMember('${group.id}', '${m.id}')" class="text-slate-300 hover:text-rose-500 transition"><i class="fa-solid fa-xmark text-xs"></i></button>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `}
+    </div>
+
+    <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-2">
+      <div class="flex items-center justify-between">
+        <h3 class="text-xs font-bold text-slate-800">Expenses</h3>
+        <button onclick="openAddSplitExpenseForm('${group.id}')" ${canAddExpense ? '' : 'disabled'} class="text-[10px] font-semibold transition ${canAddExpense ? 'text-blue-600 hover:text-blue-700' : 'text-slate-300 cursor-not-allowed'}">+ Add Expense</button>
+      </div>
+      ${!canAddExpense ? '<p class="text-[11px] text-slate-400">Add at least 2 people before logging an expense to split.</p>' : ''}
+      ${canAddExpense && group.expenses.length === 0 ? '<p class="text-[11px] text-slate-400 text-center py-2">No expenses logged yet.</p>' : ''}
+      <div class="space-y-1.5">
+        ${group.expenses.slice().sort((a, b) => b.date.localeCompare(a.date)).map(e => `
+          <div class="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+            <div class="flex items-center justify-between gap-2">
+              <p class="text-xs font-bold text-slate-800 truncate">${e.description || 'Expense'}</p>
+              <div class="flex items-center gap-2 shrink-0">
+                <p class="text-xs font-bold text-slate-800">₹${Number(e.amount).toLocaleString()}</p>
+                <button onclick="deleteSplitExpense('${group.id}', '${e.id}')" class="text-slate-300 hover:text-rose-500 transition"><i class="fa-solid fa-trash text-[10px]"></i></button>
+              </div>
+            </div>
+            <p class="text-[10px] text-slate-400">Paid by ${memberName(e.paidBy)} &bull; split ${e.splitAmong.length} way(s) &bull; ${e.date}</p>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    <button onclick="deleteSplitGroup('${group.id}')" class="w-full py-2.5 bg-rose-50 text-rose-600 border border-rose-200 rounded-xl text-xs font-bold hover:bg-rose-100 transition">
+      <i class="fa-solid fa-trash mr-1"></i> Delete This Group
+    </button>
+  `;
+}
+
+// --- Members --------------------------------------------------------------
+
+function openAddMemberForm(groupId) {
+  const modal = document.getElementById('formModal');
+  const content = document.getElementById('formModalContent');
+  modal.classList.remove('hidden');
+  content.innerHTML = `
+    <h3 class="text-sm font-bold text-slate-800 mb-3">Add Person</h3>
+    <form onsubmit="saveNewSplitMember(event, '${groupId}')" class="space-y-3">
+      <div>
+        <label class="text-[11px] font-semibold text-slate-400">Name</label>
+        <input type="text" required id="newSplitMemberName" placeholder="e.g. Priya" class="w-full text-sm p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+      </div>
+      <div class="flex gap-2 pt-2">
+        <button type="button" onclick="closeFormModal()" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
+        <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Add</button>
+      </div>
+    </form>
+  `;
+}
+
+async function saveNewSplitMember(e, groupId) {
+  e.preventDefault();
+  const group = splitGroups.find(g => g.id === groupId);
+  if (!group) return;
+  const name = document.getElementById('newSplitMemberName').value.trim();
+  if (!name) return;
+
+  group.members.push({ id: _sgId('m'), name });
+  await IDB.put('splitGroups', group);
+  closeFormModal();
+  renderSplitwiseView();
+}
+
+// Blocks removal if the person is tied to any logged expense (as payer or
+// as a split participant) instead of silently leaving expenses pointing at
+// a member that no longer exists - keeps calculateSplitBalances() honest
+// without needing to rewrite history.
+async function deleteSplitMember(groupId, memberId) {
+  const group = splitGroups.find(g => g.id === groupId);
+  if (!group) return;
+
+  const usedInExpense = group.expenses.some(e => e.paidBy === memberId || e.splitAmong.includes(memberId));
+  if (usedInExpense) {
+    alert("This person is tied to one or more logged expenses in this group. Delete those expenses first if you really want to remove them.");
+    return;
+  }
+
+  const member = group.members.find(m => m.id === memberId);
+  if (!confirm(`Remove ${member ? member.name : 'this person'} from the group?`)) return;
+
+  group.members = group.members.filter(m => m.id !== memberId);
+  await IDB.put('splitGroups', group);
+  renderSplitwiseView();
+}
+
+// --- Expenses ---------------------------------------------------------
+
+function openAddSplitExpenseForm(groupId) {
+  const group = splitGroups.find(g => g.id === groupId);
+  if (!group || group.members.length < 2) return;
+
+  const modal = document.getElementById('formModal');
+  const content = document.getElementById('formModalContent');
+  modal.classList.remove('hidden');
+  content.innerHTML = `
+    <h3 class="text-sm font-bold text-slate-800 mb-3">Add Expense - ${group.name}</h3>
+    <form onsubmit="saveSplitExpense(event, '${groupId}')" class="space-y-3">
+      <div>
+        <label class="text-[11px] font-semibold text-slate-400">Description (optional)</label>
+        <input type="text" id="splitExpDesc" placeholder="e.g. Dinner, Cab, Hotel" class="w-full text-sm p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="text-[11px] font-semibold text-slate-400">Amount (₹)</label>
+          <input type="number" required step="any" min="0.01" id="splitExpAmount" class="w-full text-sm p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+        </div>
+        <div>
+          <label class="text-[11px] font-semibold text-slate-400">Date</label>
+          <input type="date" required id="splitExpDate" value="${getTodayStr()}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+        </div>
+      </div>
+      <div>
+        <label class="text-[11px] font-semibold text-slate-400">Paid By</label>
+        <select required id="splitExpPaidBy" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+          ${group.members.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <label class="text-[11px] font-semibold text-slate-400">Split Equally Among</label>
+        <div class="space-y-1 mt-1 max-h-40 overflow-y-auto">
+          ${group.members.map(m => `
+            <label class="flex items-center gap-2 text-xs text-slate-600 p-1.5 rounded-lg hover:bg-slate-50">
+              <input type="checkbox" class="splitExpMemberCheckbox" value="${m.id}" checked> ${m.name}
+            </label>
+          `).join('')}
+        </div>
+      </div>
+      <div class="flex gap-2 pt-2">
+        <button type="button" onclick="closeFormModal()" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
+        <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Save</button>
+      </div>
+    </form>
+  `;
+}
+
+async function saveSplitExpense(e, groupId) {
+  e.preventDefault();
+  const group = splitGroups.find(g => g.id === groupId);
+  if (!group) return;
+
+  const amount = parseFloat(document.getElementById('splitExpAmount').value);
+  const paidBy = document.getElementById('splitExpPaidBy').value;
+  const date = document.getElementById('splitExpDate').value;
+  const description = document.getElementById('splitExpDesc').value.trim();
+  const splitAmong = Array.from(document.querySelectorAll('.splitExpMemberCheckbox:checked')).map(cb => cb.value);
+
+  if (isNaN(amount) || amount <= 0) { alert('Enter a valid amount.'); return; }
+  if (splitAmong.length === 0) { alert('Select at least one person to split this with.'); return; }
+
+  group.expenses.push({
+    id: _sgId('se'),
+    description,
+    amount,
+    paidBy,
+    splitAmong,
+    date,
+    createdAt: new Date().toISOString()
+  });
+  await IDB.put('splitGroups', group);
+  closeFormModal();
+  renderSplitwiseView();
+}
+
+async function deleteSplitExpense(groupId, expenseId) {
+  const group = splitGroups.find(g => g.id === groupId);
+  if (!group) return;
+  if (!confirm('Delete this expense from the group?')) return;
+
+  group.expenses = group.expenses.filter(e => e.id !== expenseId);
+  await IDB.put('splitGroups', group);
+  renderSplitwiseView();
+}
