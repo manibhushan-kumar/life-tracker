@@ -69,18 +69,25 @@ function saveDriveSettings() {
 }
 
 // Single place that updates the "Connected"/"Offline" pill in the header,
-// so authenticate/restore/disconnect all agree on what it looks like.
+// so authenticate/restore/disconnect all agree on what it looks like. Also
+// owns the header's quick "Sync to Drive" shortcut button right next to it -
+// that button only ever makes sense to show once we're actually connected,
+// so its visibility is tied to the exact same signal, right here, rather
+// than being a separate thing callers have to remember to toggle themselves.
 function setDriveConnectedUI(connected) {
   const status = document.getElementById('globalDriveStatus');
+  const syncBtn = document.getElementById('globalDriveSyncBtn');
   if (!status) return;
   if (connected) {
     status.innerHTML = '<i class="fa-brands fa-google-drive text-amber-500"></i> Connected';
     status.classList.remove('text-slate-400', 'bg-white');
     status.classList.add('text-slate-700', 'bg-amber-50', 'border-amber-100');
+    if (syncBtn) syncBtn.classList.remove('hidden');
   } else {
     status.innerHTML = '<i class="fa-brands fa-google-drive"></i> Offline';
     status.classList.add('text-slate-400', 'bg-white');
     status.classList.remove('text-slate-700', 'bg-amber-50', 'border-amber-100');
+    if (syncBtn) syncBtn.classList.add('hidden');
   }
 }
 
@@ -400,22 +407,36 @@ function mapWithConcurrency(items, limit, fn) {
 }
 
 // --- Busy-state spinner helpers ---------------------------------------
-// Both Drive buttons (Upload/Restore) share the same manifest + dirty-months
+// All Drive-touching buttons share the same manifest + dirty-months
 // bookkeeping, so running two Drive operations at once would race on it -
-// hence disabling BOTH together, not just the one clicked. The active
-// button's markup is swapped for a spinner + label and restored verbatim
-// afterward (via a dataset stash) rather than hardcoding what it should go
-// back to, so this stays correct even if the button's label ever changes.
-const DRIVE_ACTION_BUTTON_IDS = ['btnBackupDrive', 'btnRestoreDrive'];
+// hence disabling ALL of them together, not just the one clicked. The
+// active button's markup is swapped for a spinner + label and restored
+// verbatim afterward (via a dataset stash) rather than hardcoding what it
+// should go back to, so this stays correct even if a button's label ever
+// changes.
+const DRIVE_ACTION_BUTTON_IDS = ['btnBackupDrive', 'btnRestoreDrive', 'globalDriveSyncBtn'];
 
-function setDriveActionBusy(activeButtonId, busyLabel) {
+// The header's quick-sync shortcut is icon-only (a small round button) -
+// swapping its content for a spinner should stay icon-only too, not cram a
+// text busyLabel into a 28px circle the way the full-width Settings buttons
+// can afford to.
+const ICON_ONLY_BUTTON_IDS = new Set(['globalDriveSyncBtn']);
+
+// `activeButtonIds` accepts either one id or an array - an array matters
+// because the Settings-page "Backup" button AND the header's quick-sync
+// button both trigger the exact same backupToGoogleDrive() call, and
+// whichever one the user actually clicked should be the one that spins.
+function setDriveActionBusy(activeButtonIds, busyLabel) {
+  const activeSet = new Set(Array.isArray(activeButtonIds) ? activeButtonIds : [activeButtonIds]);
   DRIVE_ACTION_BUTTON_IDS.forEach(id => {
     const btn = document.getElementById(id);
     if (!btn) return;
     btn.disabled = true;
-    if (id === activeButtonId) {
+    if (activeSet.has(id)) {
       btn.dataset.originalHtml = btn.innerHTML;
-      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-1"></i> ${busyLabel}`;
+      btn.innerHTML = ICON_ONLY_BUTTON_IDS.has(id)
+        ? '<i class="fa-solid fa-spinner fa-spin text-xs"></i>'
+        : `<i class="fa-solid fa-spinner fa-spin mr-1"></i> ${busyLabel}`;
     }
   });
 }
@@ -436,12 +457,19 @@ function clearDriveActionBusy() {
 
 async function backupToGoogleDrive() {
   if (!gdriveToken) return alert('Authenticate with Google first!');
+  // driveSyncNotice only exists in the DOM while Settings is the current tab
+  // (it's part of renderSettings' template) - but this can now also be
+  // triggered from the header's quick-sync button on ANY screen, so every
+  // notice update below has to tolerate it being absent. When it IS absent,
+  // the terminal success/error messages fall back to a plain alert() so a
+  // header-triggered sync still gives some feedback beyond the spinner.
   const notice = document.getElementById('driveSyncNotice');
   const setNotice = (text, cls) => {
+    if (!notice) return;
     notice.innerText = text;
     notice.className = `text-[11px] text-center ${cls} font-medium h-4`;
   };
-  setDriveActionBusy('btnBackupDrive', 'Uploading...');
+  setDriveActionBusy(['btnBackupDrive', 'globalDriveSyncBtn'], 'Uploading...');
   setNotice('Preparing backup...', 'text-blue-500');
 
   try {
@@ -532,14 +560,13 @@ async function backupToGoogleDrive() {
 
     await saveSyncMeta({ settingsFileId, manifestFileId, splitwiseFileId });
 
-    setNotice(
-      dirtyMonths.length > 0 ? `Synced ${dirtyMonths.length} month(s) + settings.` : 'Settings synced. Expenses already up to date.',
-      'text-emerald-600'
-    );
+    const resultMessage = dirtyMonths.length > 0 ? `Synced ${dirtyMonths.length} month(s) + settings.` : 'Settings synced. Expenses already up to date.';
+    setNotice(resultMessage, 'text-emerald-600');
+    if (!notice) alert(`Drive sync complete. ${resultMessage}`);
   } catch (err) {
     console.error(err);
-    document.getElementById('driveSyncNotice').innerText = 'Error: ' + err.message;
-    document.getElementById('driveSyncNotice').className = 'text-[11px] text-center text-rose-600 font-medium h-4';
+    setNotice('Error: ' + err.message, 'text-rose-600');
+    if (!notice) alert('Drive sync failed: ' + err.message);
   } finally {
     clearDriveActionBusy();
   }

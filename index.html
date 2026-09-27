@@ -45,6 +45,16 @@
       </div>
     </div>
     <div class="flex items-center gap-2">
+      <!-- Only shown once Drive is actually connected (see setDriveConnectedUI
+           in drive-sync.js) - lets you push a quick backup from WHEREVER you
+           are in the app (Home, Expenses, mid-Splitwise, etc) instead of
+           always having to detour through Settings first. Settings keeps its
+           own Backup/Restore buttons too - this is an ADDITIONAL shortcut,
+           not a replacement (Restore still lives in Settings only, since it
+           opens the year-picker modal and is a much more deliberate action). -->
+      <button id="globalDriveSyncBtn" onclick="backupToGoogleDrive()" aria-label="Sync to Google Drive" title="Sync to Google Drive" class="hidden w-7 h-7 rounded-full flex items-center justify-center text-blue-600 bg-blue-50 border border-blue-100 hover:bg-blue-100 transition disabled:opacity-50">
+        <i class="fa-solid fa-cloud-arrow-up text-xs"></i>
+      </button>
       <span id="globalDriveStatus" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border border-slate-200 text-slate-400 bg-white shadow-sm transition-colors duration-300">
         <i class="fa-brands fa-google-drive"></i> Offline
       </span>
