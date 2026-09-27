@@ -35,6 +35,17 @@ const G_CLIENT_ID_KEY = 'life_tracker_gclient_id';
 const G_FOLDER_KEY = 'life_tracker_gfolder_name';
 const G_TOKEN_KEY = 'life_tracker_gdrive_token';
 const G_TOKEN_EXPIRY_KEY = 'life_tracker_gdrive_token_expiry';
+// Caches the resolved ROOT sync folder's id, keyed to the folder NAME it was
+// resolved for. Exists purely to dodge a real Google Drive gotcha: the
+// files.list search endpoint (used by getOrCreateFolder/findFileByName) is
+// only EVENTUALLY consistent with files.create - a folder/file created a
+// moment ago can still come back empty from a search for a few seconds.
+// Backup-immediately-followed-by-Restore is exactly the shape that triggers
+// this, and getOrCreateFolder reacting to "found nothing" by creating a
+// SECOND folder with the same name is how you get silent duplicate backup
+// folders and "No backup found" right after a successful upload. See
+// resolveRootFolderId() below.
+const G_ROOT_FOLDER_CACHE_KEY = 'life_tracker_gfolder_cache';
 
 const SETTINGS_FILE_NAME = 'settings.json';
 const SPLITWISE_FILE_NAME = 'splitwise.json';
@@ -232,9 +243,62 @@ async function deleteDriveFile(fileId) {
 // single backup/restore run.
 async function ensureSyncFolders() {
   const folderName = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
-  const rootId = await getOrCreateFolder(folderName);
+  const rootId = await resolveRootFolderId(folderName);
   const expensesFolderId = await getOrCreateFolder(EXPENSES_FOLDER_NAME, rootId);
   return { rootId, expensesFolderId };
+}
+
+// Prefers a locally cached root-folder id over a fresh by-name search,
+// re-validating it with a cheap GET-by-id (immediately consistent, unlike
+// files.list) rather than trusting it blindly forever. Only falls back to
+// search-or-create when there's no cache yet, or the cached folder is
+// confirmed gone (404) or trashed - any other hiccup (network blip, rate
+// limit) just trusts the cache rather than risk minting a duplicate folder.
+async function resolveRootFolderId(folderName) {
+  let cached = null;
+  try { cached = JSON.parse(localStorage.getItem(G_ROOT_FOLDER_CACHE_KEY) || 'null'); } catch (e) { /* ignore */ }
+  const cachedId = (cached && cached.name === folderName) ? cached.id : null;
+
+  if (cachedId) {
+    try {
+      const res = await fetch(`https://www.googleapis.com/drive/v3/files/${cachedId}?fields=id,trashed`, {
+        headers: { Authorization: `Bearer ${gdriveToken}` }
+      });
+      if (res.status !== 404) {
+        if (!res.ok) return cachedId; // transient error - trust the cache
+        const data = await res.json();
+        if (!data.trashed) return cachedId;
+      }
+      // else: definitively gone or trashed - fall through and re-resolve
+    } catch (e) {
+      return cachedId; // network hiccup - trust the cache
+    }
+  }
+
+  const rootId = await getOrCreateFolder(folderName);
+  localStorage.setItem(G_ROOT_FOLDER_CACHE_KEY, JSON.stringify({ name: folderName, id: rootId }));
+  return rootId;
+}
+
+// Same eventual-consistency dodge as resolveRootFolderId, but for individual
+// FILES (settings.json/splitwise.json/expenses_manifest.json) instead of the
+// root folder - prefers a cached fileId (from syncMeta, saved right after
+// the backup that created it) over a name search, since a name search can
+// miss a file that was created moments ago. Falls back to search-by-name
+// whenever there's no cached id or it no longer resolves.
+async function findFileByIdOrName(cachedId, fileName, parentId) {
+  if (cachedId) {
+    try {
+      const res = await fetch(`https://www.googleapis.com/drive/v3/files/${cachedId}?fields=id,trashed`, {
+        headers: { Authorization: `Bearer ${gdriveToken}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (!data.trashed) return { id: cachedId };
+      }
+    } catch (e) { /* fall through to name search */ }
+  }
+  return findFileByName(fileName, parentId);
 }
 
 async function findFileByName(fileName, parentId) {
@@ -503,11 +567,12 @@ async function deleteAllDriveBackupsExceptSettings() {
 
   try {
     const folderName = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
-    const rootId = await getOrCreateFolder(folderName);
+    const rootId = await resolveRootFolderId(folderName);
+    const syncMeta = await getSyncMeta();
 
     const [manifestFile, splitwiseFile, legacyFile, expensesFolder] = await Promise.all([
-      findFileByName(MANIFEST_FILE_NAME, rootId),
-      findFileByName(SPLITWISE_FILE_NAME, rootId),
+      findFileByIdOrName(syncMeta.manifestFileId, MANIFEST_FILE_NAME, rootId),
+      findFileByIdOrName(syncMeta.splitwiseFileId, SPLITWISE_FILE_NAME, rootId),
       findFileByName(LEGACY_BACKUP_FILE_NAME, rootId),
       findFolder(EXPENSES_FOLDER_NAME, rootId)
     ]);
@@ -595,7 +660,8 @@ async function restoreFromGoogleDrive() {
 
   try {
     const folderName = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
-    const rootId = await getOrCreateFolder(folderName);
+    const rootId = await resolveRootFolderId(folderName);
+    const syncMeta = await getSyncMeta();
 
     // Splitwise groups aren't year-scoped like expenses (max 5 groups,
     // wholesale-synced) - so this happens right here, unconditionally,
@@ -607,14 +673,20 @@ async function restoreFromGoogleDrive() {
     // it out here means hitting "Restore Data" always pulls the latest
     // Splitwise groups immediately, independent of whatever happens with
     // expenses afterward.
-    const splitwiseFile = await findFileByName(SPLITWISE_FILE_NAME, rootId);
+    //
+    // Every lookup below prefers findFileByIdOrName (cached id from syncMeta
+    // first) over a raw findFileByName search - a plain name search can miss
+    // a file that was created moments ago (Drive's search index lags behind
+    // files.create by a few seconds), which is exactly the "Backup said
+    // done, Restore says no backup found" bug this fixes.
+    const splitwiseFile = await findFileByIdOrName(syncMeta.splitwiseFileId, SPLITWISE_FILE_NAME, rootId);
     const splitwiseData = splitwiseFile ? await fetchJsonFile(splitwiseFile.id).catch(() => null) : null;
     if (splitwiseData) {
       setNotice('Syncing Splitwise groups...', 'text-blue-500');
       await applyRestoredSplitwiseData(splitwiseData);
     }
 
-    const manifestFile = await findFileByName(MANIFEST_FILE_NAME, rootId);
+    const manifestFile = await findFileByIdOrName(syncMeta.manifestFileId, MANIFEST_FILE_NAME, rootId);
 
     if (!manifestFile) {
       // No chunked backup yet - fall back to an old-format single-file backup.
@@ -647,7 +719,7 @@ async function restoreFromGoogleDrive() {
       return;
     }
 
-    const settingsFile = await findFileByName(SETTINGS_FILE_NAME, rootId);
+    const settingsFile = await findFileByIdOrName(syncMeta.settingsFileId, SETTINGS_FILE_NAME, rootId);
     const [manifest, settingsData] = await Promise.all([
       fetchJsonFile(manifestFile.id),
       settingsFile ? fetchJsonFile(settingsFile.id) : Promise.resolve(null)
