@@ -19,6 +19,21 @@ let splitGroups = [];
 let activeSplitGroupId = null;
 const MAX_SPLIT_GROUPS = 5;
 
+// Persists "is the overlay open, and on which group" across a reload -
+// mirrors the LAST_TAB_STORAGE_KEY trick in data-model.js/storage.js. Lives
+// here (not data-model.js) since only this file and initStorage() need it,
+// and initStorage() reaches this file's own resume function directly rather
+// than needing to know the key itself.
+const SPLITWISE_UI_STATE_KEY = 'lifeTracker_splitwiseUiState';
+
+function _saveSplitwiseUiState() {
+  localStorage.setItem(SPLITWISE_UI_STATE_KEY, JSON.stringify({ open: true, activeGroupId: activeSplitGroupId }));
+}
+
+function _clearSplitwiseUiState() {
+  localStorage.removeItem(SPLITWISE_UI_STATE_KEY);
+}
+
 // Short, collision-safe-enough id for a dataset this small (max 5 groups,
 // a handful of members/expenses each) - no need for a UUID library.
 function _sgId(prefix) {
@@ -32,20 +47,54 @@ async function openSplitwise() {
   splitGroups = await IDB.getAll('splitGroups');
   splitGroups.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   activeSplitGroupId = null;
+  _saveSplitwiseUiState();
+  renderSplitwiseView();
+}
+
+// Called once from initStorage() on boot (AFTER the normal tab has already
+// been restored/rendered underneath) - reopens this overlay on top of it if
+// the user was in the middle of using Splitwise when a reload happened, so
+// "refresh while on Splitwise" lands back on Splitwise instead of Home.
+async function resumeSplitwiseIfWasOpen() {
+  const raw = localStorage.getItem(SPLITWISE_UI_STATE_KEY);
+  if (!raw) return;
+
+  let state;
+  try {
+    state = JSON.parse(raw);
+  } catch (e) {
+    localStorage.removeItem(SPLITWISE_UI_STATE_KEY);
+    return;
+  }
+  if (!state || !state.open) return;
+
+  document.getElementById('splitwiseOverlay').classList.remove('hidden');
+  splitGroups = await IDB.getAll('splitGroups');
+  splitGroups.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+  // Only resume straight into a group's detail page if that group still
+  // exists - it may have been deleted since the saved state was written -
+  // otherwise fall back to the list view rather than rendering nothing.
+  activeSplitGroupId = (state.activeGroupId && splitGroups.some(g => g.id === state.activeGroupId))
+    ? state.activeGroupId
+    : null;
   renderSplitwiseView();
 }
 
 function closeSplitwise() {
   document.getElementById('splitwiseOverlay').classList.add('hidden');
+  _clearSplitwiseUiState();
 }
 
 function openGroupDetail(groupId) {
   activeSplitGroupId = groupId;
+  _saveSplitwiseUiState();
   renderSplitwiseView();
 }
 
 function backToGroupList() {
   activeSplitGroupId = null;
+  _saveSplitwiseUiState();
   renderSplitwiseView();
 }
 
@@ -144,6 +193,7 @@ async function deleteSplitGroup(groupId) {
   splitGroups = splitGroups.filter(g => g.id !== groupId);
   await IDB.delete('splitGroups', groupId);
   if (activeSplitGroupId === groupId) activeSplitGroupId = null;
+  _saveSplitwiseUiState();
   renderSplitwiseView();
 }
 

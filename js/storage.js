@@ -186,6 +186,11 @@ async function initStorage() {
   const lastTab = localStorage.getItem(LAST_TAB_STORAGE_KEY);
   navigate(VALID_TABS.includes(lastTab) ? lastTab : 'home');
 
+  // Splitwise is an overlay on top of whatever tab, not a tab itself, so it
+  // gets its own resume step (see resumeSplitwiseIfWasOpen in splitwise.js)
+  // rather than being folded into the navigate() call above.
+  await resumeSplitwiseIfWasOpen();
+
   tryRestoreDriveSession();
 }
 
