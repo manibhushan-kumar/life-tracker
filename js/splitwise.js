@@ -283,6 +283,7 @@ function renderSplitGroupDetail(group) {
               <p class="text-xs font-bold text-slate-800 truncate">${e.description || 'Expense'}</p>
               <div class="flex items-center gap-2 shrink-0">
                 <p class="text-xs font-bold text-slate-800">₹${Number(e.amount).toLocaleString()}</p>
+                <button onclick="openEditSplitExpenseForm('${group.id}', '${e.id}')" class="text-slate-300 hover:text-blue-500 transition"><i class="fa-solid fa-pen text-[10px]"></i></button>
                 <button onclick="deleteSplitExpense('${group.id}', '${e.id}')" class="text-slate-300 hover:text-rose-500 transition"><i class="fa-solid fa-trash text-[10px]"></i></button>
               </div>
             </div>
@@ -300,10 +301,19 @@ function renderSplitGroupDetail(group) {
 
 // --- Members --------------------------------------------------------------
 
+// When "+ New Person" is tapped from INSIDE the expense form (see
+// _splitExpenseFormHtml below), we stash whatever's already been typed
+// there so adding a person - or even cancelling out of the add-person form -
+// brings the user straight back into a fully restored expense form, instead
+// of silently discarding an in-progress entry.
+let _pendingExpenseFormReturn = null;
+
 function openAddMemberForm(groupId) {
   const modal = document.getElementById('formModal');
   const content = document.getElementById('formModalContent');
   modal.classList.remove('hidden');
+  const isMidExpenseEntry = _pendingExpenseFormReturn && _pendingExpenseFormReturn.groupId === groupId;
+  const cancelHandler = isMidExpenseEntry ? `cancelAddPersonFromExpenseForm('${groupId}')` : 'closeFormModal()';
   content.innerHTML = `
     <h3 class="text-sm font-bold text-slate-800 mb-3">Add Person</h3>
     <form onsubmit="saveNewSplitMember(event, '${groupId}')" class="space-y-3">
@@ -312,12 +322,25 @@ function openAddMemberForm(groupId) {
         <input type="text" required id="newSplitMemberName" placeholder="e.g. Priya" class="w-full text-sm p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
       </div>
       <div class="flex gap-2 pt-2">
-        <button type="button" onclick="closeFormModal()" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
+        <button type="button" onclick="${cancelHandler}" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
         <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Add</button>
       </div>
     </form>
   `;
 }
+
+// Bounces back to a still-in-progress expense form after cancelling out of
+// the add-person detour, instead of just closing the whole modal.
+function cancelAddPersonFromExpenseForm(groupId) {
+  const restore = _pendingExpenseFormReturn;
+  _pendingExpenseFormReturn = null;
+  const group = splitGroups.find(g => g.id === groupId);
+  if (!group || !restore) { closeFormModal(); return; }
+
+  const existing = restore.expenseId ? group.expenses.find(ex => ex.id === restore.expenseId) : null;
+  document.getElementById('formModalContent').innerHTML = _splitExpenseFormHtml(group, existing, restore);
+}
+
 
 async function saveNewSplitMember(e, groupId) {
   e.preventDefault();
@@ -326,8 +349,23 @@ async function saveNewSplitMember(e, groupId) {
   const name = document.getElementById('newSplitMemberName').value.trim();
   if (!name) return;
 
-  group.members.push({ id: _sgId('m'), name });
+  const newMember = { id: _sgId('m'), name };
+  group.members.push(newMember);
   await IDB.put('splitGroups', group);
+
+  // If this person was added mid-way through filling out an expense, jump
+  // straight back into that (still-filled-in) form instead of the group
+  // list/detail view - and auto-check the person you JUST added so you
+  // don't have to hunt for them in the split list a second time.
+  if (_pendingExpenseFormReturn && _pendingExpenseFormReturn.groupId === groupId) {
+    const restore = _pendingExpenseFormReturn;
+    _pendingExpenseFormReturn = null;
+    restore.splitAmong = [...restore.splitAmong, newMember.id];
+    const existing = restore.expenseId ? group.expenses.find(ex => ex.id === restore.expenseId) : null;
+    document.getElementById('formModalContent').innerHTML = _splitExpenseFormHtml(group, existing, restore);
+    return;
+  }
+
   closeFormModal();
   renderSplitwiseView();
 }
@@ -356,6 +394,78 @@ async function deleteSplitMember(groupId, memberId) {
 
 // --- Expenses ---------------------------------------------------------
 
+// Shared by both Add and Edit - same fields either way, just pre-filled
+// differently and routed to a different onsubmit. Keeping one builder means
+// a future field addition (e.g. a category) only needs to happen once.
+//
+// `restoreState` (shape: { description, amount, date, paidBy, splitAmong })
+// takes priority over `existing` when both could supply a value - it's how
+// we repaint this exact form after an "+ New Person" detour, with whatever
+// the user had already typed still intact.
+function _splitExpenseFormHtml(group, existing, restoreState) {
+  const isEdit = !!existing;
+  const prefill = restoreState || existing || {};
+  const checkedIds = prefill.splitAmong || group.members.map(m => m.id);
+  return `
+    <h3 class="text-sm font-bold text-slate-800 mb-3">${isEdit ? 'Edit' : 'Add'} Expense - ${group.name}</h3>
+    <form onsubmit="${isEdit ? `saveSplitExpense(event, '${group.id}', '${existing.id}')` : `saveSplitExpense(event, '${group.id}')`}" class="space-y-3">
+      <div>
+        <label class="text-[11px] font-semibold text-slate-400">Description (optional)</label>
+        <input type="text" id="splitExpDesc" value="${prefill.description || ''}" placeholder="e.g. Dinner, Cab, Hotel" class="w-full text-sm p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="text-[11px] font-semibold text-slate-400">Amount (₹)</label>
+          <input type="number" required step="any" min="0.01" id="splitExpAmount" value="${prefill.amount != null ? prefill.amount : ''}" class="w-full text-sm p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+        </div>
+        <div>
+          <label class="text-[11px] font-semibold text-slate-400">Date</label>
+          <input type="date" required id="splitExpDate" value="${prefill.date || getTodayStr()}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+        </div>
+      </div>
+      <div>
+        <label class="text-[11px] font-semibold text-slate-400">Paid By</label>
+        <select required id="splitExpPaidBy" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+          ${group.members.map(m => `<option value="${m.id}" ${prefill.paidBy === m.id ? 'selected' : ''}>${m.name}</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <div class="flex items-center justify-between">
+          <label class="text-[11px] font-semibold text-slate-400">Split Equally Among</label>
+          <button type="button" onclick="addPersonFromExpenseForm('${group.id}'${isEdit ? `, '${existing.id}'` : ''})" class="text-[10px] font-semibold text-blue-600 hover:text-blue-700">+ New Person</button>
+        </div>
+        <div class="space-y-1 mt-1 max-h-40 overflow-y-auto">
+          ${group.members.map(m => `
+            <label class="flex items-center gap-2 text-xs text-slate-600 p-1.5 rounded-lg hover:bg-slate-50">
+              <input type="checkbox" class="splitExpMemberCheckbox" value="${m.id}" ${checkedIds.includes(m.id) ? 'checked' : ''}> ${m.name}
+            </label>
+          `).join('')}
+        </div>
+      </div>
+      <div class="flex gap-2 pt-2">
+        <button type="button" onclick="closeFormModal()" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
+        <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">${isEdit ? 'Save Changes' : 'Save'}</button>
+      </div>
+    </form>
+  `;
+}
+
+// Captures whatever's currently typed into the (still open) expense form,
+// then hands off to the add-person flow. saveNewSplitMember() and
+// cancelAddPersonFromExpenseForm() both know how to resume from this.
+function addPersonFromExpenseForm(groupId, expenseId) {
+  _pendingExpenseFormReturn = {
+    groupId,
+    expenseId: expenseId || null,
+    description: document.getElementById('splitExpDesc').value,
+    amount: document.getElementById('splitExpAmount').value,
+    date: document.getElementById('splitExpDate').value,
+    paidBy: document.getElementById('splitExpPaidBy').value,
+    splitAmong: Array.from(document.querySelectorAll('.splitExpMemberCheckbox:checked')).map(cb => cb.value)
+  };
+  openAddMemberForm(groupId);
+}
+
 function openAddSplitExpenseForm(groupId) {
   const group = splitGroups.find(g => g.id === groupId);
   if (!group || group.members.length < 2) return;
@@ -363,48 +473,28 @@ function openAddSplitExpenseForm(groupId) {
   const modal = document.getElementById('formModal');
   const content = document.getElementById('formModalContent');
   modal.classList.remove('hidden');
-  content.innerHTML = `
-    <h3 class="text-sm font-bold text-slate-800 mb-3">Add Expense - ${group.name}</h3>
-    <form onsubmit="saveSplitExpense(event, '${groupId}')" class="space-y-3">
-      <div>
-        <label class="text-[11px] font-semibold text-slate-400">Description (optional)</label>
-        <input type="text" id="splitExpDesc" placeholder="e.g. Dinner, Cab, Hotel" class="w-full text-sm p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
-      </div>
-      <div class="grid grid-cols-2 gap-2">
-        <div>
-          <label class="text-[11px] font-semibold text-slate-400">Amount (₹)</label>
-          <input type="number" required step="any" min="0.01" id="splitExpAmount" class="w-full text-sm p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
-        </div>
-        <div>
-          <label class="text-[11px] font-semibold text-slate-400">Date</label>
-          <input type="date" required id="splitExpDate" value="${getTodayStr()}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
-        </div>
-      </div>
-      <div>
-        <label class="text-[11px] font-semibold text-slate-400">Paid By</label>
-        <select required id="splitExpPaidBy" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
-          ${group.members.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
-        </select>
-      </div>
-      <div>
-        <label class="text-[11px] font-semibold text-slate-400">Split Equally Among</label>
-        <div class="space-y-1 mt-1 max-h-40 overflow-y-auto">
-          ${group.members.map(m => `
-            <label class="flex items-center gap-2 text-xs text-slate-600 p-1.5 rounded-lg hover:bg-slate-50">
-              <input type="checkbox" class="splitExpMemberCheckbox" value="${m.id}" checked> ${m.name}
-            </label>
-          `).join('')}
-        </div>
-      </div>
-      <div class="flex gap-2 pt-2">
-        <button type="button" onclick="closeFormModal()" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
-        <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Save</button>
-      </div>
-    </form>
-  `;
+  content.innerHTML = _splitExpenseFormHtml(group, null);
 }
 
-async function saveSplitExpense(e, groupId) {
+// Opens the same form pre-filled with an existing expense's values - lets
+// you fix a typo'd amount, change who paid, or adjust who it's split among
+// without deleting and re-creating the whole entry (which would also lose
+// its original id/createdAt for no reason).
+function openEditSplitExpenseForm(groupId, expenseId) {
+  const group = splitGroups.find(g => g.id === groupId);
+  if (!group) return;
+  const expense = group.expenses.find(ex => ex.id === expenseId);
+  if (!expense) return;
+
+  const modal = document.getElementById('formModal');
+  const content = document.getElementById('formModalContent');
+  modal.classList.remove('hidden');
+  content.innerHTML = _splitExpenseFormHtml(group, expense);
+}
+
+// Handles BOTH create and update - pass expenseId to update an existing
+// entry in place (keeps its id/createdAt), omit it to push a new one.
+async function saveSplitExpense(e, groupId, expenseId) {
   e.preventDefault();
   const group = splitGroups.find(g => g.id === groupId);
   if (!group) return;
@@ -418,15 +508,21 @@ async function saveSplitExpense(e, groupId) {
   if (isNaN(amount) || amount <= 0) { alert('Enter a valid amount.'); return; }
   if (splitAmong.length === 0) { alert('Select at least one person to split this with.'); return; }
 
-  group.expenses.push({
-    id: _sgId('se'),
-    description,
-    amount,
-    paidBy,
-    splitAmong,
-    date,
-    createdAt: new Date().toISOString()
-  });
+  if (expenseId) {
+    const expense = group.expenses.find(ex => ex.id === expenseId);
+    if (!expense) return;
+    Object.assign(expense, { description, amount, paidBy, splitAmong, date });
+  } else {
+    group.expenses.push({
+      id: _sgId('se'),
+      description,
+      amount,
+      paidBy,
+      splitAmong,
+      date,
+      createdAt: new Date().toISOString()
+    });
+  }
   await IDB.put('splitGroups', group);
   closeFormModal();
   renderSplitwiseView();
