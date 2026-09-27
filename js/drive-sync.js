@@ -186,14 +186,22 @@ function disconnectDrive() {
 // --- Low-level Drive REST helpers (generic - no knowledge of "expenses" or
 // "settings", just "folders and small JSON files") --------------------------
 
-async function getOrCreateFolder(folderName, parentId) {
+// Search-only half of getOrCreateFolder, split out so the Danger Zone's
+// "delete all Drive backups" flow can look up the 'expenses' subfolder
+// WITHOUT accidentally creating it just to immediately delete it again.
+async function findFolder(folderName, parentId) {
   const parentClause = parentId ? ` and '${parentId}' in parents` : '';
   const query = `mimeType='application/vnd.google-apps.folder' and name='${folderName}' and trashed=false${parentClause}`;
   const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
     headers: { Authorization: `Bearer ${gdriveToken}` }
   });
   const searchData = await searchRes.json();
-  if (searchData.files && searchData.files.length > 0) return searchData.files[0].id;
+  return (searchData.files && searchData.files[0]) || null;
+}
+
+async function getOrCreateFolder(folderName, parentId) {
+  const existing = await findFolder(folderName, parentId);
+  if (existing) return existing.id;
 
   const metadata = { name: folderName, mimeType: 'application/vnd.google-apps.folder' };
   if (parentId) metadata.parents = [parentId];
@@ -205,6 +213,17 @@ async function getOrCreateFolder(folderName, parentId) {
   });
   const createData = await createRes.json();
   return createData.id;
+}
+
+// Deletes a single Drive file OR folder (folders take everything inside them
+// with them). 404 counts as success too - "already gone" is exactly the
+// state we wanted, whether we did it or the user deleted it by hand earlier.
+async function deleteDriveFile(fileId) {
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${gdriveToken}` }
+  });
+  return res.ok || res.status === 404;
 }
 
 // Resolves the sync root folder AND the nested "expenses" subfolder that
@@ -364,7 +383,37 @@ async function backupToGoogleDrive() {
   try {
     const { rootId, expensesFolderId } = await ensureSyncFolders();
     const syncMeta = await getSyncMeta();
-    const dirtyMonths = syncMeta.dirtyMonths || [];
+
+    // Find the existing remote manifest UP FRONT (cached id first, else a
+    // fresh lookup by name in the current folder). This doubles as the
+    // detector for "the whole Drive backup folder vanished" - e.g. the user
+    // deleted it by hand in Drive, or used the Danger Zone's "delete all
+    // Drive backups" option. Local dirty-month tracking only records what
+    // changed SINCE THE LAST BACKUP - it has no idea Drive's copy got wiped
+    // out from under it, so trusting it blindly here would mean months that
+    // were already "clean" locally never get re-uploaded to the new folder,
+    // and a later restore finds nothing ("No backup found").
+    let manifestFileId = syncMeta.manifestFileId;
+    let manifest = manifestFileId ? await fetchJsonFile(manifestFileId).catch(() => null) : null;
+    if (!manifest) {
+      const found = await findFileByName(MANIFEST_FILE_NAME, rootId);
+      manifestFileId = found ? found.id : null;
+      manifest = found ? await fetchJsonFile(found.id).catch(() => null) : null;
+    }
+
+    const remoteManifestMissing = !manifest;
+    const trackedDirtyMonths = syncMeta.dirtyMonths || [];
+    const localMonths = Array.from(new Set(appData.expenses.map(e => yearMonthOf(e.date))));
+    // Remote manifest missing but local history exists -> trust nothing,
+    // re-upload every month we actually have. Otherwise stick with the
+    // normal incremental "only what changed" list.
+    const dirtyMonths = remoteManifestMissing
+      ? Array.from(new Set([...trackedDirtyMonths, ...localMonths]))
+      : trackedDirtyMonths;
+
+    if (remoteManifestMissing && localMonths.length > 0) {
+      setNotice('Drive backup not found - re-uploading full history...', 'text-amber-600');
+    }
 
     // Settings (categories + recurringItems + due items) are always small,
     // so they're just overwritten wholesale every backup - no chunking needed.
@@ -389,15 +438,9 @@ async function backupToGoogleDrive() {
     };
     const splitwiseFileId = await upsertJsonFile(rootId, SPLITWISE_FILE_NAME, splitwisePayload, syncMeta.splitwiseFileId);
 
-    let manifestFileId = syncMeta.manifestFileId;
-
+    // manifestFileId/manifest were already resolved up front (see the
+    // remoteManifestMissing check above) - no need to look them up again.
     if (dirtyMonths.length > 0) {
-      let manifest = manifestFileId ? await fetchJsonFile(manifestFileId).catch(() => null) : null;
-      if (!manifest) {
-        const found = await findFileByName(MANIFEST_FILE_NAME, rootId);
-        manifestFileId = found ? found.id : null;
-        manifest = found ? await fetchJsonFile(found.id).catch(() => null) : null;
-      }
       manifest = manifest || { chunks: {} };
       manifest.chunks = manifest.chunks || {};
 
@@ -433,6 +476,63 @@ async function backupToGoogleDrive() {
     console.error(err);
     document.getElementById('driveSyncNotice').innerText = 'Error: ' + err.message;
     document.getElementById('driveSyncNotice').className = 'text-[11px] text-center text-rose-600 font-medium h-4';
+  } finally {
+    clearDriveActionBusy();
+  }
+}
+
+// --- Danger Zone: wipe the Drive backup, keep settings.json ----------------
+// A deliberate, one-way trip that only touches the REMOTE copy - local data
+// on this device is never touched. Handy as a genuine "start the cloud
+// backup over from scratch" button, and it also happens to be exactly the
+// state a manually-deleted Drive folder leaves behind, so it's a good way to
+// sanity-check the self-healing logic in backupToGoogleDrive() above (hit
+// this, then just hit Backup - it should silently rebuild everything).
+async function deleteAllDriveBackupsExceptSettings() {
+  if (!gdriveToken) return alert('Authenticate with Google first!');
+  if (!confirm('This permanently deletes your Drive backup - all expense history and Splitwise groups stored there - EXCEPT settings.json (categories/recurring items/due items). Data on THIS device is untouched. This cannot be undone. Continue?')) return;
+
+  const notice = document.getElementById('driveSyncNotice');
+  const setNotice = (text, cls) => {
+    if (!notice) return;
+    notice.innerText = text;
+    notice.className = `text-[11px] text-center ${cls} font-medium h-4`;
+  };
+  setDriveActionBusy('btnBackupDrive', 'Deleting Drive backup...');
+  setNotice('Deleting Drive backup...', 'text-blue-500');
+
+  try {
+    const folderName = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
+    const rootId = await getOrCreateFolder(folderName);
+
+    const [manifestFile, splitwiseFile, legacyFile, expensesFolder] = await Promise.all([
+      findFileByName(MANIFEST_FILE_NAME, rootId),
+      findFileByName(SPLITWISE_FILE_NAME, rootId),
+      findFileByName(LEGACY_BACKUP_FILE_NAME, rootId),
+      findFolder(EXPENSES_FOLDER_NAME, rootId)
+    ]);
+
+    // Deleting the "expenses" FOLDER takes every monthly chunk inside it
+    // along with it in one call - no need to enumerate them individually.
+    await Promise.all(
+      [manifestFile, splitwiseFile, legacyFile, expensesFolder]
+        .filter(Boolean)
+        .map(f => deleteDriveFile(f.id))
+    );
+
+    // Forget local bookkeeping for everything just deleted, but KEEP
+    // settingsFileId untouched - settings.json wasn't touched on Drive.
+    // Clearing dirtyMonths/remoteChunkVersions here isn't strictly required
+    // (backupToGoogleDrive's remoteManifestMissing check will rebuild both
+    // from scratch the moment it notices the manifest is gone) but there's
+    // no reason to leave stale bookkeeping lying around either.
+    await saveSyncMeta({ manifestFileId: null, splitwiseFileId: null, dirtyMonths: [], remoteChunkVersions: {} });
+
+    setNotice('Drive backup deleted (settings kept). Next Backup re-uploads everything fresh.', 'text-emerald-600');
+    if (currentTab === 'settings') renderSettings(document.getElementById('mainContainer'));
+  } catch (err) {
+    console.error(err);
+    setNotice('Error deleting Drive backup: ' + err.message, 'text-rose-600');
   } finally {
     clearDriveActionBusy();
   }

@@ -970,26 +970,34 @@
             <i class="fa-solid fa-triangle-exclamation text-rose-500"></i>
             <h3 class="font-bold text-rose-700 text-sm">Danger Zone</h3>
           </div>
-          <p class="text-[10px] text-slate-400 -mt-2">Permanently deletes every logged expense (including calendar-logged recurring entries). Categories, sub-categories, recurring items, and due items are left exactly as they are.</p>
+          <p class="text-[10px] text-slate-400 -mt-2">Permanently deletes every logged expense (including calendar-logged recurring entries) AND every Splitwise group (members + their expenses). Categories, sub-categories, recurring items, and due items are left exactly as they are.</p>
           <button onclick="clearAllExpenses()" class="w-full py-2.5 bg-rose-50 text-rose-600 border border-rose-200 rounded-xl text-xs font-bold hover:bg-rose-100 transition">
-            <i class="fa-solid fa-trash mr-1"></i> Clear All Expenses
+            <i class="fa-solid fa-trash mr-1"></i> Clear All Expenses &amp; Splitwise Data
+          </button>
+
+          <p class="text-[10px] text-slate-400 -mb-1">Deletes your Drive backup - all expense history and Splitwise groups stored there. settings.json (categories/recurring/due items) is kept. Data on THIS device is untouched - back it up again any time.</p>
+          <button onclick="deleteAllDriveBackupsExceptSettings()" class="w-full py-2.5 bg-rose-50 text-rose-600 border border-rose-200 rounded-xl text-xs font-bold hover:bg-rose-100 transition disabled:opacity-50" ${!isConnected ? 'disabled' : ''}>
+            <i class="fa-brands fa-google-drive mr-1"></i> Delete All Drive Backups (Keep Settings)
           </button>
         </div>
       `;
     }
 
     function clearAllExpenses() {
-      if (appData.expenses.length === 0) {
-        alert('There are no expenses to clear.');
+      const splitCount = splitGroups.length || 0;
+      if (appData.expenses.length === 0 && splitCount === 0) {
+        alert('There are no expenses or Splitwise groups to clear.');
         return;
       }
-      const confirmed = confirm(`This will permanently delete all ${appData.expenses.length} logged expense(s). Categories, sub-categories, recurring items, and due items will NOT be affected. This cannot be undone. Continue?`);
+      const confirmed = confirm(`This will permanently delete all ${appData.expenses.length} logged expense(s) and all Splitwise groups (with their members and expenses). Categories, sub-categories, recurring items, and due items will NOT be affected. This cannot be undone. Continue?`);
       if (!confirmed) return;
 
       appData.expenses = [];
       saveState();
-      renderSettings(document.getElementById('mainContainer'));
-      alert('All expenses cleared.');
+      clearAllSplitGroups().then(() => {
+        renderSettings(document.getElementById('mainContainer'));
+        alert('All expenses and Splitwise data cleared.');
+      });
     }
 
     // Frees up local space by dropping one year's worth of expenses from
@@ -1000,7 +1008,7 @@
     // itself) since Home/Expenses depend on it always being present.
     async function deleteYearDataFromSettings(year) {
       if (year === currentYearStr()) {
-        alert(`${year} is the active year and can't be deleted here - Home and Expenses need it. Use "Clear All Expenses" in the Danger Zone below if you really want to wipe everything.`);
+        alert(`${year} is the active year and can't be deleted here - Home and Expenses need it. Use "Clear All Expenses & Splitwise Data" in the Danger Zone below if you really want to wipe everything.`);
         return;
       }
 

@@ -225,6 +225,28 @@ async function deleteSplitGroup(groupId) {
   renderSplitwiseView();
 }
 
+// Wipes every split group and everything embedded in them (members +
+// expenses) in one shot - used by the Settings > Danger Zone "Clear All
+// Expenses" button, which per its own copy promises to also nuke Splitwise
+// data, not just `appData.expenses`. Deliberately a thin wrapper around
+// IDB.replaceAll (same primitive Drive restore uses to replace the whole
+// store) rather than looping deleteSplitGroup() one at a time - no need for
+// per-group confirms here, the caller already got one confirmation covering
+// everything.
+async function clearAllSplitGroups() {
+  await IDB.replaceAll('splitGroups', []);
+  splitGroups = [];
+  activeSplitGroupId = null;
+
+  // If Splitwise happens to be open right now, refresh it in place instead
+  // of leaving stale group cards on screen until the user backs out and in.
+  const overlay = document.getElementById('splitwiseOverlay');
+  if (overlay && !overlay.classList.contains('hidden')) {
+    _saveSplitwiseUiState();
+    renderSplitwiseView();
+  }
+}
+
 // --- Group detail view --------------------------------------------------
 
 // Net balance per member across every expense in the group: whoever PAID an
