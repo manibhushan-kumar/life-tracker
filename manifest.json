@@ -1,9 +1,10 @@
 {
   "name": "Life Tracker",
   "short_name": "LifeTracker",
-  "description": "Your personal expense and life tracker",
-  "start_url": "./index.html",
-  "display": "standalone",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "Your personal expense and life tracker",
   "background_color": "#f3f4f6",
   "theme_color": "#3b82f6",
   "icons": [
