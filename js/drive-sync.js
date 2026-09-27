@@ -498,11 +498,21 @@ async function restoreFromGoogleDrive() {
     const rootId = await getOrCreateFolder(folderName);
 
     // Splitwise groups aren't year-scoped like expenses (max 5 groups,
-    // wholesale-synced) so this is fetched once here and applied
-    // unconditionally further down, regardless of which restore path
-    // (legacy/chunked, or which year(s)) the rest of this function takes.
+    // wholesale-synced) - so this happens right here, unconditionally,
+    // BEFORE any of the expense year-picker branching below. It used to be
+    // deferred into _pendingRestore and only applied once the user picked a
+    // year and clicked "Restore" inside that modal - which meant it never
+    // ran at all if there was nothing new expense-wise to restore, or if
+    // the user hadn't gotten around to completing that flow yet. Splitting
+    // it out here means hitting "Restore Data" always pulls the latest
+    // Splitwise groups immediately, independent of whatever happens with
+    // expenses afterward.
     const splitwiseFile = await findFileByName(SPLITWISE_FILE_NAME, rootId);
     const splitwiseData = splitwiseFile ? await fetchJsonFile(splitwiseFile.id).catch(() => null) : null;
+    if (splitwiseData) {
+      setNotice('Syncing Splitwise groups...', 'text-blue-500');
+      await applyRestoredSplitwiseData(splitwiseData);
+    }
 
     const manifestFile = await findFileByName(MANIFEST_FILE_NAME, rootId);
 
@@ -525,14 +535,13 @@ async function restoreFromGoogleDrive() {
       if (years.length === 0) {
         // Nothing dated at all - nothing to pick a year for, just bring in settings.
         mergeIntoAppData({ ...legacyData, expenses: undefined });
-        await applyRestoredSplitwiseData(splitwiseData);
         await saveState({ skipDirtyTracking: true });
         setNotice('Restored settings from legacy backup (no expenses found).', 'text-emerald-600');
         navigate('home');
         return;
       }
 
-      _pendingRestore = { mode: 'legacy', legacyData, legacyExpenses, splitwiseData };
+      _pendingRestore = { mode: 'legacy', legacyData, legacyExpenses };
       setNotice('Choose a year to restore below.', 'text-blue-500');
       openYearPickerModal(years, { legacyUpgradeNotice: true });
       return;
@@ -548,7 +557,6 @@ async function restoreFromGoogleDrive() {
 
     if (remoteMonths.length === 0) {
       if (settingsData) mergeIntoAppData(settingsData);
-      await applyRestoredSplitwiseData(splitwiseData);
       await saveState({ skipDirtyTracking: true });
       setNotice('Backup found, but it has no expense history yet. Settings synced.', 'text-amber-600');
       navigate('home');
@@ -556,7 +564,7 @@ async function restoreFromGoogleDrive() {
     }
 
     const years = Array.from(new Set(remoteMonths.map(m => m.slice(0, 4)))).sort().reverse();
-    _pendingRestore = { mode: 'chunked', manifest, settingsData, manifestFile, settingsFile, remoteMonths, splitwiseData };
+    _pendingRestore = { mode: 'chunked', manifest, settingsData, manifestFile, settingsFile, remoteMonths };
     setNotice('Choose a year to restore below.', 'text-blue-500');
     openYearPickerModal(years, {});
   } catch (err) {
@@ -673,13 +681,10 @@ async function confirmYearRestore() {
   setNotice(`Restoring ${Array.from(targetYears).join(', ')}...`, 'text-blue-500');
 
   try {
-    // Splitwise groups aren't year-scoped like expenses, so this happens
-    // unconditionally up front regardless of which year(s) were picked or
-    // which mode (legacy/chunked) the rest of this function takes below.
-    if (pending.splitwiseData) {
-      setNotice('Syncing Splitwise groups...', 'text-blue-500');
-      await applyRestoredSplitwiseData(pending.splitwiseData);
-    }
+    // Splitwise sync already happened up in restoreFromGoogleDrive(), before
+    // this year-picker modal even opened - it's intentionally NOT repeated
+    // here, since it isn't year-scoped and shouldn't depend on the user
+    // completing this expense-specific flow at all.
 
     // Local storage is capped to "current year + whatever's being restored
     // right now" - anything else gets purged first. Two things fall out of
