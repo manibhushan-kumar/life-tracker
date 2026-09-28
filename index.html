@@ -55,7 +55,33 @@
       <button id="globalDriveSyncBtn" onclick="backupToGoogleDrive()" aria-label="Sync to Google Drive" title="Sync to Google Drive" class="hidden w-7 h-7 rounded-full flex items-center justify-center text-blue-600 bg-blue-50 border border-blue-100 hover:bg-blue-100 transition disabled:opacity-50">
         <i class="fa-solid fa-cloud-arrow-up text-xs"></i>
       </button>
--
+      <!-- Manual login affordance: while offline this is clickable and kicks
+           off the same Google consent-popup flow as Settings' "Connect"
+           button (see handleDriveStatusClick in drive-sync.js). No more
+           auto/silent login attempts on page load - connecting is always a
+           deliberate click now. setDriveConnectedUI disables this button
+           once connected (nothing to click there, just a status readout). -->
+      <button type="button" id="globalDriveStatus" onclick="handleDriveStatusClick()" aria-label="Google Drive offline. Click to connect." title="Click to connect Google Drive" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border border-slate-200 text-slate-400 bg-white shadow-sm transition-colors duration-300 cursor-pointer hover:bg-slate-50">
+        <i class="fa-brands fa-google-drive"></i> Offline
+      </button>
+    </div>
+
+    <!-- One-time coach-mark pointing at the pill above, so brand-new users
+         actually know "Offline" is a clickable login button and not just a
+         status readout. See maybeShowDriveConnectHint/dismissDriveConnectHint
+         in drive-sync.js - shown once ever, permanently silenced the moment
+         the user dismisses it, clicks the pill, or connects. Positioned
+         absolutely against the header, which already works as a containing
+         block since it's `sticky` (sticky counts the same as relative here). -->
+    <div id="driveConnectHint" class="hidden absolute top-full right-3 mt-2 z-40 w-56" role="status">
+      <div class="absolute -top-1 right-6 w-2.5 h-2.5 bg-slate-800 rotate-45"></div>
+      <div class="relative bg-slate-800 text-white text-[11px] leading-snug rounded-xl shadow-lg px-3 py-2.5 flex items-start gap-2">
+        <i class="fa-brands fa-google-drive text-amber-400 mt-0.5"></i>
+        <p class="flex-1 font-medium">Tap "Offline" above to back up your data to Google Drive.</p>
+        <button type="button" onclick="dismissDriveConnectHint()" aria-label="Dismiss" class="text-slate-400 hover:text-white leading-none -mt-0.5 -mr-0.5">
+          <i class="fa-solid fa-xmark text-xs"></i>
+        </button>
+      </div>
     </div>
   </header>
 

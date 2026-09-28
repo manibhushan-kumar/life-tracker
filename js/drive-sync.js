@@ -36,6 +36,10 @@
 
 const G_TOKEN_KEY = 'life_tracker_gdrive_token';
 const G_TOKEN_EXPIRY_KEY = 'life_tracker_gdrive_token_expiry';
+// Set the first time the one-time "tap here to connect" coach-mark gets
+// dismissed (explicit X, clicking the pill, or ever successfully
+// connecting) - see maybeShowDriveConnectHint/dismissDriveConnectHint below.
+const G_HINT_DISMISSED_KEY = 'life_tracker_gdrive_hint_dismissed';
 // Caches the resolved ROOT sync folder's id, keyed to the folder NAME it was
 // resolved for. Exists purely to dodge a real Google Drive gotcha: the
 // files.list search endpoint (used by getOrCreateFolder/findFileByName) is
@@ -75,6 +79,7 @@ function setDriveConnectedUI(connected) {
     status.setAttribute('aria-label', 'Google Drive connected');
     status.title = 'Google Drive connected';
     if (syncBtn) syncBtn.classList.remove('hidden');
+    dismissDriveConnectHint(); // no need to keep nudging once actually connected
   } else {
     status.innerHTML = '<i class="fa-brands fa-google-drive"></i> Offline';
     status.classList.add('text-slate-400', 'bg-white', 'cursor-pointer', 'hover:bg-slate-50');
@@ -93,8 +98,33 @@ function setDriveConnectedUI(connected) {
 // setDriveConnectedUI disables the button once connected so there's nothing
 // to click there, but this guard is a cheap safety net regardless.
 function handleDriveStatusClick() {
+  dismissDriveConnectHint(); // they found it and clicked it - job done
   if (gdriveToken) return;
   authenticateGoogleDrive();
+}
+
+// One-time coach-mark nudging brand-new users toward the header pill as the
+// login entry point (see the #driveConnectHint markup in index.html) -
+// without it, "Offline" just looks like a status label, not a button. Only
+// shown if Drive backup is actually configured (no point advertising a
+// feature that isn't set up yet) and only if never dismissed/connected
+// before. Silenced permanently via G_HINT_DISMISSED_KEY the first time any
+// of those things happens - it never nags a returning user twice.
+function maybeShowDriveConnectHint() {
+  if (!isGoogleDriveConfigured()) return;
+  if (gdriveToken) return;
+  if (localStorage.getItem(G_HINT_DISMISSED_KEY)) return;
+  const hint = document.getElementById('driveConnectHint');
+  if (!hint) return;
+  // Small delay so it appears after the page has visibly settled rather than
+  // flashing in as part of the very first paint.
+  setTimeout(() => hint.classList.remove('hidden'), 800);
+}
+
+function dismissDriveConnectHint() {
+  localStorage.setItem(G_HINT_DISMISSED_KEY, '1');
+  const hint = document.getElementById('driveConnectHint');
+  if (hint) hint.classList.add('hidden');
 }
 
 // Access tokens from Google Identity Services are short-lived (~1hr) but we

@@ -199,6 +199,7 @@ async function initStorage() {
   await resumeSplitwiseIfWasOpen();
 
   tryRestoreDriveSession();
+  maybeShowDriveConnectHint();
 }
 
 // --- Year-scoped local deletion -------------------------------------------
