@@ -69,15 +69,32 @@ function setDriveConnectedUI(connected) {
   if (!status) return;
   if (connected) {
     status.innerHTML = '<i class="fa-brands fa-google-drive text-amber-500"></i> Connected';
-    status.classList.remove('text-slate-400', 'bg-white');
-    status.classList.add('text-slate-700', 'bg-amber-50', 'border-amber-100');
+    status.classList.remove('text-slate-400', 'bg-white', 'cursor-pointer', 'hover:bg-slate-50');
+    status.classList.add('text-slate-700', 'bg-amber-50', 'border-amber-100', 'cursor-default');
+    status.disabled = true;
+    status.setAttribute('aria-label', 'Google Drive connected');
+    status.title = 'Google Drive connected';
     if (syncBtn) syncBtn.classList.remove('hidden');
   } else {
     status.innerHTML = '<i class="fa-brands fa-google-drive"></i> Offline';
-    status.classList.add('text-slate-400', 'bg-white');
-    status.classList.remove('text-slate-700', 'bg-amber-50', 'border-amber-100');
+    status.classList.add('text-slate-400', 'bg-white', 'cursor-pointer', 'hover:bg-slate-50');
+    status.classList.remove('text-slate-700', 'bg-amber-50', 'border-amber-100', 'cursor-default');
+    status.disabled = false;
+    status.setAttribute('aria-label', 'Google Drive offline. Click to connect.');
+    status.title = 'Click to connect Google Drive';
     if (syncBtn) syncBtn.classList.add('hidden');
   }
+}
+
+// The header pill IS the manual login affordance now (see index.html - it's
+// a real <button>, not a decorative span). Clicking it while offline kicks
+// off the exact same consent-popup flow as the Settings "Connect" button -
+// one login implementation, two entry points, no duplicated OAuth logic.
+// setDriveConnectedUI disables the button once connected so there's nothing
+// to click there, but this guard is a cheap safety net regardless.
+function handleDriveStatusClick() {
+  if (gdriveToken) return;
+  authenticateGoogleDrive();
 }
 
 // Access tokens from Google Identity Services are short-lived (~1hr) but we
@@ -102,50 +119,22 @@ function loadPersistedDriveToken() {
   return null;
 }
 
-// Called once on app boot. First tries the cached token (covers the common
-// "I just refreshed the page" case instantly, no network needed). If that's
-// gone/expired but a Client ID is saved, it tries a silent (no popup) Google
-// re-auth - works if the browser still has an active Google session and the
-// user previously granted consent. Fails silently otherwise; user can still
-// hit "Connect Auth" manually.
+// Called once on app boot. Only restores an ALREADY-connected session from
+// the cached token (localStorage read, instant, no network call, no Google
+// script involved at all). It deliberately does NOT attempt any kind of
+// silent/background Google re-auth anymore - that used to fire a
+// google.accounts.oauth2 token request on every load for anyone not
+// connected, which is exactly the surprise "why is it trying to log me into
+// Google on page load" behavior. Login is now always a deliberate,
+// user-initiated click - either the header pill (see handleDriveStatusClick)
+// or the "Connect" button in Settings - never something that fires itself.
 function tryRestoreDriveSession() {
   const cached = loadPersistedDriveToken();
   if (cached) {
     gdriveToken = cached;
     setDriveConnectedUI(true);
     if (currentTab === 'settings') renderSettings(document.getElementById('mainContainer'));
-    return;
   }
-
-  if (!isGoogleDriveConfigured()) return;
-
-  const attemptSilentAuth = () => {
-    if (typeof google === 'undefined' || !google.accounts) return;
-    const silentClient = google.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_OAUTH_CLIENT_ID,
-      scope: 'https://www.googleapis.com/auth/drive.file',
-      callback: (response) => {
-        if (!response || response.error || !response.access_token) return; // silent fail, no popup shown
-        gdriveToken = response.access_token;
-        persistDriveToken(response.access_token, response.expires_in);
-        setDriveConnectedUI(true);
-        if (currentTab === 'settings') renderSettings(document.getElementById('mainContainer'));
-      }
-    });
-    silentClient.requestAccessToken({ prompt: '' });
-  };
-
-  // The GIS script tag loads async/defer, so poll briefly until it's ready.
-  let attempts = 0;
-  const poll = setInterval(() => {
-    attempts++;
-    if (typeof google !== 'undefined' && google.accounts) {
-      clearInterval(poll);
-      attemptSilentAuth();
-    } else if (attempts > 20) {
-      clearInterval(poll); // ~6s of trying, then give up quietly
-    }
-  }, 300);
 }
 
 function authenticateGoogleDrive() {
