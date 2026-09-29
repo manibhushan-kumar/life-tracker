@@ -574,6 +574,7 @@ async function performBackupWrite({ rootId, expensesFolderId, manifest, manifest
     tags: appData.tags,
     vehicles: appData.vehicles,
     fuelLogs: appData.fuelLogs,
+    userName: appData.userName,
     savedAt: new Date().toISOString()
   };
   const settingsFileId = await upsertJsonFile(rootId, SETTINGS_FILE_NAME, settingsPayload, syncMeta.settingsFileId);

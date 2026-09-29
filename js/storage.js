@@ -122,7 +122,8 @@ function _settingsSyncFingerprint() {
     familyMembers: appData.familyMembers,
     tags: appData.tags,
     vehicles: appData.vehicles,
-    fuelLogs: appData.fuelLogs
+    fuelLogs: appData.fuelLogs,
+    userName: appData.userName
   });
 }
 
@@ -222,7 +223,7 @@ async function saveState(opts) {
     await Promise.all([
       IDB.replaceAll('expenses', appData.expenses),
       IDB.replaceAll('items', appData.items),
-      IDB.put('meta', { key: 'settings', recurringItems: appData.recurringItems, categories: appData.categories, budgets: appData.budgets, familyMembers: appData.familyMembers, tags: appData.tags, vehicles: appData.vehicles, fuelLogs: appData.fuelLogs })
+      IDB.put('meta', { key: 'settings', recurringItems: appData.recurringItems, categories: appData.categories, budgets: appData.budgets, familyMembers: appData.familyMembers, tags: appData.tags, vehicles: appData.vehicles, fuelLogs: appData.fuelLogs, userName: appData.userName })
     ]);
   } catch (e) {
     console.error('Life Tracker: failed to persist to IndexedDB.', e);
@@ -247,7 +248,7 @@ async function saveState(opts) {
 // slips past the overscroll-behavior CSS fix (e.g. the OS itself killing
 // and relaunching the PWA) - validated against a known-tabs list so a
 // stale/corrupted localStorage value can never navigate somewhere invalid.
-const VALID_TABS = ['home', 'expenses', 'compare', 'items', 'settings', 'reports', 'fuel'];
+const VALID_TABS = ['home', 'expenses', 'compare', 'items', 'settings', 'reports', 'fuel', 'pdfReport'];
 
 async function initStorage() {
   await loadAppData();
@@ -258,7 +259,7 @@ async function initStorage() {
   // month. See freezePastMonthBudgets in js/data-model.js.
   if (freezePastMonthBudgets()) await saveState();
 
-  document.getElementById('headerDate').innerText = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  updateHeaderGreeting();
 
   const lastTab = localStorage.getItem(LAST_TAB_STORAGE_KEY);
   navigate(VALID_TABS.includes(lastTab) ? lastTab : 'home');

@@ -1,6 +1,6 @@
 // Bump this whenever urlsToCache changes so returning users actually pick
 // up the new app shell instead of serving a stale cached copy forever.
-const CACHE_NAME = 'life-tracker-v44';
+const CACHE_NAME = 'life-tracker-v52';
 const urlsToCache = [
   './',
   './index.html',
@@ -14,7 +14,10 @@ const urlsToCache = [
   './js/storage.js',
   './js/drive-sync.js',
   './js/compare.js',
-  './js/splitwise.js'
+  './js/splitwise.js',
+  './js/pdf-report.js',
+  './js/pdf-writer.js',
+  './js/pdf-download.js'
 ];
 
 // Install Service Worker and cache files
