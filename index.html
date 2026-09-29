@@ -5,13 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Life Tracker</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="icon" href="./life-tracker-logo.png">
-  <link rel="apple-touch-icon" href="./life-tracker-logo.png">
+  <link rel="icon" href="./icons/icon-192.png">
+  <link rel="apple-touch-icon" href="./icons/icon-192.png">
   <meta name="theme-color" content="#2563eb">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
+    /* Kills the browser's native pull-to-refresh gesture. Without this, a
+       simple overscroll bounce at the top of ANY tab (not even a deliberate
+       "refresh" swipe) triggers a full page reload - which wipes every bit
+       of in-memory JS state (currentTab, open modals, everything) and
+       re-boots the app straight back to Home. This is the primary fix for
+       that; see also the currentTab persistence in navigate()/initStorage()
+       as a backstop for the rare reload that still happens some other way
+       (e.g. the OS reclaiming memory and relaunching the PWA). -->
+    html, body { overscroll-behavior-y: contain; }
     body { -webkit-tap-highlight-color: transparent; }
     .hide-scrollbar::-webkit-scrollbar { display: none; }
     .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
@@ -22,18 +31,57 @@
   <!-- Top App Bar -->
   <header class="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200 px-4 py-3 flex items-center justify-between">
     <div class="flex items-center gap-2">
+      <button onclick="openSideNav()" aria-label="Open menu" class="w-8 h-8 -ml-1 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 transition">
+        <i class="fa-solid fa-bars"></i>
+      </button>
       <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-sm shadow-blue-500/30">
         <i class="fa-solid fa-layer-group text-sm"></i>
       </div>
       <div>
-        <h1 class="text-base font-bold tracking-tight leading-none text-slate-800">Life Tracker</h1>
+        <h1 class="text-base font-bold tracking-tight leading-none text-slate-800">
+          <button type="button" onclick="navigate('home')" class="hover:text-blue-600 transition" aria-label="Go to Home">Life Tracker</button><span id="appHeaderCrumb" class="text-slate-400 font-semibold"></span>
+        </h1>
         <p class="text-[10px] font-medium text-slate-400 leading-tight mt-0.5" id="headerDate">Loading...</p>
       </div>
     </div>
     <div class="flex items-center gap-2">
-      <span id="globalDriveStatus" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border border-slate-200 text-slate-400 bg-white shadow-sm transition-colors duration-300">
+      <!-- Only shown once Drive is actually connected (see setDriveConnectedUI
+           in drive-sync.js) - lets you push a quick backup from WHEREVER you
+           are in the app (Home, Expenses, mid-Splitwise, etc) instead of
+           always having to detour through Settings first. Settings keeps its
+           own Backup/Restore buttons too - this is an ADDITIONAL shortcut,
+           not a replacement (Restore still lives in Settings only, since it
+           opens the year-picker modal and is a much more deliberate action). -->
+      <button id="globalDriveSyncBtn" onclick="backupToGoogleDrive()" aria-label="Sync to Google Drive" title="Sync to Google Drive" class="hidden w-7 h-7 rounded-full flex items-center justify-center text-blue-600 bg-blue-50 border border-blue-100 hover:bg-blue-100 transition disabled:opacity-50">
+        <i class="fa-solid fa-cloud-arrow-up text-xs"></i>
+      </button>
+      <!-- Manual login affordance: while offline this is clickable and kicks
+           off the same Google consent-popup flow as Settings' "Connect"
+           button (see handleDriveStatusClick in drive-sync.js). No more
+           auto/silent login attempts on page load - connecting is always a
+           deliberate click now. setDriveConnectedUI disables this button
+           once connected (nothing to click there, just a status readout). -->
+      <button type="button" id="globalDriveStatus" onclick="handleDriveStatusClick()" aria-label="Google Drive offline. Click to connect." title="Click to connect Google Drive" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border border-slate-200 text-slate-400 bg-white shadow-sm transition-colors duration-300 cursor-pointer hover:bg-slate-50">
         <i class="fa-brands fa-google-drive"></i> Offline
-      </span>
+      </button>
+    </div>
+
+    <!-- One-time coach-mark pointing at the pill above, so brand-new users
+         actually know "Offline" is a clickable login button and not just a
+         status readout. See maybeShowDriveConnectHint/dismissDriveConnectHint
+         in drive-sync.js - shown once ever, permanently silenced the moment
+         the user dismisses it, clicks the pill, or connects. Positioned
+         absolutely against the header, which already works as a containing
+         block since it's `sticky` (sticky counts the same as relative here). -->
+    <div id="driveConnectHint" class="hidden absolute top-full right-3 mt-2 z-40 w-56" role="status">
+      <div class="absolute -top-1 right-6 w-2.5 h-2.5 bg-slate-800 rotate-45"></div>
+      <div class="relative bg-slate-800 text-white text-[11px] leading-snug rounded-xl shadow-lg px-3 py-2.5 flex items-start gap-2">
+        <i class="fa-brands fa-google-drive text-amber-400 mt-0.5"></i>
+        <p class="flex-1 font-medium">Tap "Offline" above to back up your data to Google Drive.</p>
+        <button type="button" onclick="dismissDriveConnectHint()" aria-label="Dismiss" class="text-slate-400 hover:text-white leading-none -mt-0.5 -mr-0.5">
+          <i class="fa-solid fa-xmark text-xs"></i>
+        </button>
+      </div>
     </div>
   </header>
 
@@ -43,7 +91,23 @@
   </main>
 
   <!-- Bottom Navigation -->
-  <nav class="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-lg border-t border-slate-200 max-w-md mx-auto">
+  <!-- Exactly 2 nav-btns on each side of the spacer (Home/Expenses | Due
+       Items/Compare) - Settings moved to the side drawer specifically so
+       this split stays even. With an uneven 2-vs-3 split (Settings
+       included), the single spacer only buffered the LEFT of the FAB,
+       leaving Due Items crammed right up against it on the right -
+       symmetric counts is what actually fixes that. -->
+  <!-- `fixed` alone already gives the FAB below a valid positioning anchor
+       (any position value other than `static` establishes a containing
+       block for absolutely-positioned descendants) - do NOT also add
+       `relative` here. Tailwind's generated stylesheet orders position
+       utilities as static/fixed/absolute/relative/sticky, so `relative`
+       comes AFTER `fixed` in the actual CSS and silently wins the cascade,
+       flipping this whole bar from `position: fixed` to `position: relative`
+       and un-pinning it from the bottom of the screen. Learned that one
+       the hard way - if this ever needs adjusting again, `fixed` is doing
+       double duty as both "pinned to viewport" AND "FAB's anchor", on purpose. -->
+  <nav id="bottomNav" class="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-lg border-t border-slate-200 max-w-md mx-auto">
     <div class="flex items-center justify-around py-2">
       <button onclick="navigate('home')" id="nav-home" class="nav-btn flex flex-col items-center gap-1 text-blue-600 flex-1">
         <i class="fa-solid fa-house text-lg"></i>
@@ -53,24 +117,55 @@
         <i class="fa-solid fa-wallet text-lg"></i>
         <span class="text-[10px] font-medium">Expenses</span>
       </button>
-      
-      <!-- Primary FAB (+) -->
-      <div class="relative -top-4 flex items-center justify-center flex-1">
-        <button onclick="openQuickAddModal()" class="w-12 h-12 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-lg shadow-blue-500/40 hover:bg-blue-700 active:scale-95 transition">
-          <i class="fa-solid fa-plus text-xl"></i>
-        </button>
-      </div>
+
+      <!-- Empty spacer the same width as a nav-btn. Being the exact MIDDLE
+           item of an odd total (5 = 2 + spacer + 2) is what puts it dead
+           center - same trick as before, just with matching counts now. -->
+      <div class="flex-1" aria-hidden="true"></div>
 
       <button onclick="navigate('items')" id="nav-items" class="nav-btn flex flex-col items-center gap-1 text-slate-400 flex-1">
         <i class="fa-solid fa-calendar-check text-lg"></i>
         <span class="text-[10px] font-medium">Due Items</span>
       </button>
-      <button onclick="navigate('settings')" id="nav-settings" class="nav-btn flex flex-col items-center gap-1 text-slate-400 flex-1">
-        <i class="fa-solid fa-gear text-lg"></i>
-        <span class="text-[10px] font-medium">Settings</span>
+      <button onclick="navigate('compare')" id="nav-compare" class="nav-btn flex flex-col items-center gap-1 text-slate-400 flex-1">
+        <i class="fa-solid fa-chart-column text-lg"></i>
+        <span class="text-[10px] font-medium">Compare</span>
       </button>
     </div>
+
+    <!-- Primary FAB (+) - deliberately OUTSIDE the flex row above and
+         centered against the nav's full width via absolute positioning.
+         Doubles as the one home for "add more record types later" (the
+         quick-add sheet it opens is already a menu, not a single action). -->
+    <button onclick="openQuickAddModal()" aria-label="Quick add" class="absolute left-1/2 -translate-x-1/2 -top-5 w-14 h-14 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-lg shadow-blue-500/40 border-4 border-white hover:bg-blue-700 active:scale-95 transition">
+      <i class="fa-solid fa-plus text-xl"></i>
+    </button>
   </nav>
+
+  <!-- Side Nav (collapsible) - currently just houses Settings, kept out of
+       the bottom bar specifically so that bar stays an even 2-and-2 split
+       around the FAB. Room to add more items here later without ever having
+       to rebalance the bottom nav again. -->
+  <div id="sideNavBackdrop" class="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm hidden transition-opacity" onclick="closeSideNav()"></div>
+  <aside id="sideNav" class="fixed top-0 left-0 bottom-0 z-50 w-64 bg-white shadow-2xl -translate-x-full transition-transform duration-200 flex flex-col">
+    <div class="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-sm shadow-blue-500/30">
+          <i class="fa-solid fa-layer-group text-sm"></i>
+        </div>
+        <h2 class="text-sm font-bold text-slate-800">Life Tracker</h2>
+      </div>
+      <button onclick="closeSideNav()" aria-label="Close menu" class="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-100 transition">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+    <nav class="p-2 space-y-1">
+      <button onclick="navigate('settings'); closeSideNav()" id="nav-settings" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:bg-slate-50 transition text-left">
+        <i class="fa-solid fa-gear text-base w-5"></i>
+        <span class="text-xs font-semibold">Settings</span>
+      </button>
+    </nav>
+  </aside>
 
   <!-- Quick Add Action Sheet Modal -->
   <div id="quickAddModal" class="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm hidden flex items-end justify-center transition-opacity" onclick="closeQuickAddModal(event)">
@@ -87,6 +182,18 @@
           <div class="text-left"><p class="text-xs font-bold text-slate-800">Bill</p><p class="text-[10px] text-slate-400">Utility, Rent, EMI</p></div>
         </button>
       </div>
+      <button onclick="openSplitwise(); closeQuickAddModal()" class="w-full p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
+        <div class="w-9 h-9 rounded-lg bg-violet-500/10 text-violet-600 flex items-center justify-center"><i class="fa-solid fa-people-group text-sm"></i></div>
+        <div class="text-left"><p class="text-xs font-bold text-slate-800">Splitwise</p><p class="text-[10px] text-slate-400">Split a bill with friends - local only</p></div>
+      </button>
+      <button onclick="navigate('reports'); closeQuickAddModal()" class="w-full p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
+        <div class="w-9 h-9 rounded-lg bg-amber-500/10 text-amber-600 flex items-center justify-center"><i class="fa-solid fa-chart-pie text-sm"></i></div>
+        <div class="text-left"><p class="text-xs font-bold text-slate-800">Reports</p><p class="text-[10px] text-slate-400">See spending under a tag, e.g. Trip-Goa</p></div>
+      </button>
+      <button onclick="navigate('fuel'); closeQuickAddModal()" class="w-full p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
+        <div class="w-9 h-9 rounded-lg bg-sky-500/10 text-sky-600 flex items-center justify-center"><i class="fa-solid fa-gas-pump text-sm"></i></div>
+        <div class="text-left"><p class="text-xs font-bold text-slate-800">Fuel Log</p><p class="text-[10px] text-slate-400">Track fill-ups & mileage per vehicle</p></div>
+      </button>
     </div>
   </div>
 
@@ -97,146 +204,98 @@
     </div>
   </div>
 
+  <!-- Drive sync blocking modal: shown for the FULL duration of an
+       Upload/Restore/Danger-Zone Drive operation (see driveSyncProgress/
+       driveSyncDone in js/drive-sync.js). Deliberately z-[60] - above
+       formModal (z-50) - and has NO backdrop-click handler and no close
+       button while busy, so it's genuinely undismissable mid-operation.
+       That's the whole point: without it, someone on Settings mid-restore
+       could tap over to Expenses and log a new entry while the restore is
+       still merging data in the background. Once the operation finishes,
+       driveSyncDone() swaps in an OK button that also auto-dismisses after
+       5s if nobody taps it. -->
+  <div id="driveBusyModal" class="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-live="assertive">
+    <div id="driveBusyModalContent" class="bg-white w-full max-w-xs rounded-2xl p-6 shadow-2xl text-center">
+      <!-- Injected: spinner+message while busy, icon+message+OK when done -->
+    </div>
+  </div>
+
+  <!-- Splitwise: a full page, not a bottom-nav tab (it has its own nested
+       list -> detail navigation) - but it deliberately does NOT cover the
+       real app header/nav like a true full-screen overlay would. Its
+       top/bottom get set inline via JS (see _positionSplitwiseOverlay in
+       splitwise.js) to exactly match the real header/nav's rendered height,
+       measured at runtime rather than guessed/hardcoded - so the standard
+       header (branding, Drive status) and bottom nav (so you can jump
+       straight to another tab) stay visible and usable the whole time
+       you're in here. z-20 keeps it under the header (z-30) and nav (z-40)
+       so it can never accidentally paint over either even if a measurement
+       is slightly off, and under formModal (z-50, used above for its New
+       Group / Add Person / Add Expense forms) so those still show on top
+       of it correctly. -->
+  <div id="splitwiseOverlay" class="fixed left-0 right-0 z-20 bg-slate-50 hidden flex flex-col overflow-hidden">
+    <!-- No standalone "close" (X) button here anymore - the main header's
+         "Life Tracker" breadcrumb root (tap it -> navigate('home')) and the
+         bottom nav itself both already exit Splitwise via navigate(), which
+         closes this overlay as a side effect. One less redundant control. -->
+    <!-- Hidden entirely in the group-LIST view (see renderSplitwiseGroupList
+         in splitwise.js) since it'd otherwise just show "Splitwise" again,
+         right underneath the main header's "Life Tracker / Splitwise"
+         breadcrumb - pure duplication with nothing else useful in it (no
+         back button either, at the list level). Only shown in group DETAIL
+         view, where it earns its keep: back button + the specific group's
+         name, neither of which the main header knows about. `hidden` +
+         `flex` coexist as static classes (same pattern as #splitwiseOverlay
+         itself) with only `hidden` ever toggled at runtime - Tailwind's
+         generated stylesheet orders `hidden` after `flex`, so `display:
+         none` always wins the cascade while present, and simply removing
+         it cleanly falls back to the already-there `flex`. -->
+    <div id="splitwiseSubHeader" class="hidden flex sticky top-0 bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 py-3 items-center gap-2">
+      <button id="splitwiseBackBtn" onclick="backToGroupList()" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 transition" aria-label="Back to groups">
+        <i class="fa-solid fa-arrow-left"></i>
+      </button>
+      <h2 id="splitwiseTitle" class="text-sm font-bold text-slate-800"></h2>
+    </div>
+    <div id="splitwiseContent" class="flex-1 overflow-y-auto p-4 space-y-3 max-w-md mx-auto w-full"></div>
+  </div>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/data-model.js"></script>
+  <script src="./js/idb.js"></script>
+  <script src="./js/storage.js"></script>
+  <script src="./js/drive-sync.js"></script>
+  <script src="./js/compare.js"></script>
+  <script src="./js/splitwise.js"></script>
+
   <script>
     // --- Application State ---
-    const DB_KEY = 'life_tracker_pwa_data';
-    const G_CLIENT_ID_KEY = 'life_tracker_gclient_id';
-    const G_FOLDER_KEY = 'life_tracker_gfolder_name';
-    const G_TOKEN_KEY = 'life_tracker_gdrive_token';
-    const G_TOKEN_EXPIRY_KEY = 'life_tracker_gdrive_token_expiry';
+    // Data model (getDefaultAppData/mergeIntoAppData/getEffectivePrice/etc),
+    // IndexedDB persistence (appData/saveState/initStorage), and Google
+    // Drive sync (backupToGoogleDrive/restoreFromGoogleDrive/auth) all live
+    // in ./js/*.js now - loaded above, before this block, so everything
+    // below can just use them as globals. This block is rendering + event
+    // handlers only.
 
-    // Formats a Date object as YYYY-MM-DD using its LOCAL calendar fields.
-    // Deliberately NOT using Date.prototype.toISOString() here - that's UTC-based,
-    // and for anyone ahead of UTC (e.g. India, UTC+5:30) it still reports
-    // "yesterday" during early local-morning hours, while for anyone behind UTC
-    // it reports "tomorrow" during the evening. That silently breaks any
-    // date-string comparison in this app (e.g. "was this price effective today?").
-    function formatDateLocal(date) {
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
-    }
-
-    function getTodayStr() {
-      return formatDateLocal(new Date());
-    }
-
-    // Returns a fresh copy of the default app data shape. Used on first run
-    // and as the base to rebuild onto when restoring from Google Drive.
-    function getDefaultAppData() {
-      return {
-        expenses: [],
-        items: [],
-        // Generic "tap a day to log it" items - milk, newspaper, whatever recurs daily.
-        // Fully user-configurable in Settings, and rides along in the same backup blob.
-        // priceHistory is the source of truth for what a day COSTS; `price` is just a
-        // cached "today's price" convenience field kept in sync alongside it.
-        recurringItems: [
-          { id: 'milk', name: 'Milk', category: 'Milk', subCategory: null, price: 50, priceHistory: [{ from: '1970-01-01', price: 50 }] }
-        ],
-        categories: {
-          'Food': ['Restaurant', 'Delivery', 'Snacks', 'Coffee'],
-          'Bills': ['Electricity', 'Water', 'Internet', 'Mobile', 'Rent', 'EMI'],
-          'Groceries': ['Supermarket', 'Vegetables', 'Meat'],
-          'Transport': ['Fuel', 'Taxi/Uber', 'Public Transit', 'Flights'],
-          'Shopping': ['Clothes', 'Electronics', 'Gifts', 'Amazon'],
-          'Entertainment': ['Netflix', 'Spotify', 'Movies', 'Gaming', 'Events'],
-          'Health': ['Pharmacy', 'Doctor', 'Gym', 'Insurance'],
-          'Travel': ['Hotels', 'Tickets', 'Tours'],
-          'Milk': ['Cow Milk', 'Buffalo Milk', 'Toned Milk']
-        }
-      };
-    }
-
-    let appData = getDefaultAppData();
-
-    let gdriveToken = null;
-    let tokenClient = null;
-
-    // Given a recurring item, returns whatever price was actually in effect on
-    // `dateStr` (defaults to today). This is the single source of truth for
-    // "what does a day of this item cost" - a price change only affects days
-    // on/after its effective date; earlier days (and already-logged expenses,
-    // which store their own snapshot amount anyway) are never touched.
-    function getEffectivePrice(item, dateStr) {
-      const targetDate = dateStr || getTodayStr();
-      const history = Array.isArray(item.priceHistory) && item.priceHistory.length
-        ? item.priceHistory
-        : [{ from: '1970-01-01', price: Number(item.price) || 0 }];
-
-      const sorted = history.slice().sort((a, b) => a.from.localeCompare(b.from));
-      const applicable = sorted.filter(h => h.from <= targetDate);
-      // If the target date predates every recorded change (e.g. toggling a day
-      // before the item existed), fall back to the earliest known price.
-      return applicable.length > 0 ? applicable[applicable.length - 1].price : sorted[0].price;
-    }
-
-    // Merges a parsed data blob (from localStorage or a Drive restore) into the
-    // current appData, applying backwards-compatibility upgrades along the way.
-    // Shared by initStorage() and restoreFromGoogleDrive() so both paths always
-    // stay in sync - one place to fix migrations, not two.
-    function mergeIntoAppData(parsedData) {
-      if (!parsedData) return;
-
-      if (parsedData.expenses) appData.expenses = parsedData.expenses;
-      if (parsedData.items) appData.items = parsedData.items;
-
-      // Recurring Daily Items (generic, user-configurable replacement for the
-      // old hardcoded single "milkPrice" setting)
-      if (Array.isArray(parsedData.recurringItems)) {
-        appData.recurringItems = parsedData.recurringItems;
-      } else if (typeof parsedData.milkPrice === 'number') {
-        // Legacy upgrade path for users who saved data before this feature existed.
-        appData.recurringItems = [{ id: 'milk', name: 'Milk', category: 'Milk', subCategory: null, price: parsedData.milkPrice }];
-      }
-
-      // Normalize every recurring item so it always has a proper priceHistory,
-      // even if it came from an older backup that only had a flat `price`.
-      appData.recurringItems = appData.recurringItems.map(item => {
-        const priceHistory = Array.isArray(item.priceHistory) && item.priceHistory.length
-          ? item.priceHistory.slice().sort((a, b) => a.from.localeCompare(b.from))
-          : [{ from: '1970-01-01', price: Number(item.price) || 0 }];
-        return { ...item, priceHistory, price: getEffectivePrice({ priceHistory }) };
-      });
-
-      // Backwards Compatibility Migration for Categories
-      if (parsedData.categories) {
-        if (Array.isArray(parsedData.categories)) {
-          parsedData.categories.forEach(cat => {
-            if (!appData.categories[cat]) {
-              appData.categories[cat] = [];
-            }
-          });
-        } else {
-          // Merge saved categories on top of defaults so newly introduced
-          // built-in categories (e.g. Milk) still show up for existing users.
-          appData.categories = { ...appData.categories, ...parsedData.categories };
-        }
-      }
-    }
-
-    function initStorage() {
-      const saved = localStorage.getItem(DB_KEY);
-      if (saved) {
-        try {
-          mergeIntoAppData(JSON.parse(saved));
-        } catch (e) { console.error('Corrupt data:', e); }
-      }
-      
-      document.getElementById('headerDate').innerText = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-      navigate('home');
-      tryRestoreDriveSession();
-    }
-
-    function saveState() {
-      localStorage.setItem(DB_KEY, JSON.stringify(appData));
-    }
-
-    // --- Core Views & Navigation ---
     let currentTab = 'home';
+    // Backstop for the overscroll-behavior fix above: if a reload DOES
+    // happen despite it (e.g. the OS itself killed and relaunched the PWA,
+    // or a manual hard refresh), this is what lets initStorage() resume on
+    // whatever tab the user was actually looking at instead of always
+    // snapping back to Home. LAST_TAB_STORAGE_KEY lives in data-model.js so
+    // this and initStorage() in storage.js always agree on the key name.
     function navigate(tab) {
+      // Splitwise is a full page too now (not a bottom-nav tab, but it does
+      // share the header/nav), so picking any real tab while it's open has
+      // to close it first - otherwise its opaque content area would just
+      // sit there covering up whatever this call renders underneath.
+      const splitwiseOverlay = document.getElementById('splitwiseOverlay');
+      if (splitwiseOverlay && !splitwiseOverlay.classList.contains('hidden')) {
+        closeSplitwise();
+      }
+
       currentTab = tab;
+      localStorage.setItem(LAST_TAB_STORAGE_KEY, tab);
+      setAppHeaderCrumb(TAB_DISPLAY_NAMES[tab]);
       document.querySelectorAll('.nav-btn').forEach(btn => {
         btn.classList.remove('text-blue-600');
         btn.classList.add('text-slate-400');
@@ -250,8 +309,11 @@
       const container = document.getElementById('mainContainer');
       if (tab === 'home') renderHome(container);
       else if (tab === 'expenses') renderExpenses(container);
+      else if (tab === 'compare') renderCompare(container);
       else if (tab === 'items') renderItems(container);
       else if (tab === 'settings') renderSettings(container);
+      else if (tab === 'reports') renderReports(container);
+      else if (tab === 'fuel') renderFuel(container);
     }
 
     // --- Home Screen View ---
@@ -263,7 +325,7 @@
         <div class="${wrapperClass} flex items-center justify-between gap-2">
           <div class="min-w-0">
             <p class="text-xs font-bold text-slate-800 truncate">${e.note || e.category}</p>
-            <p class="text-[10px] text-slate-400 truncate">${e.category}${e.subCategory ? ' &raquo; ' + e.subCategory : ''} &bull; ${e.date}</p>
+            <p class="text-[10px] text-slate-400 truncate">${e.category}${e.subCategory ? ' &raquo; ' + e.subCategory : ''} &bull; ${e.date}${e.paidBy ? ' &bull; Paid by ' + getFamilyMemberName(e.paidBy) : ''}${e.tag ? ' &bull; <i class=\'fa-solid fa-tag\'></i> ' + getTagName(e.tag) : ''}</p>
           </div>
           <div class="flex items-center gap-2 shrink-0">
             <p class="text-xs font-bold text-slate-800">₹${Number(e.amount).toLocaleString()}</p>
@@ -285,11 +347,52 @@
       navigate(currentTab);
     }
 
+    // Renders Home's color-coded monthly budget progress bar. Pulled out of
+    // renderHome so the color-coding thresholds (see getBudgetStatus in
+    // js/data-model.js) and the "no budget configured yet" empty state both
+    // live in exactly one place.
+    function buildBudgetBarHtml(monthSpending, currentMonthStr) {
+      const budget = getBudgetForMonth(currentMonthStr);
+      if (budget <= 0) {
+        return `
+          <div class="bg-white p-3 rounded-2xl border border-dashed border-slate-200 flex items-center justify-between gap-3">
+            <p class="text-[11px] text-slate-400"><i class="fa-solid fa-wallet mr-1"></i> No monthly budget set yet.</p>
+            <button onclick="navigate('settings')" class="text-[11px] font-semibold text-blue-600 hover:text-blue-700 whitespace-nowrap">Set Budget &rarr;</button>
+          </div>
+        `;
+      }
+
+      const percent = (monthSpending / budget) * 100;
+      const status = getBudgetStatus(percent);
+      const barWidth = Math.min(100, percent);
+
+      return `
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-2">
+          <div class="flex items-center justify-between">
+            <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Monthly Budget</p>
+            <span class="text-[10px] font-bold ${status.text}">${status.label} &bull; ${Math.round(percent)}%</span>
+          </div>
+          <div class="w-full h-2.5 rounded-full ${status.track} overflow-hidden">
+            <div class="h-full ${status.bar} rounded-full transition-all" style="width: ${barWidth}%"></div>
+          </div>
+          <div class="flex items-center justify-between text-[11px]">
+            <span class="text-slate-500">₹${monthSpending.toLocaleString()} spent</span>
+            <span class="text-slate-400">of ₹${budget.toLocaleString()}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    // Home is a "this year" workspace by design - older years get pulled
+    // into IndexedDB purely for the Compare tab (or on request via Restore),
+    // not to clutter the day-to-day view. See expensesInYear() in
+    // js/data-model.js for the single shared definition of that filter.
     function renderHome(container) {
       const todayStr = getTodayStr();
       const currentMonthStr = todayStr.slice(0, 7); // YYYY-MM
-      const todaySpending = appData.expenses.filter(e => e.date === todayStr).reduce((sum, e) => sum + Number(e.amount), 0);
-      const monthSpending = appData.expenses.filter(e => e.date.startsWith(currentMonthStr)).reduce((sum, e) => sum + Number(e.amount), 0);
+      const yearExpenses = expensesInYear(currentYearStr());
+      const todaySpending = yearExpenses.filter(e => e.date === todayStr).reduce((sum, e) => sum + Number(e.amount), 0);
+      const monthSpending = yearExpenses.filter(e => e.date.startsWith(currentMonthStr)).reduce((sum, e) => sum + Number(e.amount), 0);
       
       container.innerHTML = `
         <div class="grid grid-cols-2 gap-3">
@@ -303,11 +406,13 @@
           </div>
         </div>
 
+        ${buildBudgetBarHtml(monthSpending, currentMonthStr)}
+
         <div class="space-y-2">
           <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Recent Spending</h3>
           <div class="bg-white rounded-2xl border border-slate-100 divide-y divide-slate-50 overflow-y-auto hide-scrollbar shadow-xs" style="max-height: 420px;">
-            ${appData.expenses.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 50).map(e => renderExpenseRow(e, 'p-3')).join('')}
-            ${appData.expenses.length === 0 ? '<p class="text-xs text-slate-400 text-center py-4">No expenses recorded.</p>' : ''}
+            ${yearExpenses.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 50).map(e => renderExpenseRow(e, 'p-3')).join('')}
+            ${yearExpenses.length === 0 ? '<p class="text-xs text-slate-400 text-center py-4">No expenses recorded.</p>' : ''}
           </div>
         </div>
       `;
@@ -318,6 +423,14 @@
     let selectedRecurringItemId = null;
 
     function renderExpenses(container) {
+      const currentYear = currentYearStr();
+      // Expenses is a "this year" workspace, same as Home - guard against
+      // expenseFilterMonth ever drifting outside it (defensive; nothing sets
+      // it there today, but the native month picker's fallback UI could).
+      if (!expenseFilterMonth.startsWith(currentYear)) {
+        expenseFilterMonth = getTodayStr().slice(0, 7);
+      }
+
       const monthExpenses = appData.expenses.filter(e => e.date.startsWith(expenseFilterMonth));
       const monthTotal = monthExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
       const [fYear, fMonth] = expenseFilterMonth.split('-').map(Number);
@@ -339,8 +452,8 @@
 
         <div class="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between gap-3">
           <div>
-            <label class="text-[10px] font-semibold text-slate-400 block mb-1">Filter by Month</label>
-            <input type="month" value="${expenseFilterMonth}" onchange="onExpenseMonthChange(this.value)" class="text-xs p-2 rounded-lg border border-slate-200 outline-none focus:border-blue-500 bg-white">
+            <label class="text-[10px] font-semibold text-slate-400 block mb-1">Filter by Month (${currentYear})</label>
+            <input type="month" value="${expenseFilterMonth}" min="${currentYear}-01" max="${currentYear}-12" onchange="onExpenseMonthChange(this.value)" class="text-xs p-2 rounded-lg border border-slate-200 outline-none focus:border-blue-500 bg-white">
           </div>
           <div class="text-right">
             <p class="text-[10px] font-semibold text-slate-400 uppercase">${monthLabel} Total</p>
@@ -373,7 +486,9 @@
 
         <div class="space-y-2 mt-3">
           <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">${monthLabel} Expenses</h3>
-          ${monthExpenses.slice().reverse().map(e => renderExpenseRow(e, 'bg-white p-3 rounded-xl border border-slate-100 shadow-sm hover:bg-slate-50 transition')).join('')}
+          <!-- Sorted by date (newest first), NOT insertion order - a backdated manual
+               entry or an out-of-order calendar tap must never scramble the list. -->
+          ${monthExpenses.slice().sort((a, b) => b.date.localeCompare(a.date)).map(e => renderExpenseRow(e, 'bg-white p-3 rounded-xl border border-slate-100 shadow-sm hover:bg-slate-50 transition')).join('')}
           ${monthExpenses.length === 0 ? '<div class="text-center py-10 bg-white rounded-xl border border-dashed border-slate-200"><p class="text-xs text-slate-400">No expenses recorded for this month.</p></div>' : ''}
         </div>
       `;
@@ -381,6 +496,12 @@
 
     function onExpenseMonthChange(value) {
       if (!value) return;
+      const currentYear = currentYearStr();
+      if (!value.startsWith(currentYear)) {
+        alert(`Expenses only shows ${currentYear}. Head to the Compare tab to look at other years, or Restore Data in Settings if ${value.slice(0, 4)} isn't loaded locally.`);
+        navigate('expenses');
+        return;
+      }
       expenseFilterMonth = value;
       navigate('expenses');
     }
@@ -393,9 +514,21 @@
     function buildRecurringCalendarHtml(item, monthStr) {
       const [year, month] = monthStr.split('-').map(Number);
       const daysInMonth = new Date(year, month, 0).getDate();
+      const startDate = getItemStartDate(item);
       let html = '';
       for (let day = 1; day <= daysInMonth; day++) {
         const dateStr = `${monthStr}-${String(day).padStart(2, '0')}`;
+        // Item didn't exist yet on this day - show it as a non-interactive
+        // blank cell instead of a clickable button. Keeps the calendar grid
+        // aligned while making it obvious those days are simply off-limits.
+        if (dateStr < startDate) {
+          html += `
+            <div title="${item.name} was added on ${startDate} - nothing to log before that" class="aspect-square rounded-lg text-[11px] font-bold flex items-center justify-center border border-dashed border-slate-100 text-slate-300 bg-slate-50/50 cursor-not-allowed">
+              ${day}
+            </div>
+          `;
+          continue;
+        }
         const logged = appData.expenses.some(e => e.id === item.id + '_' + dateStr);
         const dayPrice = getEffectivePrice(item, dateStr);
         html += `
@@ -410,6 +543,11 @@
     function toggleRecurringDay(itemId, dateStr) {
       const item = appData.recurringItems.find(i => i.id === itemId);
       if (!item) return;
+
+      // Belt-and-suspenders: the calendar itself never renders a clickable
+      // button for days before the item's start date, but guard here too in
+      // case of stale/cached HTML.
+      if (dateStr < getItemStartDate(item)) return;
 
       const entryId = itemId + '_' + dateStr;
       const existingIdx = appData.expenses.findIndex(e => e.id === entryId);
@@ -477,6 +615,7 @@
                 </div>
                 <div class="flex items-center gap-1.5 shrink-0">
                   <button onclick="markItemComplete('${i.id}')" class="text-[10px] px-2.5 py-1.5 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-lg font-bold hover:bg-emerald-100 transition">Done</button>
+                  <button onclick="openDueItemForm(undefined, '${i.id}')" class="w-7 h-7 rounded-lg flex items-center justify-center text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition" title="Edit"><i class="fa-solid fa-pencil text-[11px]"></i></button>
                   <button onclick="deleteDueItem('${i.id}')" class="w-7 h-7 rounded-lg flex items-center justify-center text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition" title="Delete"><i class="fa-solid fa-trash text-[11px]"></i></button>
                 </div>
               </div>
@@ -505,6 +644,7 @@
               </div>
               <div class="flex items-center gap-1.5">
                 <button onclick="closeFormModal(); markItemComplete('${i.id}')" class="text-[10px] px-2 py-1 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-lg font-bold hover:bg-emerald-100 transition">Done</button>
+                <button onclick="closeFormModal(); openDueItemForm(undefined, '${i.id}')" class="w-6 h-6 rounded-lg flex items-center justify-center text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition" title="Edit"><i class="fa-solid fa-pencil text-[10px]"></i></button>
                 <button onclick="deleteDueItem('${i.id}'); checkExpiryStatus();" class="w-6 h-6 rounded-lg flex items-center justify-center text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition" title="Delete"><i class="fa-solid fa-trash text-[10px]"></i></button>
               </div>
             </div>
@@ -531,6 +671,18 @@
     // Modal Control
     function openQuickAddModal() { document.getElementById('quickAddModal').classList.remove('hidden'); }
     function closeQuickAddModal(e) { document.getElementById('quickAddModal').classList.add('hidden'); }
+
+    // Collapsible side drawer - currently just houses Settings (see the
+    // markup comment above the <aside>). Slides in via a transform, same
+    // show/hide-backdrop pattern as the other overlays in this app.
+    function openSideNav() {
+      document.getElementById('sideNavBackdrop').classList.remove('hidden');
+      document.getElementById('sideNav').classList.remove('-translate-x-full');
+    }
+    function closeSideNav() {
+      document.getElementById('sideNavBackdrop').classList.add('hidden');
+      document.getElementById('sideNav').classList.add('-translate-x-full');
+    }
     function closeFormModal() { document.getElementById('formModal').classList.add('hidden'); }
 
     // Logic: Expenses
@@ -568,6 +720,24 @@
             <label class="text-[11px] font-semibold text-slate-400">Date</label>
             <input type="date" required id="expDate" value="${getTodayStr()}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
           </div>
+          ${appData.familyMembers.length > 0 ? `
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Paid By (Optional)</label>
+              <select id="expPaidBy" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+                <option value="">-- Not specified --</option>
+                ${appData.familyMembers.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
+              </select>
+            </div>
+          ` : ''}
+          ${appData.tags.length > 0 ? `
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Tag (Optional)</label>
+              <select id="expTag" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+                <option value="">-- No tag --</option>
+                ${appData.tags.map(t => `<option value="${t.id}">${t.name}</option>`).join('')}
+              </select>
+            </div>
+          ` : ''}
           <div>
             <label class="text-[11px] font-semibold text-slate-400">Description / Note (Optional)</label>
             <input type="text" id="expNote" placeholder="e.g. Lunch, Fuel, Groceries" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
@@ -600,13 +770,20 @@
 
     function saveExpense(e) {
       e.preventDefault();
+      // The Paid By select only renders when there's at least one family
+      // member (see openExpenseForm) - null-safe read so this still works
+      // fine when it's absent from the DOM entirely.
+      const paidByEl = document.getElementById('expPaidBy');
+      const tagEl = document.getElementById('expTag');
       const newExp = {
         id: 'exp_' + Date.now(),
         amount: parseFloat(document.getElementById('expAmount').value),
         category: document.getElementById('expCategory').value,
         subCategory: document.getElementById('expSubCategory').value || null,
         date: document.getElementById('expDate').value,
-        note: document.getElementById('expNote').value
+        note: document.getElementById('expNote').value,
+        paidBy: (paidByEl && paidByEl.value) || null,
+        tag: (tagEl && tagEl.value) || null
       };
       appData.expenses.push(newExp);
       saveState();
@@ -615,66 +792,82 @@
     }
 
     // Logic: Due Items
-    function openDueItemForm(defaultType = 'Bill') {
+    // Shared by both "Add Item" and the pencil/Edit button on an existing
+    // item - pass an `editId` to pre-fill every field from that item and
+    // switch the form into update mode (see saveDueItem below). Handy for
+    // fixing a typo'd title, a wrong amount, or - the main reason this got
+    // added - correcting a recurring item's due date after the fact (e.g.
+    // the auto-calculated next date from a payment wasn't quite right and
+    // nobody caught it in the payment modal at the time).
+    function openDueItemForm(defaultType = 'Bill', editId = null) {
       const modal = document.getElementById('formModal');
       const content = document.getElementById('formModalContent');
       modal.classList.remove('hidden');
 
+      const existing = editId ? appData.items.find(i => i.id === editId) : null;
+      const type = existing ? existing.type : defaultType;
+      const recurrence = existing ? existing.recurrence : 'None';
+
       content.innerHTML = `
-        <h3 class="text-sm font-bold text-slate-800 mb-3">Add Reminder / Due Item</h3>
-        <form onsubmit="saveDueItem(event)" class="space-y-3">
+        <h3 class="text-sm font-bold text-slate-800 mb-3">${existing ? 'Edit' : 'Add'} Reminder / Due Item</h3>
+        <form onsubmit="saveDueItem(event, ${existing ? `'${editId}'` : 'null'})" class="space-y-3">
           <div>
             <label class="text-[11px] font-semibold text-slate-400">Title / Name</label>
-            <input type="text" required id="itemTitle" placeholder="e.g. Car Insurance, Electricity Bill" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            <input type="text" required id="itemTitle" value="${existing ? existing.title : ''}" placeholder="e.g. Car Insurance, Electricity Bill" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
           </div>
           <div class="grid grid-cols-2 gap-2">
             <div>
               <label class="text-[11px] font-semibold text-slate-400">Type</label>
               <select id="itemType" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
-                <option value="Bill" ${defaultType==='Bill'?'selected':''}>Bill</option>
-                <option value="Subscription" ${defaultType==='Subscription'?'selected':''}>Subscription</option>
-                <option value="Document" ${defaultType==='Document'?'selected':''}>Document</option>
-                <option value="Warranty">Warranty</option>
+                <option value="Bill" ${type === 'Bill' ? 'selected' : ''}>Bill</option>
+                <option value="Subscription" ${type === 'Subscription' ? 'selected' : ''}>Subscription</option>
+                <option value="Document" ${type === 'Document' ? 'selected' : ''}>Document</option>
+                <option value="Warranty" ${type === 'Warranty' ? 'selected' : ''}>Warranty</option>
               </select>
             </div>
             <div>
               <label class="text-[11px] font-semibold text-slate-400">Amount (Optional)</label>
-              <input type="number" id="itemAmount" placeholder="₹0" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+              <input type="number" id="itemAmount" value="${existing && existing.amount != null ? existing.amount : ''}" placeholder="₹0" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
             </div>
           </div>
           <div>
             <label class="text-[11px] font-semibold text-slate-400">Due / Expiry Date</label>
-            <input type="date" required id="itemDueDate" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+            <input type="date" required id="itemDueDate" value="${existing ? existing.dueDate : ''}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
           </div>
           <div>
             <label class="text-[11px] font-semibold text-slate-400">Recurrence</label>
             <select id="itemRecurrence" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
-              <option value="None">None (One time)</option>
-              <option value="Monthly">Monthly</option>
-              <option value="Quarterly">Every 3 Months</option>
-              <option value="Yearly">Yearly</option>
+              <option value="None" ${recurrence === 'None' ? 'selected' : ''}>None (One time)</option>
+              <option value="Monthly" ${recurrence === 'Monthly' ? 'selected' : ''}>Monthly</option>
+              <option value="Quarterly" ${recurrence === 'Quarterly' ? 'selected' : ''}>Every 3 Months</option>
+              <option value="Yearly" ${recurrence === 'Yearly' ? 'selected' : ''}>Yearly</option>
             </select>
           </div>
           <div class="flex gap-2 pt-2">
             <button type="button" onclick="closeFormModal()" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
-            <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Save Item</button>
+            <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">${existing ? 'Save Changes' : 'Save Item'}</button>
           </div>
         </form>
       `;
     }
 
-    function saveDueItem(e) {
+    function saveDueItem(e, editId) {
       e.preventDefault();
-      const newItem = {
-        id: 'item_' + Date.now(),
+      const fields = {
         title: document.getElementById('itemTitle').value,
         type: document.getElementById('itemType').value,
         amount: document.getElementById('itemAmount').value ? parseFloat(document.getElementById('itemAmount').value) : null,
         dueDate: document.getElementById('itemDueDate').value,
-        recurrence: document.getElementById('itemRecurrence').value,
-        completed: false
+        recurrence: document.getElementById('itemRecurrence').value
       };
-      appData.items.push(newItem);
+
+      if (editId) {
+        const item = appData.items.find(i => i.id === editId);
+        if (item) Object.assign(item, fields);
+      } else {
+        appData.items.push({ id: 'item_' + Date.now(), completed: false, ...fields });
+      }
+
       saveState();
       closeFormModal();
       navigate(currentTab);
@@ -684,29 +877,115 @@
       const item = appData.items.find(i => i.id === id);
       if (!item) return;
 
-      if (item.amount && confirm(`Add ₹${item.amount} payment to your Expense Log?`)) {
-        appData.expenses.push({
-          id: 'exp_' + Date.now(),
-          amount: item.amount,
-          category: item.type === 'Subscription' ? 'Entertainment' : 'Bills',
-          subCategory: item.title,
-          date: getTodayStr(),
-          note: item.title + ' payment'
-        });
+      // Only a real payment (item has an amount) needs the "who paid"
+      // question - a plain reminder/document with no amount just gets
+      // advanced/completed immediately, same as before.
+      if (item.amount) {
+        openDueItemPaymentModal(id);
+        return;
       }
 
+      advanceOrCompleteDueItem(item);
+      saveState();
+      navigate(currentTab);
+    }
+
+    // Small confirmation step before logging a due item's payment as an
+    // expense - lets the user optionally tag who actually paid it (same
+    // "Paid By" concept as the regular Add Expense form) AND, for recurring
+    // items, review/edit the auto-calculated next due date before it's
+    // locked in. Skipped entirely for items with no amount (see
+    // markItemComplete above).
+    function openDueItemPaymentModal(id) {
+      const item = appData.items.find(i => i.id === id);
+      if (!item) return;
+
+      const modal = document.getElementById('formModal');
+      const content = document.getElementById('formModalContent');
+      modal.classList.remove('hidden');
+
+      const isRecurring = item.recurrence && item.recurrence !== 'None';
+      const suggestedNextDate = isRecurring ? calculateNextRecurrenceDate(item.dueDate, item.recurrence) : null;
+
+      content.innerHTML = `
+        <h3 class="text-sm font-bold text-slate-800 mb-1">Log Payment: ${item.title}</h3>
+        <p class="text-[11px] text-slate-400 mb-3">This adds ₹${Number(item.amount).toLocaleString()} to your Expense Log.</p>
+        <form onsubmit="confirmDueItemPayment(event, '${id}')" class="space-y-3">
+          ${isRecurring ? `
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Next Due Date</label>
+              <input type="date" id="dueItemNextDate" value="${suggestedNextDate}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+              <p class="text-[9px] text-slate-400 mt-1">Defaults to ${item.dueDate} + ${item.recurrence.toLowerCase()} - change it if the real next due date is different, or leave it as-is.</p>
+            </div>
+          ` : '<p class="text-[10px] text-slate-400">This is a one-time item - it will be marked completed after logging.</p>'}
+          ${appData.familyMembers.length > 0 ? `
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Paid By (Optional)</label>
+              <select id="dueItemPaidBy" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+                <option value="">-- Not specified --</option>
+                ${appData.familyMembers.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
+              </select>
+            </div>
+          ` : '<p class="text-[10px] text-slate-400">Add family members in Settings to track who paid this.</p>'}
+          <div class="flex gap-2 pt-2">
+            <button type="button" onclick="closeFormModal()" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
+            <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Log Payment</button>
+          </div>
+        </form>
+      `;
+    }
+
+    function confirmDueItemPayment(e, id) {
+      e.preventDefault();
+      const item = appData.items.find(i => i.id === id);
+      if (!item) { closeFormModal(); return; }
+
+      const paidByEl = document.getElementById('dueItemPaidBy');
+      const nextDateEl = document.getElementById('dueItemNextDate');
+      appData.expenses.push({
+        id: 'exp_' + Date.now(),
+        amount: item.amount,
+        category: item.type === 'Subscription' ? 'Entertainment' : 'Bills',
+        subCategory: item.title,
+        date: getTodayStr(),
+        note: item.title + ' payment',
+        paidBy: (paidByEl && paidByEl.value) || null
+      });
+
+      // Empty/missing field (user cleared it, or it's a one-time item that
+      // never had the field at all) falls back to the auto-calculated date -
+      // only an explicit non-empty value overrides it.
+      advanceOrCompleteDueItem(item, nextDateEl && nextDateEl.value);
+      saveState();
+      closeFormModal();
+      navigate(currentTab);
+    }
+
+    // Pure date math: what's the next due date after `dueDate`, given a
+    // recurrence interval. Pulled out on its own so openDueItemPaymentModal
+    // can use it to PRE-FILL an editable field instead of the next date just
+    // being silently decided with no way to correct it (e.g. paid a few
+    // days early/late, or the real next bill date doesn't land exactly on
+    // the interval).
+    function calculateNextRecurrenceDate(dueDate, recurrence) {
+      const nextDate = new Date(dueDate);
+      if (recurrence === 'Monthly') nextDate.setMonth(nextDate.getMonth() + 1);
+      else if (recurrence === 'Quarterly') nextDate.setMonth(nextDate.getMonth() + 3);
+      else if (recurrence === 'Yearly') nextDate.setFullYear(nextDate.getFullYear() + 1);
+      return formatDateLocal(nextDate);
+    }
+
+    // Shared "what happens to the due item ITSELF after a payment was
+    // logged (or skipped, for amount-less items)" step - advances a
+    // recurring item's due date (to `explicitNextDate` if one was given, e.g.
+    // from the payment modal's editable field, else auto-calculated from the
+    // interval), or marks a one-off item complete.
+    function advanceOrCompleteDueItem(item, explicitNextDate) {
       if (item.recurrence && item.recurrence !== 'None') {
-        const nextDate = new Date(item.dueDate);
-        if (item.recurrence === 'Monthly') nextDate.setMonth(nextDate.getMonth() + 1);
-        else if (item.recurrence === 'Quarterly') nextDate.setMonth(nextDate.getMonth() + 3);
-        else if (item.recurrence === 'Yearly') nextDate.setFullYear(nextDate.getFullYear() + 1);
-        item.dueDate = formatDateLocal(nextDate);
+        item.dueDate = explicitNextDate || calculateNextRecurrenceDate(item.dueDate, item.recurrence);
       } else {
         item.completed = true;
       }
-
-      saveState();
-      navigate(currentTab);
     }
 
     function deleteDueItem(id) {
@@ -719,13 +998,356 @@
       navigate(currentTab);
     }
 
+    // --- Reports View (tag-based) ---------------------------------------
+    // Opened via the Quick Add (+) sheet, not a bottom-nav tab - same
+    // pattern Settings uses (see TAB_DISPLAY_NAMES.reports in
+    // js/data-model.js for the breadcrumb, and VALID_TABS in js/storage.js
+    // so a reload resumes here). Picks exactly ONE tag at a time - an
+    // expense can only ever carry one (see saveExpense) - and shows every
+    // expense filed under it: a grand total, a category-wise breakdown,
+    // and the raw list, reusing renderExpenseRow so a single expense's
+    // markup never drifts out of sync with Home/Expenses.
+    let reportSelectedTagId = null;
+
+    function renderReports(container) {
+      // Default to the first tag (or fall back to it if the previously
+      // selected one got deleted in Settings) - avoids a pointless "pick a
+      // tag" step when there's only one obvious choice.
+      if (reportSelectedTagId && !appData.tags.some(t => t.id === reportSelectedTagId)) {
+        reportSelectedTagId = null;
+      }
+      if (!reportSelectedTagId && appData.tags.length > 0) {
+        reportSelectedTagId = appData.tags[0].id;
+      }
+
+      if (appData.tags.length === 0) {
+        container.innerHTML = `
+          <h2 class="text-sm font-bold text-slate-800 mb-3">Reports</h2>
+          <div class="bg-white p-6 rounded-2xl border border-dashed border-slate-200 text-center space-y-2">
+            <i class="fa-solid fa-tag text-2xl text-slate-300"></i>
+            <p class="text-xs text-slate-400">No tags yet. Add one in Settings (e.g. "Trip-Goa"), tag an expense with it, and its report will show up here.</p>
+            <button onclick="navigate('settings')" class="text-xs font-semibold text-blue-600 hover:text-blue-700">Go to Settings &rarr;</button>
+          </div>
+        `;
+        return;
+      }
+
+      const tagExpenses = appData.expenses.filter(e => e.tag === reportSelectedTagId);
+      const total = tagExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+
+      // Category-wise breakdown, biggest spend first.
+      const byCategory = {};
+      tagExpenses.forEach(e => {
+        byCategory[e.category] = (byCategory[e.category] || 0) + Number(e.amount);
+      });
+      const categoryRows = Object.entries(byCategory).sort((a, b) => b[1] - a[1]);
+
+      container.innerHTML = `
+        <h2 class="text-sm font-bold text-slate-800 mb-3">Reports</h2>
+
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-2 mb-4">
+          <label class="text-[11px] font-semibold text-slate-400">Tag</label>
+          <select id="reportTagSelect" onchange="selectReportTag(this.value)" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+            ${appData.tags.map(t => `<option value="${t.id}" ${t.id === reportSelectedTagId ? 'selected' : ''}>${t.name}</option>`).join('')}
+          </select>
+        </div>
+
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm text-center mb-4">
+          <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Total under "${getTagName(reportSelectedTagId)}"</p>
+          <p class="text-2xl font-bold text-slate-800 mt-1">₹${total.toLocaleString()}</p>
+          <p class="text-[10px] text-slate-400 mt-1">${tagExpenses.length} expense${tagExpenses.length === 1 ? '' : 's'}</p>
+        </div>
+
+        <div class="space-y-2 mb-4">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">By Category</h3>
+          <div class="bg-white rounded-2xl border border-slate-100 divide-y divide-slate-50 overflow-hidden shadow-xs">
+            ${categoryRows.map(([cat, amt]) => `
+              <div class="p-3 flex items-center justify-between gap-2">
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs font-bold text-slate-800 truncate">${cat}</p>
+                  <div class="w-full h-1.5 rounded-full bg-slate-100 overflow-hidden mt-1">
+                    <div class="h-full bg-blue-500 rounded-full" style="width: ${total > 0 ? Math.round((amt / total) * 100) : 0}%"></div>
+                  </div>
+                </div>
+                <p class="text-xs font-bold text-slate-800 shrink-0">₹${amt.toLocaleString()}</p>
+              </div>
+            `).join('')}
+            ${categoryRows.length === 0 ? '<p class="text-xs text-slate-400 text-center py-4">No expenses under this tag yet.</p>' : ''}
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">All Expenses</h3>
+          <div class="bg-white rounded-2xl border border-slate-100 divide-y divide-slate-50 overflow-y-auto hide-scrollbar shadow-xs" style="max-height: 420px;">
+            ${tagExpenses.slice().sort((a, b) => b.date.localeCompare(a.date)).map(e => renderExpenseRow(e, 'p-3')).join('')}
+            ${tagExpenses.length === 0 ? '<p class="text-xs text-slate-400 text-center py-4">No expenses under this tag yet.</p>' : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    function selectReportTag(tagId) {
+      reportSelectedTagId = tagId;
+      renderReports(document.getElementById('mainContainer'));
+    }
+
+    // --- Fuel Log View ----------------------------------------------------
+    // Opened via the Quick Add (+) sheet, same pattern as Reports (not a
+    // bottom-nav tab - see TAB_DISPLAY_NAMES.fuel / VALID_TABS). Each entry
+    // is a self-contained mileage record - see the `fuelLogs` shape comment
+    // in js/data-model.js for the full reasoning, and computeFuelKmRun/
+    // computeFuelMileage there for the actual math this view just displays.
+    // No vehicle filter here by design - the list just shows everything;
+    // vehicle is only picked when adding/editing a fill-up (see
+    // openFuelForm), same spirit as Reports not needing a category filter.
+    const FUEL_TYPE_BADGE = {
+      Petrol: 'bg-orange-500/10 text-orange-600',
+      Diesel: 'bg-slate-500/10 text-slate-600',
+      Gas: 'bg-emerald-500/10 text-emerald-600'
+    };
+
+    function renderFuel(container) {
+      const sorted = appData.fuelLogs.slice().sort((a, b) => b.date.localeCompare(a.date));
+
+      container.innerHTML = `
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-bold text-slate-800">Fuel Log</h2>
+          <button onclick="openFuelForm()" class="px-3 py-1.5 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition">+ Add Fill-up</button>
+        </div>
+
+        <div class="space-y-2">
+          ${sorted.map(f => renderFuelRow(f)).join('')}
+          ${sorted.length === 0 ? '<p class="text-xs text-slate-400 text-center py-6">No fill-ups logged yet.</p>' : ''}
+        </div>
+      `;
+    }
+
+    function renderFuelRow(f) {
+      const kmRun = computeFuelKmRun(f);
+      const mileage = computeFuelMileage(f);
+      const badge = FUEL_TYPE_BADGE[f.fuelType] || 'bg-slate-500/10 text-slate-600';
+      return `
+        <div class="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm space-y-2">
+          <div class="flex items-center justify-between gap-2">
+            <div class="min-w-0">
+              <div class="flex items-center gap-1.5">
+                <span class="px-2 py-0.5 rounded-full text-[9px] font-bold ${badge}">${f.fuelType}</span>
+                ${f.vehicleId ? `<span class="text-[10px] text-slate-400">${getVehicleNumber(f.vehicleId)}</span>` : ''}
+              </div>
+              <p class="text-[10px] text-slate-400 mt-1">${f.date}${f.paidBy ? ' &bull; Paid by ' + getFamilyMemberName(f.paidBy) : ''}</p>
+            </div>
+            <div class="flex items-center gap-1 shrink-0">
+              <button onclick="openFuelForm('${f.id}')" class="w-6 h-6 rounded-full flex items-center justify-center text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition" title="Edit"><i class="fa-solid fa-pen text-[11px]"></i></button>
+              <button onclick="deleteFuelLog('${f.id}')" class="w-6 h-6 rounded-full flex items-center justify-center text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition" title="Delete"><i class="fa-solid fa-trash text-[11px]"></i></button>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-[11px]">
+            <div class="p-2 rounded-xl bg-slate-50">
+              <p class="text-slate-400">Start &rarr; End KM</p>
+              <p class="font-bold text-slate-800">${f.startKm.toLocaleString()} &rarr; ${f.endKm !== null && f.endKm !== undefined ? f.endKm.toLocaleString() : 'Pending'}</p>
+            </div>
+            <div class="p-2 rounded-xl bg-slate-50">
+              <p class="text-slate-400">KM Run / Mileage</p>
+              <p class="font-bold text-slate-800">${kmRun !== null ? kmRun.toLocaleString() + ' km' : '-'} ${mileage !== null ? ' &bull; ' + mileage + ' km/L' : ''}</p>
+            </div>
+          </div>
+          <div class="flex items-center justify-between text-[11px] pt-1 border-t border-slate-50">
+            <span class="text-slate-400">₹${Number(f.pricePerLiter).toLocaleString()}/L &bull; ${f.liters}L</span>
+            <span class="font-bold text-slate-800">₹${Number(f.amount).toLocaleString()}</span>
+          </div>
+          <button onclick="openUpdateEndKmForm('${f.id}')" class="w-full py-2 text-[11px] font-semibold text-blue-600 hover:text-blue-700 bg-blue-50 rounded-xl transition">
+            ${f.endKm !== null && f.endKm !== undefined ? 'Update End KM' : '+ Set End KM (next fill-up)'}
+          </button>
+        </div>
+      `;
+    }
+
+    function openFuelForm(editId = null) {
+      const modal = document.getElementById('formModal');
+      const content = document.getElementById('formModalContent');
+      modal.classList.remove('hidden');
+
+      const existing = editId ? appData.fuelLogs.find(f => f.id === editId) : null;
+
+      content.innerHTML = `
+        <h3 class="text-sm font-bold text-slate-800 mb-3">${existing ? 'Edit' : 'Add'} Fill-up</h3>
+        <form onsubmit="saveFuelLog(event, ${existing ? `'${editId}'` : 'null'})" class="space-y-3">
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Fuel Type</label>
+              <select id="fuelType" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+                <option value="Petrol" ${existing && existing.fuelType === 'Petrol' ? 'selected' : ''}>Petrol</option>
+                <option value="Diesel" ${existing && existing.fuelType === 'Diesel' ? 'selected' : ''}>Diesel</option>
+                <option value="Gas" ${existing && existing.fuelType === 'Gas' ? 'selected' : ''}>Gas</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Date</label>
+              <input type="date" required id="fuelDate" value="${existing ? existing.date : getTodayStr()}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+            </div>
+          </div>
+          <div>
+            <label class="text-[11px] font-semibold text-slate-400">Vehicle</label>
+            ${appData.vehicles.length > 0 ? `
+              <select id="fuelVehicle" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+                <option value="">-- Not specified --</option>
+                ${appData.vehicles.map(v => `<option value="${v.id}" ${existing && existing.vehicleId === v.id ? 'selected' : ''}>${v.number}</option>`).join('')}
+              </select>
+            ` : `
+              <select id="fuelVehicle" disabled class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none bg-slate-50 text-slate-400">
+                <option value="">No vehicles configured yet</option>
+              </select>
+              <button type="button" onclick="closeFormModal(); navigate('settings')" class="text-[10px] font-semibold text-blue-600 hover:text-blue-700 mt-1">+ Add a vehicle in Settings &rarr;</button>
+            `}
+          </div>
+          <div>
+            <label class="text-[11px] font-semibold text-slate-400">Start KM (odometer now)</label>
+            <input type="number" required id="fuelStartKm" step="any" value="${existing ? existing.startKm : ''}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Price / Liter (₹)</label>
+              <input type="number" required id="fuelPrice" step="any" oninput="updateFuelLitersPreview()" value="${existing ? existing.pricePerLiter : ''}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            </div>
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Amount Paid (₹)</label>
+              <input type="number" required id="fuelAmount" step="any" oninput="updateFuelLitersPreview()" value="${existing ? existing.amount : ''}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            </div>
+          </div>
+          <p class="text-[11px] text-slate-400">Liters filled: <span id="fuelLitersPreview" class="font-bold text-slate-700">${existing ? existing.liters : '0'}</span> L (auto-calculated)</p>
+          ${appData.familyMembers.length > 0 ? `
+            <div>
+              <label class="text-[11px] font-semibold text-slate-400">Paid By (Optional)</label>
+              <select id="fuelPaidBy" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+                <option value="">-- Not specified --</option>
+                ${appData.familyMembers.map(m => `<option value="${m.id}" ${existing && existing.paidBy === m.id ? 'selected' : ''}>${m.name}</option>`).join('')}
+              </select>
+            </div>
+          ` : ''}
+          ${!existing ? '<p class="text-[10px] text-slate-400">This will also log a Transport &raquo; Fuel expense right away.</p>' : '<p class="text-[10px] text-slate-400">Editing here only updates this fuel log entry - the expense already logged for it stays untouched, same as everywhere else in the app.</p>'}
+          <div class="flex gap-2 pt-2">
+            <button type="button" onclick="closeFormModal()" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
+            <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Save</button>
+          </div>
+        </form>
+      `;
+    }
+
+    function updateFuelLitersPreview() {
+      const price = document.getElementById('fuelPrice').value;
+      const amount = document.getElementById('fuelAmount').value;
+      document.getElementById('fuelLitersPreview').textContent = computeFuelLiters(amount, price);
+    }
+
+    function saveFuelLog(e, editId) {
+      e.preventDefault();
+      const vehicleEl = document.getElementById('fuelVehicle');
+      const paidByEl = document.getElementById('fuelPaidBy');
+      const pricePerLiter = parseFloat(document.getElementById('fuelPrice').value);
+      const amount = parseFloat(document.getElementById('fuelAmount').value);
+      const liters = computeFuelLiters(amount, pricePerLiter);
+      const fuelType = document.getElementById('fuelType').value;
+      const date = document.getElementById('fuelDate').value;
+      const vehicleId = (vehicleEl && vehicleEl.value) || null;
+      const paidBy = (paidByEl && paidByEl.value) || null;
+      const startKm = parseFloat(document.getElementById('fuelStartKm').value);
+
+      if (editId) {
+        // Editing never touches endKm or expenseId - only openUpdateEndKmForm
+        // owns endKm, and the linked expense is a permanent snapshot (see
+        // the comment above the form's submit button).
+        const entry = appData.fuelLogs.find(f => f.id === editId);
+        if (!entry) return;
+        Object.assign(entry, { fuelType, date, vehicleId, startKm, pricePerLiter, amount, liters, paidBy });
+      } else {
+        const newEntry = {
+          id: 'fuel_' + Date.now(),
+          fuelType, date, vehicleId, startKm, pricePerLiter, amount, liters, paidBy,
+          endKm: null,
+          expenseId: null
+        };
+
+        // Auto-log the matching expense immediately (Transport > Fuel), per
+        // the same "just log it, don't ask" flow the rest of the app uses
+        // for anything with a real cost - see saveExpense for the sibling
+        // pattern this mirrors field-for-field.
+        const newExp = {
+          id: 'exp_' + Date.now(),
+          amount,
+          category: 'Transport',
+          subCategory: 'Fuel',
+          date,
+          note: `${fuelType} fill-up${vehicleId ? ' - ' + getVehicleNumber(vehicleId) : ''}`,
+          paidBy,
+          tag: null
+        };
+        appData.expenses.push(newExp);
+        newEntry.expenseId = newExp.id;
+        appData.fuelLogs.push(newEntry);
+      }
+
+      saveState();
+      closeFormModal();
+      navigate(currentTab);
+    }
+
+    function openUpdateEndKmForm(id) {
+      const entry = appData.fuelLogs.find(f => f.id === id);
+      if (!entry) return;
+
+      const modal = document.getElementById('formModal');
+      const content = document.getElementById('formModalContent');
+      modal.classList.remove('hidden');
+
+      content.innerHTML = `
+        <h3 class="text-sm font-bold text-slate-800 mb-1">Update End KM</h3>
+        <p class="text-[11px] text-slate-400 mb-3">Odometer reading at your NEXT fill-up for this entry (started at ${entry.startKm.toLocaleString()} km on ${entry.date}). This closes out the distance/mileage for this fill-up.</p>
+        <form onsubmit="saveEndKm(event, '${id}')" class="space-y-3">
+          <div>
+            <label class="text-[11px] font-semibold text-slate-400">End KM</label>
+            <input type="number" required id="fuelEndKm" step="any" value="${entry.endKm !== null && entry.endKm !== undefined ? entry.endKm : ''}" class="w-full text-base font-bold p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+          </div>
+          <div class="flex gap-2 pt-2">
+            <button type="button" onclick="closeFormModal()" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
+            <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Save</button>
+          </div>
+        </form>
+      `;
+    }
+
+    function saveEndKm(e, id) {
+      e.preventDefault();
+      const entry = appData.fuelLogs.find(f => f.id === id);
+      if (!entry) return;
+
+      const endKm = parseFloat(document.getElementById('fuelEndKm').value);
+      if (endKm <= entry.startKm) {
+        alert(`End KM must be greater than the Start KM (${entry.startKm.toLocaleString()}).`);
+        return;
+      }
+
+      entry.endKm = endKm;
+      saveState();
+      closeFormModal();
+      navigate(currentTab);
+    }
+
+    function deleteFuelLog(id) {
+      const entry = appData.fuelLogs.find(f => f.id === id);
+      if (!entry) return;
+      if (!confirm(`Delete this fuel log entry (${entry.date})? The Transport \u203a Fuel expense already logged for it will NOT be deleted - same "delete never rewrites history" rule as everywhere else.`)) return;
+
+      appData.fuelLogs = appData.fuelLogs.filter(f => f.id !== id);
+      saveState();
+      navigate(currentTab);
+    }
+
     // --- Settings / Google Drive View ---
     let selectedCategoryForSub = null;
 
     function renderSettings(container) {
-      const savedClientId = localStorage.getItem(G_CLIENT_ID_KEY) || '';
-      const savedFolder = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
       const isConnected = !!gdriveToken;
+      const isDriveConfigured = isGoogleDriveConfigured();
       const categoryNames = Object.keys(appData.categories);
       const activeSubCategoryName = categoryNames.includes(selectedCategoryForSub) ? selectedCategoryForSub : categoryNames[0];
       const activeSubCategoryList = activeSubCategoryName ? (appData.categories[activeSubCategoryName] || []) : [];
@@ -746,7 +1368,7 @@
                 <div class="flex items-center justify-between">
                   <div>
                     <p class="text-xs font-bold text-slate-800">${item.name}</p>
-                    <p class="text-[10px] text-slate-400">${item.category}${item.subCategory ? ' &raquo; ' + item.subCategory : ''} &bull; ₹${Number(getEffectivePrice(item)).toLocaleString()}/day today</p>
+                    <p class="text-[10px] text-slate-400">${item.category}${item.subCategory ? ' &raquo; ' + item.subCategory : ''} &bull; ₹${Number(getEffectivePrice(item)).toLocaleString()}/day today &bull; started ${getItemStartDate(item)}</p>
                   </div>
                   <button onclick="deleteRecurringItem('${item.id}')" class="text-rose-500 hover:text-rose-600 px-2"><i class="fa-solid fa-trash text-xs"></i></button>
                 </div>
@@ -776,8 +1398,82 @@
               </select>
               <input type="number" step="any" required id="newRecurringPrice" placeholder="Price/day (₹)" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
             </div>
+            <div>
+              <label class="text-[10px] font-semibold text-slate-400">Start Date</label>
+              <input type="date" required id="newRecurringStartDate" value="${getTodayStr()}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+              <p class="text-[9px] text-slate-400 mt-1">Its calendar will only allow logging on/after this date.</p>
+            </div>
             <button type="submit" class="w-full py-2 bg-slate-800 text-white rounded-xl text-xs font-medium hover:bg-slate-700 transition">+ Add Recurring Item</button>
           </form>
+        </div>
+
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3 mb-4">
+          <div class="flex items-center gap-2 mb-1">
+            <i class="fa-solid fa-people-roof text-blue-400"></i>
+            <h3 class="font-bold text-slate-800 text-sm">Family Members</h3>
+          </div>
+          <p class="text-[10px] text-slate-400 -mt-2">Optional "Paid By" tag you can attach to an expense or a due-item payment - handy for tracking who actually paid what. Deleting someone only hides them from new entries - past expenses keep showing their name.</p>
+
+          <div class="flex flex-wrap gap-2">
+            ${appData.familyMembers.map(m => `
+              <span class="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
+                ${m.name}
+                <button onclick="deleteFamilyMember('${m.id}')" class="w-4 h-4 rounded-full bg-slate-200 hover:bg-rose-500 hover:text-white text-slate-500 flex items-center justify-center text-[9px] transition"><i class="fa-solid fa-xmark"></i></button>
+              </span>
+            `).join('')}
+            ${appData.familyMembers.length === 0 ? '<p class="text-[11px] text-slate-400">No family members added yet.</p>' : ''}
+          </div>
+
+          <div class="flex gap-2 pt-1">
+            <input type="text" id="newFamilyMemberName" placeholder="e.g. Mom, Dad, Priya" class="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            <button onclick="addFamilyMember()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition">Add</button>
+          </div>
+        </div>
+
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3 mb-4">
+          <div class="flex items-center gap-2 mb-1">
+            <i class="fa-solid fa-car text-blue-400"></i>
+            <h3 class="font-bold text-slate-800 text-sm">Vehicles</h3>
+          </div>
+          <p class="text-[10px] text-slate-400 -mt-2">Optional vehicle number for Fuel Log entries (tap the + button → Fuel Log). Deleting a vehicle only hides it from new fill-ups - past fuel entries keep showing its number.</p>
+
+          <div class="flex flex-wrap gap-2">
+            ${appData.vehicles.map(v => `
+              <span class="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
+                ${v.number}
+                <button onclick="deleteVehicle('${v.id}')" class="w-4 h-4 rounded-full bg-slate-200 hover:bg-rose-500 hover:text-white text-slate-500 flex items-center justify-center text-[9px] transition"><i class="fa-solid fa-xmark"></i></button>
+              </span>
+            `).join('')}
+            ${appData.vehicles.length === 0 ? '<p class="text-[11px] text-slate-400">No vehicles added yet.</p>' : ''}
+          </div>
+
+          <div class="flex gap-2 pt-1">
+            <input type="text" id="newVehicleNumber" placeholder="e.g. KA-05-MN-1234" class="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            <button onclick="addVehicle()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition">Add</button>
+          </div>
+        </div>
+
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3 mb-4">
+          <div class="flex items-center gap-2 mb-1">
+            <i class="fa-solid fa-tag text-blue-400"></i>
+            <h3 class="font-bold text-slate-800 text-sm">Tags (Projects / Trips)</h3>
+          </div>
+          <p class="text-[10px] text-slate-400 -mt-2">Optional single tag you can attach to an expense - e.g. "Trip-Goa" - so you can pull up its total spend in Reports (tap the + button). Deleting a tag only hides it from new entries - past expenses keep showing it.</p>
+
+          <div class="flex flex-wrap gap-2">
+            ${appData.tags.map(t => `
+              <span class="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
+                ${t.name}
+                <button onclick="deleteTag('${t.id}')" class="w-4 h-4 rounded-full bg-slate-200 hover:bg-rose-500 hover:text-white text-slate-500 flex items-center justify-center text-[9px] transition"><i class="fa-solid fa-xmark"></i></button>
+              </span>
+            `).join('')}
+            ${appData.tags.length === 0 ? '<p class="text-[11px] text-slate-400">No tags added yet.</p>' : ''}
+          </div>
+
+          <div class="flex gap-2 pt-1">
+            <input type="text" id="newTagName" placeholder="e.g. Trip-Goa" class="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            <button onclick="addTag()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition">Add</button>
+          </div>
         </div>
 
         <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3 mb-4">
@@ -833,43 +1529,86 @@
           `}
         </div>
         
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3 mb-4">
+          <div class="flex items-center gap-2 mb-1">
+            <i class="fa-solid fa-wallet text-blue-400"></i>
+            <h3 class="font-bold text-slate-800 text-sm">Monthly Budget</h3>
+          </div>
+          <p class="text-[10px] text-slate-400 -mt-2">The global budget applies to every month unless that month has its own override below. Home shows a color-coded progress bar against whichever one applies to the current month.</p>
+
+          <div>
+            <label class="text-[10px] font-semibold text-slate-400 block mb-1">Global Monthly Budget (₹)</label>
+            <div class="flex gap-2">
+              <input type="number" step="any" min="0" id="globalBudgetInput" value="${appData.budgets.global || ''}" placeholder="e.g. 30000" class="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+              <button onclick="saveGlobalBudget()" class="px-4 py-2 bg-slate-800 text-white rounded-xl text-xs font-semibold hover:bg-slate-700 transition">Save</button>
+            </div>
+          </div>
+
+          <div class="w-full h-px bg-slate-100 my-1"></div>
+
+          <div>
+            <label class="text-[10px] font-semibold text-slate-400 block mb-1">Override the Running or a Future Month</label>
+            <p class="text-[9px] text-slate-400 -mt-0.5 mb-1.5">Past months are locked once they end - see the &#128274; chips below.</p>
+            <div class="flex gap-2">
+              <input type="month" id="budgetOverrideMonth" min="${getTodayStr().slice(0, 7)}" value="${getTodayStr().slice(0, 7)}" class="text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+              <input type="number" step="any" min="0" id="budgetOverrideAmount" placeholder="₹ amount" class="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+              <button onclick="saveMonthlyBudgetOverride()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition">Set</button>
+            </div>
+          </div>
+
+          ${Object.keys(appData.budgets.monthly || {}).length > 0 ? `
+            <div class="flex flex-wrap gap-2 pt-1">
+              ${Object.entries(appData.budgets.monthly).sort((a, b) => b[0].localeCompare(a[0])).map(([month, amount]) => isBudgetMonthEditable(month) ? `
+                <span class="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
+                  ${month}: ₹${Number(amount).toLocaleString()}
+                  <button onclick="deleteMonthlyBudgetOverride('${month}')" class="w-4 h-4 rounded-full bg-slate-200 hover:bg-rose-500 hover:text-white text-slate-500 flex items-center justify-center text-[9px] transition"><i class="fa-solid fa-xmark"></i></button>
+                </span>
+              ` : `
+                <span title="Past months are locked and can't be changed." class="flex items-center gap-1.5 pl-3 pr-2.5 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-[11px] font-semibold text-slate-400">
+                  <i class="fa-solid fa-lock text-[9px]"></i> ${month}: ₹${Number(amount).toLocaleString()}
+                </span>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+
         <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-4">
           <div class="flex items-center gap-2 mb-2">
             <i class="fa-brands fa-google-drive text-amber-500 text-lg"></i>
             <h3 class="font-bold text-slate-800 text-sm">Google Drive Sync</h3>
           </div>
-          
-          <div>
-            <label class="block text-[11px] font-semibold text-slate-400 mb-1">Google OAuth Client ID</label>
-            <input type="text" id="settingClientId" value="${savedClientId}" placeholder="xxxx.apps.googleusercontent.com" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+
+          <div class="flex items-center justify-between text-[11px] bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
+            <span class="text-slate-400 font-semibold">Backup folder</span>
+            <span class="text-slate-700 font-bold">${GOOGLE_DRIVE_BACKUP_FOLDER_NAME}</span>
           </div>
 
-          <div>
-            <label class="block text-[11px] font-semibold text-slate-400 mb-1">Backup Folder Name</label>
-            <input type="text" id="settingFolder" value="${savedFolder}" placeholder="Life Tracker Sync" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
-            <p class="text-[9px] text-slate-400 mt-1">Data will reside here in your Google Drive.</p>
-          </div>
-
-          <div class="flex gap-2">
-            <button onclick="saveDriveSettings()" class="flex-1 py-2 bg-slate-800 text-white rounded-xl text-xs font-medium hover:bg-slate-700 transition">Save Config</button>
-            
-            ${isConnected 
-              ? `<button onclick="disconnectDrive()" class="flex-1 py-2 border border-rose-200 rounded-xl text-xs font-semibold text-rose-600 flex items-center justify-center gap-2 hover:bg-rose-50 transition">
-                  <i class="fa-solid fa-link-slash"></i> Disconnect
-                 </button>`
-              : `<button onclick="authenticateGoogleDrive()" class="flex-1 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 flex items-center justify-center gap-2 hover:bg-slate-50 transition">
-                  <i class="fa-brands fa-google"></i> Connect Auth
-                 </button>`
-            }
-          </div>
+          ${!isDriveConfigured ? `
+            <p class="text-[10px] text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+              <i class="fa-solid fa-triangle-exclamation mr-1"></i> Not configured yet - set <code class="font-mono">GOOGLE_OAUTH_CLIENT_ID</code> in <code class="font-mono">js/config.js</code> to enable Drive backup.
+            </p>
+          ` : isConnected
+            ? `<button onclick="disconnectDrive()" class="w-full py-2.5 border border-rose-200 rounded-xl text-xs font-semibold text-rose-600 flex items-center justify-center gap-2 hover:bg-rose-50 transition">
+                <i class="fa-solid fa-link-slash"></i> Disconnect Google Drive
+               </button>`
+            : `<button onclick="authenticateGoogleDrive()" class="w-full py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-700 flex items-center justify-center gap-2 hover:bg-slate-50 hover:shadow-sm transition">
+                <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
+                  <path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12c0-6.627,5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/>
+                  <path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/>
+                  <path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z"/>
+                  <path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.571c0.001-0.001,0.002-0.001,0.003-0.002l6.19,5.238C36.971,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"/>
+                </svg>
+                Sign in with Google
+               </button>`
+          }
 
           <div class="w-full h-px bg-slate-100 my-2"></div>
 
           <div class="grid grid-cols-2 gap-2">
-            <button onclick="backupToGoogleDrive()" class="py-2.5 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition disabled:opacity-50" ${!isConnected ? 'disabled' : ''}>
+            <button id="btnBackupDrive" onclick="backupToGoogleDrive()" class="py-2.5 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition disabled:opacity-50" ${!isConnected ? 'disabled' : ''}>
               <i class="fa-solid fa-cloud-arrow-up mr-1"></i> Upload to Drive
             </button>
-            <button onclick="restoreFromGoogleDrive()" class="py-2.5 border border-blue-600 text-blue-600 rounded-xl text-xs font-semibold hover:bg-blue-50 transition disabled:opacity-50" ${!isConnected ? 'disabled' : ''}>
+            <button id="btnRestoreDrive" onclick="restoreFromGoogleDrive()" class="py-2.5 border border-blue-600 text-blue-600 rounded-xl text-xs font-semibold hover:bg-blue-50 transition disabled:opacity-50" ${!isConnected ? 'disabled' : ''}>
               <i class="fa-solid fa-cloud-arrow-down mr-1"></i> Restore Data
             </button>
           </div>
@@ -877,31 +1616,99 @@
           <p id="driveSyncNotice" class="text-[11px] text-center text-slate-400 font-medium h-4"></p>
         </div>
 
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3 mt-4">
+          <div class="flex items-center gap-2 mb-1">
+            <i class="fa-solid fa-database text-blue-500"></i>
+            <h3 class="font-bold text-slate-800 text-sm">Local Storage by Year</h3>
+          </div>
+          <p class="text-[10px] text-slate-400 -mt-2">Home and Expenses only ever show ${currentYearStr()}. Restoring a different year for Compare automatically evicts whatever other year was here before it - so this list should normally show at most one entry. Delete it manually any time to free space sooner; your full history stays safe on Drive regardless.</p>
+          ${(() => {
+            const currentYear = currentYearStr();
+            const localOtherYears = Array.from(new Set(appData.expenses.map(e => yearMonthOf(e.date).slice(0, 4))))
+              .filter(y => y && y !== currentYear)
+              .sort()
+              .reverse();
+            if (localOtherYears.length === 0) {
+              return '<p class="text-xs text-slate-400 text-center py-2">No other years stored locally right now.</p>';
+            }
+            return localOtherYears.map(y => {
+              const count = expensesInYear(y).length;
+              return `
+                <div class="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                  <div>
+                    <p class="text-xs font-bold text-slate-700">${y}</p>
+                    <p class="text-[10px] text-slate-400">${count} expense(s) stored locally</p>
+                  </div>
+                  <button onclick="deleteYearDataFromSettings('${y}')" class="text-[11px] font-semibold text-rose-600 border border-rose-200 px-3 py-1.5 rounded-lg hover:bg-rose-50 transition">
+                    <i class="fa-solid fa-trash mr-1"></i>Delete
+                  </button>
+                </div>
+              `;
+            }).join('');
+          })()}
+        </div>
+
         <div class="bg-white p-4 rounded-2xl border border-rose-100 shadow-sm space-y-3 mt-4">
           <div class="flex items-center gap-2 mb-1">
             <i class="fa-solid fa-triangle-exclamation text-rose-500"></i>
             <h3 class="font-bold text-rose-700 text-sm">Danger Zone</h3>
           </div>
-          <p class="text-[10px] text-slate-400 -mt-2">Permanently deletes every logged expense (including calendar-logged recurring entries). Categories, sub-categories, recurring items, and due items are left exactly as they are.</p>
+          <p class="text-[10px] text-slate-400 -mt-2">Permanently deletes every logged expense (including calendar-logged recurring entries) AND every Splitwise group (members + their expenses). Categories, sub-categories, recurring items, and due items are left exactly as they are.</p>
           <button onclick="clearAllExpenses()" class="w-full py-2.5 bg-rose-50 text-rose-600 border border-rose-200 rounded-xl text-xs font-bold hover:bg-rose-100 transition">
-            <i class="fa-solid fa-trash mr-1"></i> Clear All Expenses
+            <i class="fa-solid fa-trash mr-1"></i> Clear All Expenses &amp; Splitwise Data
+          </button>
+
+          <p class="text-[10px] text-slate-400 -mb-1">Deletes your Drive backup - all expense history and Splitwise groups stored there. settings.json (categories/recurring/due items) is kept. Data on THIS device is untouched - back it up again any time.</p>
+          <button onclick="deleteAllDriveBackupsExceptSettings()" class="w-full py-2.5 bg-rose-50 text-rose-600 border border-rose-200 rounded-xl text-xs font-bold hover:bg-rose-100 transition disabled:opacity-50" ${!isConnected ? 'disabled' : ''}>
+            <i class="fa-brands fa-google-drive mr-1"></i> Delete All Drive Backups (Keep Settings)
           </button>
         </div>
+
+        <p class="text-center text-[10px] text-slate-400 mt-4 pb-2">
+          <a href="./privacy.html" class="font-semibold text-slate-500 hover:text-blue-600 underline underline-offset-2">Privacy Policy</a>
+        </p>
       `;
     }
 
     function clearAllExpenses() {
-      if (appData.expenses.length === 0) {
-        alert('There are no expenses to clear.');
+      const splitCount = splitGroups.length || 0;
+      if (appData.expenses.length === 0 && splitCount === 0) {
+        alert('There are no expenses or Splitwise groups to clear.');
         return;
       }
-      const confirmed = confirm(`This will permanently delete all ${appData.expenses.length} logged expense(s). Categories, sub-categories, recurring items, and due items will NOT be affected. This cannot be undone. Continue?`);
+      const confirmed = confirm(`This will permanently delete all ${appData.expenses.length} logged expense(s) and all Splitwise groups (with their members and expenses). Categories, sub-categories, recurring items, and due items will NOT be affected. This cannot be undone. Continue?`);
       if (!confirmed) return;
 
       appData.expenses = [];
       saveState();
+      clearAllSplitGroups().then(() => {
+        renderSettings(document.getElementById('mainContainer'));
+        alert('All expenses and Splitwise data cleared.');
+      });
+    }
+
+    // Frees up local space by dropping one year's worth of expenses from
+    // IndexedDB. Deliberately does NOT touch Google Drive (see
+    // deleteYearDataLocally() in js/storage.js) - Restore Data can always
+    // bring the year back down later. The current year is off-limits here
+    // (enforced both in the list above AND inside deleteYearDataLocally
+    // itself) since Home/Expenses depend on it always being present.
+    async function deleteYearDataFromSettings(year) {
+      if (year === currentYearStr()) {
+        alert(`${year} is the active year and can't be deleted here - Home and Expenses need it. Use "Clear All Expenses & Splitwise Data" in the Danger Zone below if you really want to wipe everything.`);
+        return;
+      }
+
+      const count = expensesInYear(year).length;
+      if (!confirm(`Remove ${count} expense(s) for ${year} from this device?\n\nYour Drive backup keeps the full history untouched - use Restore Data any time to bring ${year} back.`)) return;
+
+      try {
+        await deleteYearDataLocally(year);
+      } catch (err) {
+        alert(err.message);
+        return;
+      }
       renderSettings(document.getElementById('mainContainer'));
-      alert('All expenses cleared.');
     }
 
     function addRecurringItem(e) {
@@ -909,6 +1716,7 @@
       const name = document.getElementById('newRecurringName').value.trim();
       const category = document.getElementById('newRecurringCategory').value;
       const price = parseFloat(document.getElementById('newRecurringPrice').value) || 0;
+      const startDate = document.getElementById('newRecurringStartDate').value || getTodayStr();
       if (!name) return;
 
       appData.recurringItems.push({
@@ -917,7 +1725,8 @@
         category,
         subCategory: null,
         price,
-        priceHistory: [{ from: getTodayStr(), price }]
+        startDate,
+        priceHistory: [{ from: startDate, price }]
       });
       saveState();
       renderSettings(document.getElementById('mainContainer'));
@@ -927,6 +1736,103 @@
       if (!confirm('Remove this recurring item? Past logged expenses will NOT be affected — only future calendar toggles.')) return;
       appData.recurringItems = appData.recurringItems.filter(i => i.id !== id);
       if (selectedRecurringItemId === id) selectedRecurringItemId = null;
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    // --- Family Members (Settings) ------------------------------------------
+    // Plain {id, name} labels - see getFamilyMemberName() in
+    // js/data-model.js for the display-side lookup used by expense rows,
+    // the Add Expense/due-item-payment "Paid By" dropdowns, and Compare.
+    function addFamilyMember() {
+      const input = document.getElementById('newFamilyMemberName');
+      const name = input.value.trim();
+      if (!name) return;
+      if (appData.familyMembers.some(m => m.name.toLowerCase() === name.toLowerCase())) {
+        alert('That family member already exists.');
+        return;
+      }
+      appData.familyMembers.push({ id: 'member_' + Date.now(), name });
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    function deleteFamilyMember(id) {
+      const member = appData.familyMembers.find(m => m.id === id);
+      if (!member) return;
+
+      const inUseCount = appData.expenses.filter(e => e.paidBy === id).length;
+      const msg = inUseCount > 0
+        ? `"${member.name}" is tagged as "Paid By" on ${inUseCount} existing expense(s). Those will keep showing "${member.name}" — you just won't be able to pick them for new entries. Delete anyway?`
+        : `Delete family member "${member.name}"?`;
+      if (!confirm(msg)) return;
+
+      appData.familyMembers = appData.familyMembers.filter(m => m.id !== id);
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    // --- Vehicles (Settings) --------------------------------------------
+    // Plain {id, number} labels, same shape/spirit as Family Members and
+    // Tags above - see getVehicleNumber() in js/data-model.js for the
+    // display-side lookup used by Fuel Log entries and the Add Fill-up
+    // "Vehicle" dropdown.
+    function addVehicle() {
+      const input = document.getElementById('newVehicleNumber');
+      const number = input.value.trim();
+      if (!number) return;
+      if (appData.vehicles.some(v => v.number.toLowerCase() === number.toLowerCase())) {
+        alert('That vehicle already exists.');
+        return;
+      }
+      appData.vehicles.push({ id: 'veh_' + Date.now(), number });
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    function deleteVehicle(id) {
+      const vehicle = appData.vehicles.find(v => v.id === id);
+      if (!vehicle) return;
+
+      const inUseCount = appData.fuelLogs.filter(f => f.vehicleId === id).length;
+      const msg = inUseCount > 0
+        ? `"${vehicle.number}" is used on ${inUseCount} existing fuel log entry(ies). Those will keep showing "${vehicle.number}" but it will disappear from the Fuel Log picker and can't be picked for new fill-ups. Delete anyway?`
+        : `Delete vehicle "${vehicle.number}"?`;
+      if (!confirm(msg)) return;
+
+      appData.vehicles = appData.vehicles.filter(v => v.id !== id);
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    // --- Tags (Settings) -----------------------------------------------------
+    // Plain {id, name} labels, same shape/spirit as Family Members above -
+    // see getTagName() in js/data-model.js for the display-side lookup used
+    // by expense rows, the Add Expense "Tag" dropdown, and the Reports view.
+    function addTag() {
+      const input = document.getElementById('newTagName');
+      const name = input.value.trim();
+      if (!name) return;
+      if (appData.tags.some(t => t.name.toLowerCase() === name.toLowerCase())) {
+        alert('That tag already exists.');
+        return;
+      }
+      appData.tags.push({ id: 'tag_' + Date.now(), name });
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    function deleteTag(id) {
+      const tag = appData.tags.find(t => t.id === id);
+      if (!tag) return;
+
+      const inUseCount = appData.expenses.filter(e => e.tag === id).length;
+      const msg = inUseCount > 0
+        ? `"${tag.name}" is used on ${inUseCount} existing expense(s). Those will keep showing "${tag.name}" but it will disappear from the Reports tag picker and can't be picked for new entries. Delete anyway?`
+        : `Delete tag "${tag.name}"?`;
+      if (!confirm(msg)) return;
+
+      appData.tags = appData.tags.filter(t => t.id !== id);
       saveState();
       renderSettings(document.getElementById('mainContainer'));
     }
@@ -952,8 +1858,8 @@
           </div>
           <div>
             <label class="text-[11px] font-semibold text-slate-400">Effective From</label>
-            <input type="date" required id="priceChangeDate" value="${getTodayStr()}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
-            <p class="text-[9px] text-slate-400 mt-1">Days before this date keep the old price. Expenses already logged never change.</p>
+            <input type="date" required id="priceChangeDate" min="${getItemStartDate(item)}" value="${getTodayStr() < getItemStartDate(item) ? getItemStartDate(item) : getTodayStr()}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+            <p class="text-[9px] text-slate-400 mt-1">Days before this date keep the old price. Expenses already logged never change. Can't be earlier than ${getItemStartDate(item)}, when this item started.</p>
           </div>
           <div class="flex gap-2 pt-2">
             <button type="button" onclick="closeFormModal()" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
@@ -972,6 +1878,12 @@
       const from = document.getElementById('priceChangeDate').value;
       if (isNaN(price) || !from) return;
 
+      const startDate = getItemStartDate(item);
+      if (from < startDate) {
+        alert(`This item started on ${startDate} - a price change can't be effective before that. Pick ${startDate} or later.`);
+        return;
+      }
+
       if (!Array.isArray(item.priceHistory) || item.priceHistory.length === 0) {
         item.priceHistory = [{ from: '1970-01-01', price: Number(item.price) || 0 }];
       }
@@ -983,6 +1895,9 @@
       } else {
         item.priceHistory.push({ from, price });
       }
+      // Always re-sort chronologically - entries can be added/edited in any
+      // order, but everything downstream (getEffectivePrice, the badge list
+      // in Settings) assumes ascending-by-date order.
       item.priceHistory.sort((a, b) => a.from.localeCompare(b.from));
       item.price = getEffectivePrice(item); // keep the cached "today" price in sync
 
@@ -1036,6 +1951,49 @@
       renderSettings(document.getElementById('mainContainer'));
     }
 
+    // --- Monthly Budget (Settings) -----------------------------------------
+    // See getBudgetForMonth/getBudgetStatus in js/data-model.js for how these
+    // two numbers (global default + per-month overrides) turn into Home's
+    // color-coded progress bar.
+    function saveGlobalBudget() {
+      const input = document.getElementById('globalBudgetInput');
+      const amount = parseFloat(input.value) || 0;
+      appData.budgets.global = amount;
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    function saveMonthlyBudgetOverride() {
+      const month = document.getElementById('budgetOverrideMonth').value;
+      const amount = parseFloat(document.getElementById('budgetOverrideAmount').value) || 0;
+      if (!month) return;
+      // Belt-and-suspenders alongside the input's min= attribute - a locked
+      // past month must never be editable, full stop, regardless of how the
+      // value made it into the field.
+      if (!isBudgetMonthEditable(month)) {
+        alert(`${month} is a past month and its budget is locked - only the running month and future months can be set.`);
+        return;
+      }
+      if (amount <= 0) {
+        alert('Enter an amount greater than 0 - to remove an existing override, use the x button on its chip instead.');
+        return;
+      }
+      appData.budgets.monthly[month] = amount;
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
+    function deleteMonthlyBudgetOverride(month) {
+      if (!isBudgetMonthEditable(month)) {
+        alert(`${month} is a past month and its budget is locked - it can't be removed.`);
+        return;
+      }
+      if (!confirm(`Remove the budget override for ${month}? It'll fall back to the global monthly budget.`)) return;
+      delete appData.budgets.monthly[month];
+      saveState();
+      renderSettings(document.getElementById('mainContainer'));
+    }
+
     function addSubCategory() {
       const catName = selectedCategoryForSub || Object.keys(appData.categories)[0];
       if (!catName) return;
@@ -1067,284 +2025,6 @@
       renderSettings(document.getElementById('mainContainer'));
     }
 
-    function saveDriveSettings() {
-      const clientId = document.getElementById('settingClientId').value.trim();
-      const folderName = document.getElementById('settingFolder').value.trim() || 'Life Tracker Sync';
-      
-      if (!clientId) return alert('Client ID is required.');
-      
-      localStorage.setItem(G_CLIENT_ID_KEY, clientId);
-      localStorage.setItem(G_FOLDER_KEY, folderName);
-      document.getElementById('driveSyncNotice').innerText = 'Configuration saved!';
-      document.getElementById('driveSyncNotice').className = 'text-[11px] text-center text-emerald-500 font-medium h-4';
-    }
-
-    // --- Google Drive API Logic with Folders ---
-
-    // Single place that updates the "Connected"/"Offline" pill in the header,
-    // so authenticate/restore/disconnect all agree on what it looks like.
-    function setDriveConnectedUI(connected) {
-      const status = document.getElementById('globalDriveStatus');
-      if (!status) return;
-      if (connected) {
-        status.innerHTML = '<i class="fa-brands fa-google-drive text-amber-500"></i> Connected';
-        status.classList.remove('text-slate-400', 'bg-white');
-        status.classList.add('text-slate-700', 'bg-amber-50', 'border-amber-100');
-      } else {
-        status.innerHTML = '<i class="fa-brands fa-google-drive"></i> Offline';
-        status.classList.add('text-slate-400', 'bg-white');
-        status.classList.remove('text-slate-700', 'bg-amber-50', 'border-amber-100');
-      }
-    }
-
-    // Access tokens from Google Identity Services are short-lived (~1hr) but we
-    // cache one in localStorage so a page refresh or tab switch doesn't force a
-    // fresh login every time - only once the cached token actually expires.
-    function persistDriveToken(token, expiresInSeconds) {
-      localStorage.setItem(G_TOKEN_KEY, token);
-      localStorage.setItem(G_TOKEN_EXPIRY_KEY, String(Date.now() + (Number(expiresInSeconds) || 3600) * 1000));
-    }
-
-    function clearPersistedDriveToken() {
-      localStorage.removeItem(G_TOKEN_KEY);
-      localStorage.removeItem(G_TOKEN_EXPIRY_KEY);
-    }
-
-    function loadPersistedDriveToken() {
-      const token = localStorage.getItem(G_TOKEN_KEY);
-      const expiry = Number(localStorage.getItem(G_TOKEN_EXPIRY_KEY) || 0);
-      // 30s safety buffer so we don't hand back a token that's about to expire mid-request.
-      if (token && expiry > Date.now() + 30000) return token;
-      clearPersistedDriveToken();
-      return null;
-    }
-
-    // Called once on app boot. First tries the cached token (covers the common
-    // "I just refreshed the page" case instantly, no network needed). If that's
-    // gone/expired but a Client ID is saved, it tries a silent (no popup) Google
-    // re-auth - works if the browser still has an active Google session and the
-    // user previously granted consent. Fails silently otherwise; user can still
-    // hit "Connect Auth" manually.
-    function tryRestoreDriveSession() {
-      const cached = loadPersistedDriveToken();
-      if (cached) {
-        gdriveToken = cached;
-        setDriveConnectedUI(true);
-        if (currentTab === 'settings') renderSettings(document.getElementById('mainContainer'));
-        return;
-      }
-
-      const clientId = localStorage.getItem(G_CLIENT_ID_KEY);
-      if (!clientId) return;
-
-      const attemptSilentAuth = () => {
-        if (typeof google === 'undefined' || !google.accounts) return;
-        const silentClient = google.accounts.oauth2.initTokenClient({
-          client_id: clientId,
-          scope: 'https://www.googleapis.com/auth/drive.file',
-          callback: (response) => {
-            if (!response || response.error || !response.access_token) return; // silent fail, no popup shown
-            gdriveToken = response.access_token;
-            persistDriveToken(response.access_token, response.expires_in);
-            setDriveConnectedUI(true);
-            if (currentTab === 'settings') renderSettings(document.getElementById('mainContainer'));
-          }
-        });
-        silentClient.requestAccessToken({ prompt: '' });
-      };
-
-      // The GIS script tag loads async/defer, so poll briefly until it's ready.
-      let attempts = 0;
-      const poll = setInterval(() => {
-        attempts++;
-        if (typeof google !== 'undefined' && google.accounts) {
-          clearInterval(poll);
-          attemptSilentAuth();
-        } else if (attempts > 20) {
-          clearInterval(poll); // ~6s of trying, then give up quietly
-        }
-      }, 300);
-    }
-
-    function authenticateGoogleDrive() {
-      const clientId = localStorage.getItem(G_CLIENT_ID_KEY);
-      if (!clientId) return alert('Please enter and save your Google Cloud OAuth Client ID first.');
-
-      if (typeof google === 'undefined' || !google.accounts) {
-        return alert('Google scripts are loading or offline. Check internet connection.');
-      }
-
-      tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: clientId,
-        scope: 'https://www.googleapis.com/auth/drive.file',
-        callback: (response) => {
-          if (response.error) {
-            alert('Authentication failed: ' + response.error);
-            return;
-          }
-          gdriveToken = response.access_token;
-          persistDriveToken(response.access_token, response.expires_in);
-          setDriveConnectedUI(true);
-
-          // Re-render settings if open
-          if(currentTab === 'settings') renderSettings(document.getElementById('mainContainer'));
-        }
-      });
-      tokenClient.requestAccessToken({ prompt: 'consent' });
-    }
-
-    function disconnectDrive() {
-      // Wipe the token from memory AND the persisted cache - no API revoking.
-      gdriveToken = null;
-      clearPersistedDriveToken();
-      setDriveConnectedUI(false);
-      
-      // Re-render Settings screen to show Connect button and disable Backup/Restore
-      if(currentTab === 'settings') {
-        renderSettings(document.getElementById('mainContainer'));
-        document.getElementById('driveSyncNotice').innerText = 'Drive disconnected from this session.';
-        document.getElementById('driveSyncNotice').className = 'text-[11px] text-center text-slate-500 font-medium h-4';
-      }
-    }
-
-    // Helper: Find or create the target folder
-    async function getOrCreateFolder(folderName) {
-      const query = `mimeType='application/vnd.google-apps.folder' and name='${folderName}' and trashed=false`;
-      const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
-        headers: { Authorization: `Bearer ${gdriveToken}` }
-      });
-      const searchData = await searchRes.json();
-
-      if (searchData.files && searchData.files.length > 0) {
-        return searchData.files[0].id;
-      }
-
-      const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
-        method: 'POST',
-        headers: { 
-          Authorization: `Bearer ${gdriveToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          name: folderName,
-          mimeType: 'application/vnd.google-apps.folder'
-        })
-      });
-      const createData = await createRes.json();
-      return createData.id;
-    }
-
-    async function backupToGoogleDrive() {
-      if (!gdriveToken) return alert('Authenticate with Google first!');
-      const notice = document.getElementById('driveSyncNotice');
-      notice.innerText = 'Preparing backup...';
-      notice.className = 'text-[11px] text-center text-blue-500 font-medium h-4';
-
-      try {
-        const folderName = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
-        const folderId = await getOrCreateFolder(folderName);
-        notice.innerText = `Found folder '${folderName}'... uploading...`;
-
-        const fileName = 'life_tracker_data.json';
-        const fileContent = JSON.stringify(appData, null, 2);
-        
-        const query = `name='${fileName}' and '${folderId}' in parents and trashed=false`;
-        const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
-          headers: { Authorization: `Bearer ${gdriveToken}` }
-        });
-        const searchData = await searchRes.json();
-
-        let endpoint = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
-        let method = 'POST';
-        
-        let metadata = { name: fileName, mimeType: 'application/json' };
-        
-        if (searchData.files && searchData.files.length > 0) {
-          const fileId = searchData.files[0].id;
-          endpoint = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`;
-          method = 'PATCH';
-        } else {
-          metadata.parents = [folderId];
-        }
-
-        const boundary = 'foo_bar_baz';
-        const delimiter = "\r\n--" + boundary + "\r\n";
-        const closeDelim = "\r\n--" + boundary + "--";
-        const multipartRequestBody =
-          delimiter +
-          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-          JSON.stringify(metadata) +
-          delimiter +
-          'Content-Type: application/json\r\n\r\n' +
-          fileContent +
-          closeDelim;
-
-        const res = await fetch(endpoint, {
-          method: method,
-          headers: {
-            Authorization: `Bearer ${gdriveToken}`,
-            'Content-Type': `multipart/related; boundary=${boundary}`
-          },
-          body: multipartRequestBody
-        });
-
-        if (res.ok) {
-          notice.innerText = 'Upload successful!';
-          notice.className = 'text-[11px] text-center text-emerald-600 font-medium h-4';
-        } else {
-          throw new Error('Upload failed. API rejected request.');
-        }
-      } catch (err) {
-        console.error(err);
-        notice.innerText = 'Error: ' + err.message;
-        notice.className = 'text-[11px] text-center text-rose-600 font-medium h-4';
-      }
-    }
-
-    async function restoreFromGoogleDrive() {
-      if (!gdriveToken) return alert('Authenticate with Google first!');
-      const notice = document.getElementById('driveSyncNotice');
-      notice.innerText = 'Searching Drive...';
-      notice.className = 'text-[11px] text-center text-blue-500 font-medium h-4';
-
-      try {
-        const folderName = localStorage.getItem(G_FOLDER_KEY) || 'Life Tracker Sync';
-        const folderId = await getOrCreateFolder(folderName);
-
-        const query = `name='life_tracker_data.json' and '${folderId}' in parents and trashed=false`;
-        const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
-          headers: { Authorization: `Bearer ${gdriveToken}` }
-        });
-        const searchData = await searchRes.json();
-
-        if (!searchData.files || searchData.files.length === 0) {
-          notice.innerText = `No backup found in folder '${folderName}'.`;
-          notice.className = 'text-[11px] text-center text-rose-600 font-medium h-4';
-          return;
-        }
-
-        const fileId = searchData.files[0].id;
-        const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
-          headers: { Authorization: `Bearer ${gdriveToken}` }
-        });
-
-        const cloudData = await fileRes.json();
-        if (cloudData && Array.isArray(cloudData.expenses)) {
-          if (confirm('Are you sure you want to replace your current local data with the version from Google Drive?')) {
-            appData = getDefaultAppData();
-            mergeIntoAppData(cloudData);
-            saveState();
-            notice.innerText = 'Data Restored Successfully!';
-            notice.className = 'text-[11px] text-center text-emerald-600 font-medium h-4';
-            navigate('home');
-          }
-        }
-      } catch (err) {
-        console.error(err);
-        notice.innerText = 'Restore Error: ' + err.message;
-        notice.className = 'text-[11px] text-center text-rose-600 font-medium h-4';
-      }
-    }
 
     // Initialize
     window.addEventListener('DOMContentLoaded', initStorage);
