@@ -1668,6 +1668,15 @@
           <a href="./privacy.html" class="font-semibold text-slate-500 hover:text-blue-600 underline underline-offset-2">Privacy Policy</a>
         </p>
       `;
+
+      // The template above only knows "connected or not" - it can't render
+      // the real "is there actually anything NEW to push" state synchronously
+      // (that's an IndexedDB read). Fire-and-forget correct it immediately
+      // after the fresh button lands in the DOM, same pattern already used
+      // for setDriveConnectedUI/clearDriveActionBusy in drive-sync.js -
+      // without this, every render defaults btnBackupDrive back to enabled
+      // even when there's nothing local to upload.
+      updateDriveUploadButtonState();
     }
 
     function clearAllExpenses() {
