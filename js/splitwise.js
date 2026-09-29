@@ -23,6 +23,17 @@ let splitGroups = [];
 let activeSplitGroupId = null;
 const MAX_SPLIT_GROUPS = 5;
 
+// Splitwise groups live in their OWN IndexedDB store, entirely outside
+// appData/saveState() (see the file-level comment above) - which means
+// every one of storage.js's saveState() calls that normally keeps the
+// Drive upload button's disabled state honest never even runs for a
+// Splitwise edit. Every mutation function below calls this right after its
+// IDB write, so "add a group/member/expense" enables the button live just
+// like an expense or settings edit does, no refresh needed.
+function _refreshDriveButtonAfterSplitwiseChange() {
+  if (typeof updateDriveUploadButtonState === 'function') updateDriveUploadButtonState();
+}
+
 // Persists "is the overlay open, and on which group" across a reload -
 // mirrors the LAST_TAB_STORAGE_KEY trick in data-model.js/storage.js. Lives
 // here (not data-model.js) since only this file and initStorage() need it,
@@ -203,6 +214,7 @@ async function saveNewSplitGroup(e) {
   const group = { id: _sgId('sg'), name, createdAt: new Date().toISOString(), members: [], expenses: [] };
   splitGroups.push(group);
   await IDB.put('splitGroups', group);
+  _refreshDriveButtonAfterSplitwiseChange();
 
   closeFormModal();
   activeSplitGroupId = group.id;
@@ -220,6 +232,7 @@ async function deleteSplitGroup(groupId) {
 
   splitGroups = splitGroups.filter(g => g.id !== groupId);
   await IDB.delete('splitGroups', groupId);
+  _refreshDriveButtonAfterSplitwiseChange();
   if (activeSplitGroupId === groupId) activeSplitGroupId = null;
   _saveSplitwiseUiState();
   renderSplitwiseView();
@@ -235,6 +248,7 @@ async function deleteSplitGroup(groupId) {
 // everything.
 async function clearAllSplitGroups() {
   await IDB.replaceAll('splitGroups', []);
+  _refreshDriveButtonAfterSplitwiseChange();
   splitGroups = [];
   activeSplitGroupId = null;
 
@@ -452,6 +466,7 @@ async function saveNewSplitMember(e, groupId) {
   const newMember = { id: _sgId('m'), name };
   group.members.push(newMember);
   await IDB.put('splitGroups', group);
+  _refreshDriveButtonAfterSplitwiseChange();
 
   // If this person was added mid-way through filling out an expense, jump
   // straight back into that (still-filled-in) form instead of the group
@@ -489,6 +504,7 @@ async function deleteSplitMember(groupId, memberId) {
 
   group.members = group.members.filter(m => m.id !== memberId);
   await IDB.put('splitGroups', group);
+  _refreshDriveButtonAfterSplitwiseChange();
   renderSplitwiseView();
 }
 
@@ -624,6 +640,7 @@ async function saveSplitExpense(e, groupId, expenseId) {
     });
   }
   await IDB.put('splitGroups', group);
+  _refreshDriveButtonAfterSplitwiseChange();
   closeFormModal();
   renderSplitwiseView();
 }
@@ -635,5 +652,6 @@ async function deleteSplitExpense(groupId, expenseId) {
 
   group.expenses = group.expenses.filter(e => e.id !== expenseId);
   await IDB.put('splitGroups', group);
+  _refreshDriveButtonAfterSplitwiseChange();
   renderSplitwiseView();
 }
