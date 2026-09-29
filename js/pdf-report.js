@@ -128,6 +128,12 @@ function _pdfReportFormHtml() {
         `}
       </div>
 
+      <label class="flex items-center gap-2 text-xs text-slate-600 py-1">
+        <input type="checkbox" id="pdfIncludeExpenseList" class="w-4 h-4 rounded border-slate-300" ${f.includeExpenseList !== false ? 'checked' : ''}>
+        Include the full expense list (table) in the report
+      </label>
+      <p class="text-[9px] text-slate-400 -mt-2">Uncheck this for a shorter summary-only report - handy for a whole year with lots of rows. Totals, budget, charts, and category/tag breakdowns always show either way.</p>
+
       <button onclick="generatePdfReportFromForm()" class="w-full py-2.5 bg-fuchsia-600 text-white rounded-xl text-xs font-bold hover:bg-fuchsia-700 transition mt-1">Generate Report</button>
     </div>
   `;
@@ -152,7 +158,8 @@ function generatePdfReportFromForm() {
   // ANY tag" reading, which would silently exclude untagged spend and
   // surprise anyone who just clicked Select All expecting "everything".
   if (appData.tags.length > 0 && tagIds.length === appData.tags.length) tagIds = [];
-  const filters = { mode, tagIds };
+  const includeExpenseList = document.getElementById('pdfIncludeExpenseList').checked;
+  const filters = { mode, tagIds, includeExpenseList };
 
   if (mode === 'month') {
     filters.month = document.getElementById('pdfMonthValue').value;
@@ -296,6 +303,7 @@ function _buildPdfReportData(filters) {
     budget,
     categoryRows,
     tagRows,
+    includeExpenseList: filters.includeExpenseList !== false,
     expenses: reportExpenses.slice().sort((a, b) => a.date.localeCompare(b.date)),
     categoryLabels: categoryRows.map(c => c.name),
     categoryValues: categoryRows.map(c => c.total),
@@ -309,7 +317,7 @@ function _buildPdfReportData(filters) {
 // --- Result page ---------------------------------------------------------
 
 function _pdfReportResultHtml(data) {
-  const { periodLabel, tagFilterLabel, total, budget, categoryRows, tagRows, expenses } = data;
+  const { periodLabel, tagFilterLabel, total, budget, categoryRows, tagRows, expenses, includeExpenseList } = data;
   const topCategory = categoryRows[0] ? categoryRows[0].name : '-';
   const topTag = tagRows[0] || null;
   const generatedAt = new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
@@ -445,7 +453,7 @@ function _pdfReportResultHtml(data) {
         <div class="space-y-1.5 mb-4 break-inside-avoid">${tagOverviewHtml}</div>
       ` : ''}
 
-      ${expenses.length > 0 ? `
+      ${expenses.length > 0 && includeExpenseList ? `
         <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">All Expenses${tagFilterLabel ? ` <span class="text-slate-400 font-normal normal-case">(tags: ${tagFilterLabel})</span>` : ''}</h3>
         <div class="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm mb-4">
           <table class="w-full border-collapse">

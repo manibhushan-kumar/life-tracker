@@ -212,8 +212,11 @@ function downloadPdfReport(data) {
   }
 
   // --- All Expenses table (paginated - header row redraws on every new
-  // page via ensureSpace()'s return value) ---
-  if (data.expenses.length > 0) {
+  // page via ensureSpace()'s return value). Skipped entirely when the user
+  // unchecked "include full expense list" on the filter form - a whole
+  // year's worth of rows can get long, and totals/charts/breakdowns above
+  // already tell the full story without it. ---
+  if (data.expenses.length > 0 && data.includeExpenseList) {
     pdf.ensureSpace(20);
     const heading = 'ALL EXPENSES' + (data.tagFilterLabel ? ` (tags: ${data.tagFilterLabel})` : '');
     pdf.text(M, pdf.y, heading, { size: 9, bold: true, color: [0.45, 0.48, 0.56] });
