@@ -68,7 +68,21 @@ async function getSyncMeta() {
     settingsFileId: null,
     splitwiseFileId: null,
     lastBackupAt: null,
-    lastRestoreAt: null
+    lastRestoreAt: null,
+    // Fingerprints of the settings/Splitwise payloads as of the last
+    // successful backup - see hasLocalChangesToSync() below for why these
+    // exist (settings.json/splitwise.json are overwritten wholesale on
+    // every backup, so dirty-month tracking alone can't tell us whether
+    // THOSE actually changed).
+    lastSyncedSettingsFingerprint: null,
+    lastSyncedSplitwiseFingerprint: null,
+    // What this device last actually SAW on Drive (the `savedAt` stamp
+    // inside settings.json/splitwise.json) - compared against Drive's
+    // CURRENT savedAt right before a backup writes anything, to catch
+    // "another device pushed since I last looked" conflicts. See
+    // findSyncConflicts() in drive-sync.js.
+    knownRemoteSettingsSavedAt: null,
+    knownRemoteSplitwiseSavedAt: null
   };
 }
 
@@ -92,6 +106,55 @@ async function clearDirtyMonths(monthsSynced, remoteVersions) {
   const remaining = (meta.dirtyMonths || []).filter(m => !monthsSynced.includes(m));
   const updatedVersions = { ...(meta.remoteChunkVersions || {}), ...remoteVersions };
   await saveSyncMeta({ dirtyMonths: remaining, remoteChunkVersions: updatedVersions, lastBackupAt: new Date().toISOString() });
+}
+
+// Serialized snapshot of exactly what backupToGoogleDrive() writes into
+// settings.json (minus the `savedAt` timestamp, which would make this
+// "change" on every single backup even when nothing real did). Kept as a
+// plain string comparison rather than a deep-equal - cheap, and appData's
+// settings fields are small enough that stringifying them is a non-issue.
+function _settingsSyncFingerprint() {
+  return JSON.stringify({
+    categories: appData.categories,
+    recurringItems: appData.recurringItems,
+    items: appData.items,
+    budgets: appData.budgets,
+    familyMembers: appData.familyMembers,
+    tags: appData.tags,
+    vehicles: appData.vehicles,
+    fuelLogs: appData.fuelLogs,
+    userName: appData.userName
+  });
+}
+
+// True if hitting "Upload to Drive" right now would actually change
+// anything remotely. Expenses are covered by dirtyMonths (see
+// _markDirtyMonthsFromDiff above), but settings.json/splitwise.json are
+// overwritten WHOLESALE on every backup with no dirty-tracking of their
+// own - so this also fingerprints those against whatever was last actually
+// pushed. Used to disable the upload button when there's nothing new to
+// send, so a second, untouched device can't blindly re-push its (possibly
+// older) copy on top of a backup another device just made - see
+// updateDriveUploadButtonState() in drive-sync.js.
+//
+// The `!meta.manifestFileId` / `!meta.splitwiseFileId` checks exist for one
+// specific edge case: Danger Zone's "delete all Drive backups" wipes those
+// remote files and nulls out their ids, but doesn't (and can't, without a
+// network round-trip) touch dirtyMonths/fingerprints for data that never
+// changed locally. Without this, a device with untouched-but-real local
+// history would see "nothing changed" and stay disabled right when it's
+// the ONLY thing that can rebuild Drive's copy.
+async function hasLocalChangesToSync() {
+  const meta = await getSyncMeta();
+  if ((meta.dirtyMonths || []).length > 0) return true;
+  if (appData.expenses.length > 0 && !meta.manifestFileId) return true;
+  if (_settingsSyncFingerprint() !== (meta.lastSyncedSettingsFingerprint || null)) return true;
+
+  const splitGroups = await IDB.getAll('splitGroups');
+  if (splitGroups.length > 0 && !meta.splitwiseFileId) return true;
+  if (JSON.stringify(splitGroups) !== (meta.lastSyncedSplitwiseFingerprint || null)) return true;
+
+  return false;
 }
 
 // --- Load / one-time migration off localStorage ---------------------------
@@ -160,11 +223,19 @@ async function saveState(opts) {
     await Promise.all([
       IDB.replaceAll('expenses', appData.expenses),
       IDB.replaceAll('items', appData.items),
-      IDB.put('meta', { key: 'settings', recurringItems: appData.recurringItems, categories: appData.categories, budgets: appData.budgets, familyMembers: appData.familyMembers, tags: appData.tags, vehicles: appData.vehicles, fuelLogs: appData.fuelLogs })
+      IDB.put('meta', { key: 'settings', recurringItems: appData.recurringItems, categories: appData.categories, budgets: appData.budgets, familyMembers: appData.familyMembers, tags: appData.tags, vehicles: appData.vehicles, fuelLogs: appData.fuelLogs, userName: appData.userName })
     ]);
   } catch (e) {
     console.error('Life Tracker: failed to persist to IndexedDB.', e);
   }
+
+  // Fire-and-forget: every local mutation funnels through saveState(), so
+  // this is the one place that can keep the upload button's disabled state
+  // honest without every one of index.html's call sites having to remember
+  // to do it themselves. Defined in drive-sync.js (loaded right after this
+  // file) - the `typeof` guard just means storage.js doesn't hard-fail if
+  // it's ever loaded standalone.
+  if (typeof updateDriveUploadButtonState === 'function') updateDriveUploadButtonState();
 }
 
 // Called once on boot (see the DOMContentLoaded listener at the bottom of
@@ -177,7 +248,7 @@ async function saveState(opts) {
 // slips past the overscroll-behavior CSS fix (e.g. the OS itself killing
 // and relaunching the PWA) - validated against a known-tabs list so a
 // stale/corrupted localStorage value can never navigate somewhere invalid.
-const VALID_TABS = ['home', 'expenses', 'compare', 'items', 'settings', 'reports', 'fuel'];
+const VALID_TABS = ['home', 'expenses', 'compare', 'items', 'settings', 'reports', 'fuel', 'pdfReport'];
 
 async function initStorage() {
   await loadAppData();
@@ -188,7 +259,7 @@ async function initStorage() {
   // month. See freezePastMonthBudgets in js/data-model.js.
   if (freezePastMonthBudgets()) await saveState();
 
-  document.getElementById('headerDate').innerText = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  updateHeaderGreeting();
 
   const lastTab = localStorage.getItem(LAST_TAB_STORAGE_KEY);
   navigate(VALID_TABS.includes(lastTab) ? lastTab : 'home');

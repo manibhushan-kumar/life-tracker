@@ -89,6 +89,7 @@ function setDriveConnectedUI(connected) {
     status.title = 'Click to connect Google Drive';
     if (syncBtn) syncBtn.classList.add('hidden');
   }
+  updateDriveUploadButtonState(); // connecting/disconnecting always changes whether there's anything to push
 }
 
 // The header pill IS the manual login affordance now (see index.html - it's
@@ -422,6 +423,11 @@ function mapWithConcurrency(items, limit, fn) {
 // changes.
 const DRIVE_ACTION_BUTTON_IDS = ['btnBackupDrive', 'btnRestoreDrive', 'globalDriveSyncBtn'];
 
+// Subset of the above that actually PUSHES local data to Drive (as opposed
+// to btnRestoreDrive, which only pulls) - see updateDriveUploadButtonState()
+// below for why only these two care about "is there anything new to send".
+const UPLOAD_BUTTON_IDS = ['btnBackupDrive', 'globalDriveSyncBtn'];
+
 // The header's quick-sync shortcut is icon-only (a small round button) -
 // swapping its content for a spinner should stay icon-only too, not cram a
 // text busyLabel into a 28px circle the way the full-width Settings buttons
@@ -457,26 +463,181 @@ function clearDriveActionBusy() {
       delete btn.dataset.originalHtml;
     }
   });
+  // The blanket `disabled = false` above is deliberately naive (it doesn't
+  // know or care WHY a button was busy) - this re-applies the "nothing new
+  // to upload" state on top of it immediately after, so upload buttons
+  // don't flash briefly re-enabled after a backup/restore/danger-zone
+  // action that just made them up to date.
+  updateDriveUploadButtonState();
+}
+
+// Disables btnBackupDrive/globalDriveSyncBtn whenever there's genuinely
+// nothing local to push - see hasLocalChangesToSync() in storage.js for the
+// actual "is anything dirty" logic. Called after every Drive operation
+// finishes (via clearDriveActionBusy), on connect/disconnect (via
+// setDriveConnectedUI), and after every local mutation (via saveState in
+// storage.js) - so the button's state is always a few-hundred-ms-fresh
+// reflection of reality, never something a caller has to remember to sync
+// by hand.
+// --- Blocking status modal for Upload/Restore/Danger-Zone operations ------
+// Native alert()/a tiny inline text notice both have the same real problem:
+// neither one stops the user from tapping over to another tab and logging a
+// new expense while a restore is still merging data in the background. This
+// modal (#driveBusyModal in index.html) is genuinely undismissable while
+// busy - no close button, no backdrop-click handler - so the whole page is
+// blocked for the actual duration of the operation, not just "looks busy".
+let _driveBusyAutoCloseTimer = null;
+
+// Opens (or updates, if already open) the busy modal in its "working"
+// state - spinner, no dismiss button. First call in an operation opens it;
+// every subsequent call just swaps the message in place, so callers never
+// have to think about show-vs-update.
+function driveSyncProgress(text) {
+  clearTimeout(_driveBusyAutoCloseTimer);
+  const modal = document.getElementById('driveBusyModal');
+  const content = document.getElementById('driveBusyModalContent');
+  modal.classList.remove('hidden');
+  content.innerHTML = `
+    <i class="fa-solid fa-circle-notch fa-spin text-3xl text-blue-500 mb-3" aria-hidden="true"></i>
+    <p class="text-xs font-semibold text-slate-700">${text}</p>
+  `;
+
+  // Mirrored into Settings' inline notice too, purely as a nice-to-have for
+  // anyone actually looking at that spot - the modal is the real,
+  // page-blocking source of truth now.
+  const notice = document.getElementById('driveSyncNotice');
+  if (notice) {
+    notice.innerText = text;
+    notice.className = 'text-[11px] text-center text-blue-500 font-medium h-4';
+  }
+}
+
+// Terminal state (success or error) - swaps in an OK button and
+// auto-dismisses after 5s if the user doesn't click it first. This is the
+// ONLY point an Upload/Restore/Danger-Zone operation becomes dismissable.
+function driveSyncDone(text, isError) {
+  clearTimeout(_driveBusyAutoCloseTimer);
+  const modal = document.getElementById('driveBusyModal');
+  const content = document.getElementById('driveBusyModalContent');
+  modal.classList.remove('hidden');
+  content.innerHTML = `
+    <i class="fa-solid ${isError ? 'fa-circle-exclamation text-rose-500' : 'fa-circle-check text-emerald-500'} text-3xl mb-3" aria-hidden="true"></i>
+    <p class="text-xs font-semibold ${isError ? 'text-rose-600' : 'text-slate-700'} mb-4">${text}</p>
+    <button onclick="hideDriveBusyModal()" autofocus class="px-5 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition">OK</button>
+  `;
+
+  const notice = document.getElementById('driveSyncNotice');
+  if (notice) {
+    notice.innerText = text;
+    notice.className = `text-[11px] text-center ${isError ? 'text-rose-600' : 'text-emerald-600'} font-medium h-4`;
+  }
+
+  _driveBusyAutoCloseTimer = setTimeout(hideDriveBusyModal, 5000);
+}
+
+function hideDriveBusyModal() {
+  clearTimeout(_driveBusyAutoCloseTimer);
+  document.getElementById('driveBusyModal').classList.add('hidden');
+}
+
+async function updateDriveUploadButtonState() {
+  const connected = !!gdriveToken;
+  const upToDate = connected && !(await hasLocalChangesToSync());
+  UPLOAD_BUTTON_IDS.forEach(id => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    // Never fight setDriveActionBusy() mid-flight - if it's showing a
+    // spinner right now, that busy state owns `disabled` until it's done.
+    if (btn.dataset.originalHtml) return;
+    btn.disabled = !connected || upToDate;
+  });
 }
 
 // --- Backup ----------------------------------------------------------------
 
-async function backupToGoogleDrive() {
-  if (!gdriveToken) return alert('Authenticate with Google first!');
-  // driveSyncNotice only exists in the DOM while Settings is the current tab
-  // (it's part of renderSettings' template) - but this can now also be
-  // triggered from the header's quick-sync button on ANY screen, so every
-  // notice update below has to tolerate it being absent. When it IS absent,
-  // the terminal success/error messages fall back to a plain alert() so a
-  // header-triggered sync still gives some feedback beyond the spinner.
-  const notice = document.getElementById('driveSyncNotice');
-  const setNotice = (text, cls) => {
-    if (!notice) return;
-    notice.innerText = text;
-    notice.className = `text-[11px] text-center ${cls} font-medium h-4`;
+// Does the actual writing to Drive - settings/Splitwise wholesale, dirty
+// expense months chunked, manifest updated - and records what got pushed.
+// Split out of backupToGoogleDrive() so both the normal (no-conflict) path
+// AND resolveConflictOverwrite/resolveConflictPull (below) share ONE
+// implementation instead of two copies quietly drifting apart over time.
+async function performBackupWrite({ rootId, expensesFolderId, manifest, manifestFileId, dirtyMonths, syncMeta }) {
+  // Settings (categories + recurringItems + due items + budgets + family
+  // members + tags + vehicles + fuelLogs) are always small, so they're
+  // just overwritten wholesale every backup - no chunking needed.
+  driveSyncProgress('Syncing settings...');
+  const settingsPayload = {
+    categories: appData.categories,
+    recurringItems: appData.recurringItems,
+    items: appData.items,
+    budgets: appData.budgets,
+    familyMembers: appData.familyMembers,
+    tags: appData.tags,
+    vehicles: appData.vehicles,
+    fuelLogs: appData.fuelLogs,
+    userName: appData.userName,
+    savedAt: new Date().toISOString()
   };
+  const settingsFileId = await upsertJsonFile(rootId, SETTINGS_FILE_NAME, settingsPayload, syncMeta.settingsFileId);
+
+  // Splitwise groups are capped at 5 total, so - same reasoning as
+  // settings.json above - just read the whole store fresh from IndexedDB
+  // (not the in-memory `splitGroups` variable, which is only populated
+  // while the Splitwise overlay is actually open and would be stale/empty
+  // otherwise) and overwrite the Drive copy wholesale every backup.
+  driveSyncProgress('Syncing Splitwise groups...');
+  const splitwisePayload = {
+    groups: await IDB.getAll('splitGroups'),
+    savedAt: new Date().toISOString()
+  };
+  const splitwiseFileId = await upsertJsonFile(rootId, SPLITWISE_FILE_NAME, splitwisePayload, syncMeta.splitwiseFileId);
+
+  // manifestFileId/manifest were already resolved by the caller.
+  if (dirtyMonths.length > 0) {
+    manifest = manifest || { chunks: {} };
+    manifest.chunks = manifest.chunks || {};
+
+    const remoteVersions = {};
+    for (let i = 0; i < dirtyMonths.length; i++) {
+      const month = dirtyMonths[i];
+      driveSyncProgress(`Uploading ${month} (${i + 1}/${dirtyMonths.length})...`);
+
+      const monthExpenses = appData.expenses.filter(e => yearMonthOf(e.date) === month);
+      const updatedAt = new Date().toISOString();
+      const chunk = { yearMonth: month, count: monthExpenses.length, expenses: monthExpenses, updatedAt };
+
+      const existingChunk = manifest.chunks[month];
+      const chunkFileId = await upsertJsonFile(expensesFolderId, `${month}.json`, chunk, existingChunk && existingChunk.fileId);
+
+      manifest.chunks[month] = { fileId: chunkFileId, count: chunk.count, updatedAt };
+      remoteVersions[month] = updatedAt;
+    }
+
+    driveSyncProgress('Updating index...');
+    manifestFileId = await upsertJsonFile(rootId, MANIFEST_FILE_NAME, manifest, manifestFileId);
+
+    await clearDirtyMonths(dirtyMonths, remoteVersions);
+  }
+
+  // Fingerprint/stamp everything JUST pushed, so the next
+  // hasLocalChangesToSync() (storage.js) and findSyncConflicts() (above)
+  // both know THESE exact payloads are now in sync with Drive.
+  await saveSyncMeta({
+    settingsFileId,
+    manifestFileId,
+    splitwiseFileId,
+    lastSyncedSettingsFingerprint: _settingsSyncFingerprint(),
+    lastSyncedSplitwiseFingerprint: JSON.stringify(splitwisePayload.groups),
+    knownRemoteSettingsSavedAt: settingsPayload.savedAt,
+    knownRemoteSplitwiseSavedAt: splitwisePayload.savedAt
+  });
+
+  return dirtyMonths.length > 0 ? `Synced ${dirtyMonths.length} month(s) + settings.` : 'Settings synced. Expenses already up to date.';
+}
+
+async function backupToGoogleDrive() {
+  if (!gdriveToken) { driveSyncDone('Authenticate with Google first!', true); return; }
   setDriveActionBusy(['btnBackupDrive', 'globalDriveSyncBtn'], 'Uploading...');
-  setNotice('Preparing backup...', 'text-blue-500');
+  driveSyncProgress('Preparing backup...');
 
   try {
     const { rootId, expensesFolderId } = await ensureSyncFolders();
@@ -510,75 +671,174 @@ async function backupToGoogleDrive() {
       : trackedDirtyMonths;
 
     if (remoteManifestMissing && localMonths.length > 0) {
-      setNotice('Drive backup not found - re-uploading full history...', 'text-amber-600');
+      driveSyncProgress('Drive backup not found - re-uploading full history...');
     }
 
-    // Settings (categories + recurringItems + due items + budgets + family
-    // members + tags + vehicles + fuelLogs) are always small, so they're
-    // just overwritten wholesale every backup - no chunking needed.
-    setNotice('Syncing settings...', 'text-blue-500');
-    const settingsPayload = {
-      categories: appData.categories,
-      recurringItems: appData.recurringItems,
-      items: appData.items,
-      budgets: appData.budgets,
-      familyMembers: appData.familyMembers,
-      tags: appData.tags,
-      vehicles: appData.vehicles,
-      fuelLogs: appData.fuelLogs,
-      savedAt: new Date().toISOString()
-    };
-    const settingsFileId = await upsertJsonFile(rootId, SETTINGS_FILE_NAME, settingsPayload, syncMeta.settingsFileId);
+    // --- Conflict check ----------------------------------------------------
+    // Before writing ANYTHING, make sure Drive hasn't moved on since this
+    // device last looked at whatever it's about to overwrite. Cheap: these
+    // are the same small settings.json/splitwise.json files anyway.
+    driveSyncProgress('Checking for conflicts...');
+    const [remoteSettingsFile, remoteSplitwiseFile] = await Promise.all([
+      findFileByIdOrName(syncMeta.settingsFileId, SETTINGS_FILE_NAME, rootId),
+      findFileByIdOrName(syncMeta.splitwiseFileId, SPLITWISE_FILE_NAME, rootId)
+    ]);
+    const [remoteSettingsData, remoteSplitwiseData] = await Promise.all([
+      remoteSettingsFile ? fetchJsonFile(remoteSettingsFile.id).catch(() => null) : Promise.resolve(null),
+      remoteSplitwiseFile ? fetchJsonFile(remoteSplitwiseFile.id).catch(() => null) : Promise.resolve(null)
+    ]);
 
-    // Splitwise groups are capped at 5 total, so - same reasoning as
-    // settings.json above - just read the whole store fresh from IndexedDB
-    // (not the in-memory `splitGroups` variable, which is only populated
-    // while the Splitwise overlay is actually open and would be stale/empty
-    // otherwise) and overwrite the Drive copy wholesale every backup.
-    setNotice('Syncing Splitwise groups...', 'text-blue-500');
-    const splitwisePayload = {
-      groups: await IDB.getAll('splitGroups'),
-      savedAt: new Date().toISOString()
-    };
-    const splitwiseFileId = await upsertJsonFile(rootId, SPLITWISE_FILE_NAME, splitwisePayload, syncMeta.splitwiseFileId);
+    const conflicts = findSyncConflicts({ syncMeta, manifest, dirtyMonths, remoteSettingsData, remoteSplitwiseData });
 
-    // manifestFileId/manifest were already resolved up front (see the
-    // remoteManifestMissing check above) - no need to look them up again.
-    if (dirtyMonths.length > 0) {
-      manifest = manifest || { chunks: {} };
-      manifest.chunks = manifest.chunks || {};
-
-      const remoteVersions = {};
-      for (let i = 0; i < dirtyMonths.length; i++) {
-        const month = dirtyMonths[i];
-        setNotice(`Uploading ${month} (${i + 1}/${dirtyMonths.length})...`, 'text-blue-500');
-
-        const monthExpenses = appData.expenses.filter(e => yearMonthOf(e.date) === month);
-        const updatedAt = new Date().toISOString();
-        const chunk = { yearMonth: month, count: monthExpenses.length, expenses: monthExpenses, updatedAt };
-
-        const existingChunk = manifest.chunks[month];
-        const chunkFileId = await upsertJsonFile(expensesFolderId, `${month}.json`, chunk, existingChunk && existingChunk.fileId);
-
-        manifest.chunks[month] = { fileId: chunkFileId, count: chunk.count, updatedAt };
-        remoteVersions[month] = updatedAt;
-      }
-
-      setNotice('Updating index...', 'text-blue-500');
-      manifestFileId = await upsertJsonFile(rootId, MANIFEST_FILE_NAME, manifest, manifestFileId);
-
-      await clearDirtyMonths(dirtyMonths, remoteVersions);
+    if (conflicts.hasAny) {
+      // Hand off to the interactive conflict-choice modal - hide the
+      // undismissable busy modal first, or the user could never reach it.
+      hideDriveBusyModal();
+      openSyncConflictModal({
+        conflicts, rootId, expensesFolderId, manifest, manifestFileId, dirtyMonths, syncMeta,
+        remoteSettingsData, remoteSplitwiseData, remoteSettingsFile, remoteSplitwiseFile
+      });
+      return;
     }
 
-    await saveSyncMeta({ settingsFileId, manifestFileId, splitwiseFileId });
-
-    const resultMessage = dirtyMonths.length > 0 ? `Synced ${dirtyMonths.length} month(s) + settings.` : 'Settings synced. Expenses already up to date.';
-    setNotice(resultMessage, 'text-emerald-600');
-    if (!notice) alert(`Drive sync complete. ${resultMessage}`);
+    const resultMessage = await performBackupWrite({ rootId, expensesFolderId, manifest, manifestFileId, dirtyMonths, syncMeta });
+    driveSyncDone(resultMessage, false);
   } catch (err) {
     console.error(err);
-    setNotice('Error: ' + err.message, 'text-rose-600');
-    if (!notice) alert('Drive sync failed: ' + err.message);
+    driveSyncDone('Error: ' + err.message, true);
+  } finally {
+    clearDriveActionBusy();
+  }
+}
+
+// --- Conflict resolution modal ---------------------------------------------
+// Shown when backupToGoogleDrive()'s pre-write check finds Drive has moved
+// on since this device last looked. Holds whatever the caller already
+// fetched (manifest, remote settings/Splitwise data, file ids) so neither
+// resolution path has to re-fetch it - mirrors _pendingRestore's role for
+// the year-picker modal (same single-user/single-tab reasoning applies).
+let _pendingConflictResolution = null;
+
+function openSyncConflictModal(ctx) {
+  _pendingConflictResolution = ctx;
+  const { conflicts } = ctx;
+  const modal = document.getElementById('formModal');
+  const content = document.getElementById('formModalContent');
+  modal.classList.remove('hidden');
+
+  const pieces = [];
+  if (conflicts.settings) pieces.push('Settings');
+  if (conflicts.splitwise) pieces.push('Splitwise groups');
+  if (conflicts.months.length) pieces.push(`Expenses (${conflicts.months.join(', ')})`);
+
+  content.innerHTML = `
+    <h3 class="text-sm font-bold text-slate-800 mb-1"><i class="fa-solid fa-triangle-exclamation text-amber-500 mr-1"></i>Drive has changes you haven't pulled</h3>
+    <p class="text-[11px] text-slate-400 mb-3">Another device backed up since this one last checked - <strong class="text-slate-600">${pieces.join(', ')}</strong>. Uploading now would overwrite that.</p>
+
+    <div class="space-y-2">
+      <button onclick="resolveConflictPull()" class="w-full py-2.5 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition">
+        <i class="fa-solid fa-cloud-arrow-down mr-1"></i> Pull latest first (recommended)
+      </button>
+      <button onclick="resolveConflictOverwrite()" class="w-full py-2.5 border border-rose-200 text-rose-600 rounded-xl text-xs font-semibold hover:bg-rose-50 transition">
+        <i class="fa-solid fa-cloud-arrow-up mr-1"></i> Overwrite Drive with mine
+      </button>
+      <button onclick="cancelConflictResolution()" class="w-full py-2 text-xs font-semibold text-slate-400 hover:text-slate-600 transition">
+        Cancel
+      </button>
+    </div>
+
+    <p class="text-[10px] text-slate-400 mt-3">Expenses merge automatically by entry - nothing gets dropped. Settings/Splitwise pull Drive's version wholesale, so redo any pending edit there afterward.</p>
+  `;
+}
+
+function cancelConflictResolution() {
+  _pendingConflictResolution = null;
+  closeFormModal();
+  clearDriveActionBusy();
+  hideDriveBusyModal(); // defensive - should already be hidden, cheap insurance against a stray blocking modal
+}
+
+// "I know, push mine over it anyway" - runs the exact same write path a
+// conflict-free backup would have, just with the check already bypassed by
+// the user's explicit choice.
+async function resolveConflictOverwrite() {
+  const ctx = _pendingConflictResolution;
+  _pendingConflictResolution = null;
+  closeFormModal();
+  if (!ctx) return;
+
+  setDriveActionBusy(['btnBackupDrive', 'globalDriveSyncBtn'], 'Uploading...');
+  driveSyncProgress('Uploading...');
+  try {
+    const resultMessage = await performBackupWrite(ctx);
+    driveSyncDone(resultMessage, false);
+  } catch (err) {
+    console.error(err);
+    driveSyncDone('Error: ' + err.message, true);
+  } finally {
+    clearDriveActionBusy();
+  }
+}
+
+// "Pull Drive's version first" - Settings/Splitwise are wholesale-replaced
+// with Drive's copy (same as a normal restore - no merge engine exists for
+// arbitrary settings blobs, see the chat where this was scoped). Expenses
+// get the smarter treatment: conflicted months are merged BY ID with
+// mergeExpensesByIdForConflict() instead of replaced, so this device's own
+// pending edits survive right alongside whatever the other device pushed -
+// then immediately re-uploaded as the new merged version, which is what
+// makes this a real "pull + rebase + push" instead of just a restore.
+async function resolveConflictPull() {
+  const ctx = _pendingConflictResolution;
+  _pendingConflictResolution = null;
+  closeFormModal();
+  if (!ctx) return;
+
+  const { conflicts, remoteSettingsData, remoteSplitwiseData, remoteSettingsFile, remoteSplitwiseFile, manifest } = ctx;
+
+  setDriveActionBusy(['btnBackupDrive', 'globalDriveSyncBtn'], 'Pulling...');
+  driveSyncProgress('Pulling Drive\'s latest...');
+  try {
+    if (conflicts.settings && remoteSettingsData) {
+      await applyRestoredSettingsData(remoteSettingsData, remoteSettingsFile ? remoteSettingsFile.id : null);
+    }
+    if (conflicts.splitwise && remoteSplitwiseData) {
+      await applyRestoredSplitwiseData(remoteSplitwiseData, remoteSplitwiseFile ? remoteSplitwiseFile.id : null);
+    }
+
+    for (const month of conflicts.months) {
+      const remoteChunk = manifest.chunks[month];
+      const remoteExpenses = remoteChunk
+        ? await fetchJsonFile(remoteChunk.fileId).then(c => c.expenses || []).catch(() => [])
+        : [];
+      const localMonthExpenses = appData.expenses.filter(e => yearMonthOf(e.date) === month);
+      const merged = mergeExpensesByIdForConflict(localMonthExpenses, remoteExpenses);
+      appData.expenses = appData.expenses.filter(e => yearMonthOf(e.date) !== month).concat(merged);
+    }
+
+    // Persist. Settings/Splitwise bookkeeping was already handled by the
+    // applyRestored*Data() calls above; expenses genuinely changed via the
+    // merge above, so a normal (non-skip) saveState() correctly re-flags
+    // those months dirty for the follow-up upload below.
+    await saveState();
+    await saveSyncMeta({ lastRestoreAt: new Date().toISOString() });
+
+    const freshMeta = await getSyncMeta();
+    const stillDirty = freshMeta.dirtyMonths || [];
+
+    if (stillDirty.length > 0) {
+      driveSyncProgress(`Merged with Drive's version - uploading the result...`);
+      const resultMessage = await performBackupWrite({ ...ctx, dirtyMonths: stillDirty, syncMeta: freshMeta });
+      driveSyncDone(`Pulled + ${resultMessage}`, false);
+    } else {
+      driveSyncDone('Pulled Drive\'s latest. Redo any pending Settings/Splitwise edit, then Upload again.', false);
+    }
+
+    if (currentTab === 'settings') renderSettings(document.getElementById('mainContainer'));
+    else if (currentTab === 'home' || currentTab === 'expenses') navigate(currentTab);
+  } catch (err) {
+    console.error(err);
+    driveSyncDone('Pull failed: ' + err.message, true);
   } finally {
     clearDriveActionBusy();
   }
@@ -592,17 +852,11 @@ async function backupToGoogleDrive() {
 // sanity-check the self-healing logic in backupToGoogleDrive() above (hit
 // this, then just hit Backup - it should silently rebuild everything).
 async function deleteAllDriveBackupsExceptSettings() {
-  if (!gdriveToken) return alert('Authenticate with Google first!');
+  if (!gdriveToken) { driveSyncDone('Authenticate with Google first!', true); return; }
   if (!confirm('This permanently deletes your Drive backup - all expense history and Splitwise groups stored there - EXCEPT settings.json (categories/recurring items/due items/budgets/family members). Data on THIS device is untouched. This cannot be undone. Continue?')) return;
 
-  const notice = document.getElementById('driveSyncNotice');
-  const setNotice = (text, cls) => {
-    if (!notice) return;
-    notice.innerText = text;
-    notice.className = `text-[11px] text-center ${cls} font-medium h-4`;
-  };
   setDriveActionBusy('btnBackupDrive', 'Deleting Drive backup...');
-  setNotice('Deleting Drive backup...', 'text-blue-500');
+  driveSyncProgress('Deleting Drive backup...');
 
   try {
     const folderName = GOOGLE_DRIVE_BACKUP_FOLDER_NAME;
@@ -632,11 +886,11 @@ async function deleteAllDriveBackupsExceptSettings() {
     // no reason to leave stale bookkeeping lying around either.
     await saveSyncMeta({ manifestFileId: null, splitwiseFileId: null, dirtyMonths: [], remoteChunkVersions: {} });
 
-    setNotice('Drive backup deleted (settings kept). Next Backup re-uploads everything fresh.', 'text-emerald-600');
+    driveSyncDone('Drive backup deleted (settings kept). Next Backup re-uploads everything fresh.', false);
     if (currentTab === 'settings') renderSettings(document.getElementById('mainContainer'));
   } catch (err) {
     console.error(err);
-    setNotice('Error deleting Drive backup: ' + err.message, 'text-rose-600');
+    driveSyncDone('Error deleting Drive backup: ' + err.message, true);
   } finally {
     clearDriveActionBusy();
   }
@@ -663,16 +917,91 @@ function mergeExpensesForMonths(newExpenses, targetMonths) {
   appData.expenses = untouchedLocal.concat(newExpenses);
 }
 
+// --- Conflict resolution: id-based expense merge -------------------------
+// Used ONLY when a backup detects another device already pushed a newer
+// copy of a month this device is also trying to push (see
+// findSyncConflicts/resolveConflictPull below). Unlike mergeExpensesForMonths
+// above (a normal restore's deliberate "Drive wins, replace this month"),
+// the goal here is the opposite: neither side's new expenses should be
+// silently dropped, since both devices independently added real data.
+//
+// Expenses don't carry their own last-edited timestamp, so the one case
+// this can't resolve with confidence - the exact same id edited DIFFERENTLY
+// on both sides - is handled by keeping BOTH copies (remote keeps its
+// original id, local's gets a fresh one) rather than guessing a winner and
+// deleting money data on a coin flip. Worst case the user sees a harmless
+// duplicate to clean up by hand; best case (the common one - both sides
+// just ADDED different new expenses) it's a perfect, invisible merge.
+function mergeExpensesByIdForConflict(localExpenses, remoteExpenses) {
+  const merged = new Map(remoteExpenses.map(e => [e.id, e]));
+  localExpenses.forEach(e => {
+    const remoteMatch = merged.get(e.id);
+    if (!remoteMatch) {
+      merged.set(e.id, e); // local-only addition - keep it
+    } else if (JSON.stringify(remoteMatch) !== JSON.stringify(e)) {
+      const dupId = `${e.id}_dup${Math.random().toString(36).slice(2, 8)}`;
+      merged.set(dupId, { ...e, id: dupId });
+    }
+    // else: identical on both sides, nothing to do - remote's copy already covers it
+  });
+  return Array.from(merged.values());
+}
+
+// True if Drive has moved on, for any piece this backup is about to
+// overwrite, since the last time THIS device actually looked. Settings and
+// Splitwise are compared by their `savedAt` stamp against what this device
+// last recorded seeing (knownRemote*SavedAt); expense months are compared
+// against the manifest's per-month `updatedAt` vs this device's own
+// remoteChunkVersions record - but only for months this device is actually
+// dirty on (a month neither side is touching can't conflict).
+function findSyncConflicts({ syncMeta, manifest, dirtyMonths, remoteSettingsData, remoteSplitwiseData }) {
+  const conflicts = { settings: false, splitwise: false, months: [] };
+
+  if (remoteSettingsData && remoteSettingsData.savedAt !== (syncMeta.knownRemoteSettingsSavedAt || null)) {
+    conflicts.settings = true;
+  }
+  if (remoteSplitwiseData && remoteSplitwiseData.savedAt !== (syncMeta.knownRemoteSplitwiseSavedAt || null)) {
+    conflicts.splitwise = true;
+  }
+
+  const remoteVersions = syncMeta.remoteChunkVersions || {};
+  const chunks = (manifest && manifest.chunks) || {};
+  dirtyMonths.forEach(month => {
+    const remoteChunk = chunks[month];
+    if (remoteChunk && remoteChunk.updatedAt !== remoteVersions[month]) {
+      conflicts.months.push(month);
+    }
+  });
+
+  conflicts.hasAny = conflicts.settings || conflicts.splitwise || conflicts.months.length > 0;
+  return conflicts;
+}
+
 // Unlike expenses, Splitwise groups aren't year-scoped and there's no
 // diffing/merge needed - it's a full REPLACE of the local store with
 // whatever's on Drive, same wholesale treatment as settings.json. Safe to
 // call unconditionally (no-ops if there's nothing to restore) from every
 // restore code path, including the early-return "no expense history yet"
 // branches that never reach the year-picker/confirmYearRestore flow at all.
-async function applyRestoredSplitwiseData(splitwiseData) {
+async function applyRestoredSplitwiseData(splitwiseData, splitwiseFileId) {
   if (!splitwiseData || !Array.isArray(splitwiseData.groups)) return;
 
   await IDB.replaceAll('splitGroups', splitwiseData.groups);
+
+  // Local now matches Drive exactly for Splitwise - record that so
+  // hasLocalChangesToSync()/findSyncConflicts() don't think there's
+  // something new to push (or a conflict) moments after a restore/pull
+  // that already brought this device fully up to date. Fingerprinted via a
+  // FRESH IndexedDB read (not splitwiseData.groups directly) so it's byte-
+  // for-byte comparable with what hasLocalChangesToSync() reads later -
+  // IndexedDB's own key ordering on getAll() isn't guaranteed to match
+  // whatever order the source JSON array happened to be in.
+  const freshGroups = await IDB.getAll('splitGroups');
+  await saveSyncMeta({
+    splitwiseFileId,
+    lastSyncedSplitwiseFingerprint: JSON.stringify(freshGroups),
+    knownRemoteSplitwiseSavedAt: splitwiseData.savedAt || null
+  });
 
   // If the Splitwise overlay happens to be open right now, refresh it in
   // place so it doesn't keep showing stale pre-restore data until the user
@@ -681,21 +1010,32 @@ async function applyRestoredSplitwiseData(splitwiseData) {
   // case.)
   const overlay = document.getElementById('splitwiseOverlay');
   if (overlay && !overlay.classList.contains('hidden')) {
-    splitGroups = await IDB.getAll('splitGroups');
+    splitGroups = freshGroups;
     splitGroups.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     renderSplitwiseView();
   }
 }
 
+// Wrapper around mergeIntoAppData() specifically for the Drive-restore path.
+// mergeIntoAppData() itself stays Drive-agnostic (data-model.js has no
+// business knowing about sync bookkeeping) - this is the one place that
+// bridges the two, recording that this device's settings now mirror EXACTLY
+// what Drive had at settingsData.savedAt. Same reasoning as
+// applyRestoredSplitwiseData() above.
+async function applyRestoredSettingsData(settingsData, settingsFileId) {
+  if (!settingsData) return;
+  mergeIntoAppData(settingsData);
+  await saveSyncMeta({
+    settingsFileId,
+    lastSyncedSettingsFingerprint: _settingsSyncFingerprint(),
+    knownRemoteSettingsSavedAt: settingsData.savedAt || null
+  });
+}
+
 async function restoreFromGoogleDrive() {
-  if (!gdriveToken) return alert('Authenticate with Google first!');
-  const notice = document.getElementById('driveSyncNotice');
-  const setNotice = (text, cls) => {
-    notice.innerText = text;
-    notice.className = `text-[11px] text-center ${cls} font-medium h-4`;
-  };
+  if (!gdriveToken) { driveSyncDone('Authenticate with Google first!', true); return; }
   setDriveActionBusy('btnRestoreDrive', 'Checking...');
-  setNotice('Checking Drive...', 'text-blue-500');
+  driveSyncProgress('Checking Drive...');
 
   try {
     const folderName = GOOGLE_DRIVE_BACKUP_FOLDER_NAME;
@@ -721,8 +1061,8 @@ async function restoreFromGoogleDrive() {
     const splitwiseFile = await findFileByIdOrName(syncMeta.splitwiseFileId, SPLITWISE_FILE_NAME, rootId);
     const splitwiseData = splitwiseFile ? await fetchJsonFile(splitwiseFile.id).catch(() => null) : null;
     if (splitwiseData) {
-      setNotice('Syncing Splitwise groups...', 'text-blue-500');
-      await applyRestoredSplitwiseData(splitwiseData);
+      driveSyncProgress('Syncing Splitwise groups...');
+      await applyRestoredSplitwiseData(splitwiseData, splitwiseFile.id);
     }
 
     const manifestFile = await findFileByIdOrName(syncMeta.manifestFileId, MANIFEST_FILE_NAME, rootId);
@@ -734,11 +1074,11 @@ async function restoreFromGoogleDrive() {
       // after the (already required) full fetch.
       const legacyFile = await findFileByName(LEGACY_BACKUP_FILE_NAME, rootId);
       if (!legacyFile) {
-        setNotice(`No backup found in folder '${folderName}'.`, 'text-rose-600');
+        driveSyncDone(`No backup found in folder '${folderName}'.`, false);
         return;
       }
 
-      setNotice('Downloading legacy backup...', 'text-blue-500');
+      driveSyncProgress('Downloading legacy backup...');
       const legacyData = await fetchJsonFile(legacyFile.id);
       const legacyExpenses = Array.isArray(legacyData.expenses) ? legacyData.expenses : [];
       const years = Array.from(new Set(legacyExpenses.map(e => yearMonthOf(e.date).slice(0, 4)))).sort().reverse();
@@ -747,13 +1087,13 @@ async function restoreFromGoogleDrive() {
         // Nothing dated at all - nothing to pick a year for, just bring in settings.
         mergeIntoAppData({ ...legacyData, expenses: undefined });
         await saveState({ skipDirtyTracking: true });
-        setNotice('Restored settings from legacy backup (no expenses found).', 'text-emerald-600');
+        driveSyncDone('Restored settings from legacy backup (no expenses found).', false);
         navigate('home');
         return;
       }
 
       _pendingRestore = { mode: 'legacy', legacyData, legacyExpenses };
-      setNotice('Choose a year to restore below.', 'text-blue-500');
+      hideDriveBusyModal(); // hand off to the interactive year-picker - it can't be reached with the busy modal on top
       openYearPickerModal(years, { legacyUpgradeNotice: true });
       return;
     }
@@ -767,20 +1107,20 @@ async function restoreFromGoogleDrive() {
     const remoteMonths = Object.keys(manifest.chunks || {});
 
     if (remoteMonths.length === 0) {
-      if (settingsData) mergeIntoAppData(settingsData);
+      if (settingsData) await applyRestoredSettingsData(settingsData, settingsFile ? settingsFile.id : null);
       await saveState({ skipDirtyTracking: true });
-      setNotice('Backup found, but it has no expense history yet. Settings synced.', 'text-amber-600');
+      driveSyncDone('Backup found, but it has no expense history yet. Settings synced.', false);
       navigate('home');
       return;
     }
 
     const years = Array.from(new Set(remoteMonths.map(m => m.slice(0, 4)))).sort().reverse();
     _pendingRestore = { mode: 'chunked', manifest, settingsData, manifestFile, settingsFile, remoteMonths };
-    setNotice('Choose a year to restore below.', 'text-blue-500');
+    hideDriveBusyModal(); // hand off to the interactive year-picker - it can't be reached with the busy modal on top
     openYearPickerModal(years, {});
   } catch (err) {
     console.error(err);
-    setNotice('Restore Error: ' + err.message, 'text-rose-600');
+    driveSyncDone('Restore Error: ' + err.message, true);
   } finally {
     // Clears regardless of outcome: error, "nothing to restore" early-return,
     // or successfully handing off to the year-picker modal (which owns the
@@ -850,46 +1190,17 @@ async function confirmYearRestore() {
   const pending = _pendingRestore;
   _pendingRestore = null;
 
-  // Keep the modal open with a spinner instead of closing it immediately -
+  // Hand off from the interactive year-picker to the blocking busy modal -
   // the actual restore involves real network round-trips (fetching months
-  // from Drive), and closing right away made it look like the click did
-  // nothing until Home suddenly re-rendered moments later.
-  const modalContent = document.getElementById('formModalContent');
-  const showModalProgress = (text) => {
-    if (!modalContent) return;
-    modalContent.innerHTML = `
-      <div class="py-10 flex flex-col items-center justify-center gap-3 text-center">
-        <i class="fa-solid fa-circle-notch fa-spin text-3xl text-blue-500"></i>
-        <p class="text-xs font-semibold text-slate-700">${text}</p>
-      </div>
-    `;
-  };
-  const showModalError = (message) => {
-    if (!modalContent) return;
-    modalContent.innerHTML = `
-      <div class="py-6 flex flex-col items-center justify-center gap-3 text-center">
-        <i class="fa-solid fa-circle-exclamation text-3xl text-rose-500"></i>
-        <p class="text-xs font-semibold text-rose-600">Restore failed</p>
-        <p class="text-[10px] text-slate-400 px-2">${message}</p>
-        <button onclick="closeFormModal()" class="mt-2 px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">Close</button>
-      </div>
-    `;
-  };
-
-  const notice = document.getElementById('driveSyncNotice');
-  const setNotice = (text, cls) => {
-    if (notice) {
-      notice.innerText = text;
-      notice.className = `text-[11px] text-center ${cls} font-medium h-4`;
-    }
-    showModalProgress(text);
-  };
+  // from Drive), and the busy modal is what keeps the rest of the app
+  // (Expenses, Add Entry, etc) genuinely locked out while that happens.
+  closeFormModal();
 
   const targetYears = new Set(checked);
   const currentYear = currentYearStr();
   const restoringCurrentYear = targetYears.has(currentYear);
 
-  setNotice(`Restoring ${Array.from(targetYears).join(', ')}...`, 'text-blue-500');
+  driveSyncProgress(`Restoring ${Array.from(targetYears).join(', ')}...`);
 
   try {
     // Splitwise sync already happened up in restoreFromGoogleDrive(), before
@@ -940,9 +1251,8 @@ async function confirmYearRestore() {
       mergeExpensesForMonths(filteredExpenses, null);
 
       await saveState(); // normal diff -> marks these months dirty so the next backup ships them in the new chunked format
-      setNotice(`Restored ${filteredExpenses.length} expense(s) for ${Array.from(targetYears).join(', ')}. Upgrading Drive format...`, 'text-blue-500');
-      await backupToGoogleDrive(); // seeds settings.json + chunked expenses/manifest from here on - done BEFORE navigating away so its own progress notices still have a live #driveSyncNotice element to write into
-      closeFormModal();
+      driveSyncProgress(`Restored ${filteredExpenses.length} expense(s) for ${Array.from(targetYears).join(', ')}. Upgrading Drive format...`);
+      await backupToGoogleDrive(); // seeds settings.json + chunked expenses/manifest from here on - shows its own driveSyncDone() when it finishes
       navigate('home');
       return;
     }
@@ -950,7 +1260,7 @@ async function confirmYearRestore() {
     const { manifest, settingsData, manifestFile, settingsFile, remoteMonths } = pending;
     const targetMonths = remoteMonths.filter(m => targetYears.has(m.slice(0, 4)));
 
-    if (settingsData) mergeIntoAppData(settingsData);
+    if (settingsData) await applyRestoredSettingsData(settingsData, settingsFile ? settingsFile.id : null);
 
     if (targetMonths.length === 0) {
       // Local data for the selected year(s) was already purged above (and
@@ -960,8 +1270,7 @@ async function confirmYearRestore() {
       // data around. Nothing changed since that bake-in, so there's
       // nothing new to mark dirty here either.
       await saveState({ skipDirtyTracking: true });
-      setNotice(`No expense data found on Drive for ${Array.from(targetYears).join(', ')}.${restoringCurrentYear ? ' Local data for it was cleared to match.' : ' Settings synced.'}`, 'text-amber-600');
-      closeFormModal();
+      driveSyncDone(`No expense data found on Drive for ${Array.from(targetYears).join(', ')}.${restoringCurrentYear ? ' Local data for it was cleared to match.' : ' Settings synced.'}`, false);
       navigate('home');
       return;
     }
@@ -987,7 +1296,7 @@ async function confirmYearRestore() {
       return Array.isArray(chunk.expenses) ? chunk.expenses : [];
     });
 
-    setNotice(`Merging ${targetMonths.length} month(s) (${fetchedCount} downloaded, ${skippedCount} already up to date)...`, 'text-blue-500');
+    driveSyncProgress(`Merging ${targetMonths.length} month(s) (${fetchedCount} downloaded, ${skippedCount} already up to date)...`);
 
     mergeExpensesForMonths(monthResults.flat(), targetMonths);
 
@@ -1004,15 +1313,10 @@ async function confirmYearRestore() {
       lastRestoreAt: new Date().toISOString()
     });
 
-    setNotice(`Restored ${Array.from(targetYears).join(', ')} (${targetMonths.length} month(s)).`, 'text-emerald-600');
-    closeFormModal();
+    driveSyncDone(`Restored ${Array.from(targetYears).join(', ')} (${targetMonths.length} month(s)).`, false);
     navigate('home');
   } catch (err) {
     console.error(err);
-    if (notice) {
-      notice.innerText = 'Restore Error: ' + err.message;
-      notice.className = 'text-[11px] text-center text-rose-600 font-medium h-4';
-    }
-    showModalError(err.message);
+    driveSyncDone('Restore Error: ' + err.message, true);
   }
 }

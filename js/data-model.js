@@ -53,8 +53,9 @@ const TAB_DISPLAY_NAMES = {
   compare: 'Compare',
   settings: 'Settings',
   splitwise: 'Splitwise',
-  reports: 'Reports',
-  fuel: 'Fuel Log'
+  reports: 'Tag Reports',
+  fuel: 'Fuel Log',
+  pdfReport: 'Generate PDF'
 };
 
 // Sets the " / PageName" breadcrumb suffix after the clickable "Life
@@ -67,6 +68,26 @@ const TAB_DISPLAY_NAMES = {
 function setAppHeaderCrumb(pageName) {
   const el = document.getElementById('appHeaderCrumb');
   if (el) el.textContent = pageName ? ` / ${pageName}` : '';
+}
+
+// Renders the "Thu, Jan 1" date line in the main header, plus a short
+// personal greeting appended after it whenever a name is set in Settings
+// ("Your Name" card) - e.g. "Thu, Jan 1 \u2022 Hi, Mani". Deliberately kept
+// as a suffix on the EXISTING date line rather than a whole new header
+// element: the right side of the header is already busy with the Drive
+// sync button + connection pill, and the left side already has the
+// hamburger/logo/title/breadcrumb stacked above this line - tacking the
+// greeting onto the one line that had spare room is the least disruptive
+// place for it, on a `max-w-md` mobile-first layout, to actually show up.
+// Called once on boot (see initStorage in storage.js) and again right
+// after saveUserName() so an edited name reflects immediately - no reload
+// needed, same live-update principle the Drive upload button follows.
+function updateHeaderGreeting() {
+  const dateEl = document.getElementById('headerDate');
+  if (!dateEl) return;
+  const dateText = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const name = (appData.userName || '').trim();
+  dateEl.textContent = name ? `${dateText} \u2022 Hi, ${name}` : dateText;
 }
 
 // All expenses whose date falls in the given calendar year ("YYYY").
@@ -146,7 +167,13 @@ function getDefaultAppData() {
     // this app (price-history changes, category/tag/member deletes never
     // rewrite past expenses): editing or deleting a fuel entry later never
     // touches the expense it already created. Full OVERWRITE on restore.
-    fuelLogs: []
+    fuelLogs: [],
+    // Optional display name for the header's "Hi, {name}" greeting (see
+    // Settings -> "Your Name" and updateHeaderGreeting() below). Plain
+    // string, empty means "not set" - synced wholesale in settings.json
+    // like every other small settings field here, so it follows the user
+    // to any device they restore on.
+    userName: ''
   };
 }
 
@@ -257,6 +284,13 @@ function mergeIntoAppData(parsedData) {
       monthly: { ...(parsedData.budgets.monthly || {}) },
       frozenThroughMonth: parsedData.budgets.frozenThroughMonth || null
     };
+  }
+
+  // Display name for the header greeting: plain string, wholesale-overwrite
+  // on restore/merge (Drive's value wins) same as familyMembers/tags -
+  // there's only ever one value here, nothing to merge on top of.
+  if (typeof parsedData.userName === 'string') {
+    appData.userName = parsedData.userName;
   }
 }
 
