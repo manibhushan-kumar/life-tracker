@@ -55,7 +55,8 @@ const TAB_DISPLAY_NAMES = {
   splitwise: 'Splitwise',
   reports: 'Tag Reports',
   fuel: 'Fuel Log',
-  pdfReport: 'Generate PDF'
+  pdfReport: 'Generate PDF',
+  loans: 'Loans'
 };
 
 // Sets the " / PageName" breadcrumb suffix after the clickable "Life
@@ -173,7 +174,25 @@ function getDefaultAppData() {
     // string, empty means "not set" - synced wholesale in settings.json
     // like every other small settings field here, so it follows the user
     // to any device they restore on.
-    userName: ''
+    userName: '',
+    // Loans - money the user has TAKEN (borrowed), not lent out - see
+    // "Add Loan" in the Quick Add sheet (js/loans.js). Each loan embeds its
+    // own partial-payment history (same self-contained-document spirit as
+    // Splitwise's group.expenses), so "delete a loan" is one array splice
+    // that removes everything in it, nothing left to orphan elsewhere:
+    //   { id, name, amount (original principal), from (free-text - a
+    //     person, bank, anyone), dateTaken, targetDate (when you plan to
+    //     clear it off), createdAt,
+    //     payments: [{ id, amount, date, note, createdAt }] }
+    // getLoanPaidTotal/getLoanRemaining/getLoanStatusInfo below are the
+    // single source of truth for turning this into "how much is left" -
+    // nothing else should re-derive that math independently. Lives in
+    // appData (unlike Splitwise's own IndexedDB store) specifically so it
+    // rides along for free in the EXISTING saveState()/Drive settings.json
+    // machinery - no separate store, no separate Drive file, no separate
+    // "did this change" button-refresh plumbing to maintain. Full
+    // OVERWRITE on restore, same as familyMembers/tags/vehicles/fuelLogs.
+    loans: []
   };
 }
 
@@ -240,6 +259,13 @@ function mergeIntoAppData(parsedData) {
   }
   if (Array.isArray(parsedData.fuelLogs)) {
     appData.fuelLogs = parsedData.fuelLogs;
+  }
+
+  // Loans: same wholesale-overwrite treatment as vehicles/fuelLogs above -
+  // restoring means "Drive's list wins", including a loan (and every
+  // payment logged against it) deleted since the last backup.
+  if (Array.isArray(parsedData.loans)) {
+    appData.loans = parsedData.loans;
   }
 
   // Recurring Daily Items - fully generic and user-configurable, so a
@@ -406,6 +432,46 @@ function getVehicleNumber(vehicleId) {
   if (!vehicleId) return null;
   const vehicle = (appData.vehicles || []).find(v => v.id === vehicleId);
   return vehicle ? vehicle.number : 'Former vehicle';
+}
+
+// --- Loan math ---------------------------------------------------------
+// Pure helpers so js/loans.js's list view, detail view, and any future
+// consumer all agree on exactly what "how much is left on this loan"
+// means - single source of truth, same spirit as the Fuel Tracker math
+// below.
+
+// Sum of every partial payment logged against a loan so far. Simple
+// reduce, but pulled into its own named function (rather than inlined at
+// every call site) so getLoanRemaining below - and anything else that ever
+// needs it - can't drift into a slightly different sum by accident.
+function getLoanPaidTotal(loan) {
+  return (loan.payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+}
+
+// What's still owed on the principal. Clamped at 0 rather than going
+// negative on an overpayment - a loan can't be "paid off by -400", it's
+// just paid off (the raw over/under amount, if ever needed, is trivially
+// `getLoanPaidTotal(loan) - loan.amount`).
+function getLoanRemaining(loan) {
+  return Math.max(0, Number(loan.amount) - getLoanPaidTotal(loan));
+}
+
+// Three states a loan can be in, each with the label + Tailwind classes
+// js/loans.js needs to render its badge - same "one lookup, everyone
+// agrees" principle as getBudgetStatus above. A loan only counts as
+// "Overdue" once its target date has passed AND it's still not fully
+// paid off - a paid-off loan is never overdue no matter how late it was
+// actually settled, since the whole point of the badge is "does this still
+// need your attention".
+function getLoanStatusInfo(loan) {
+  const remaining = getLoanRemaining(loan);
+  if (remaining <= 0) {
+    return { key: 'paid', label: 'Paid Off', badge: 'bg-emerald-100 text-emerald-700', bar: 'bg-emerald-500', track: 'bg-emerald-100' };
+  }
+  if (loan.targetDate && loan.targetDate < getTodayStr()) {
+    return { key: 'overdue', label: 'Overdue', badge: 'bg-rose-100 text-rose-700', bar: 'bg-rose-500', track: 'bg-rose-100' };
+  }
+  return { key: 'active', label: 'Active', badge: 'bg-blue-100 text-blue-700', bar: 'bg-blue-500', track: 'bg-blue-100' };
 }
 
 // --- Fuel Tracker math -----------------------------------------------------

@@ -211,6 +211,71 @@ function downloadPdfReport(data) {
     pdf.advance(8);
   }
 
+  // --- Paid By overview (same total-list treatment as All Tags above) plus
+  // a month-wise "who paid what" matrix for a 'year' report only - mirrors
+  // the on-screen version exactly (see _pdfReportResultHtml in
+  // pdf-report.js for the shared rationale on both pieces). ---
+  if (data.memberRows.length > 0) {
+    pdf.ensureSpace(20);
+    pdf.text(M, pdf.y, 'PAID BY (TOTAL SPEND)', { size: 9, bold: true, color: [0.45, 0.48, 0.56] });
+    pdf.advance(20);
+    data.memberRows.forEach((m, i) => {
+      const color = hexToRgb01(_pdfReportColor(i + 2));
+      pdf.ensureSpace(18);
+      pdf.rect(M, pdf.y + 3, 8, 8, { fill: color });
+      pdf.text(M + 14, pdf.y, pdfTruncateToWidth(m.name, CW * 0.55, 9, true), { size: 9, bold: true, color: [0.2, 0.23, 0.32], width: CW * 0.6 });
+      pdf.text(M, pdf.y, _pdfMoney(m.amount), { size: 9, bold: true, color, align: 'right', width: CW });
+      pdf.advance(16);
+    });
+    pdf.advance(8);
+
+    if (data.monthlyMemberRows.length > 0) {
+      const PDF_MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      pdf.ensureSpace(20);
+      pdf.text(M, pdf.y, 'PAID BY - MONTH WISE', { size: 9, bold: true, color: [0.45, 0.48, 0.56] });
+      pdf.advance(20);
+
+      // Columns are exactly the payers from memberRows (same order/subset
+      // as the total-list above) - generic key-driven cols, same DRY
+      // pattern the All Expenses table below uses, since the number of
+      // member columns varies per household.
+      const memberNames = data.memberRows.map(m => m.name);
+      const mCols = [
+        { key: 'month', label: 'MONTH', w: 0.28, align: 'left' },
+        ...memberNames.map(name => ({ key: name, label: name.toUpperCase(), w: 0.72 / memberNames.length, align: 'right' }))
+      ];
+      const mColWidths = mCols.map(c => c.w * CW);
+      const mColX = [];
+      let mCursor = M;
+      mColWidths.forEach(w => { mColX.push(mCursor); mCursor += w; });
+
+      function drawMemberTableHeader() {
+        pdf.rect(M, pdf.y, CW, 18, { fill: [0.12, 0.16, 0.24] });
+        mCols.forEach((c, i) => pdf.text(mColX[i] + 5, pdf.y + 5, c.label, { size: 7, bold: true, color: [1, 1, 1], align: c.align, width: mColWidths[i] - 10 }));
+        pdf.advance(18);
+      }
+
+      pdf.ensureSpace(18);
+      drawMemberTableHeader();
+
+      data.monthlyMemberRows.forEach((row, i) => {
+        const brokeToNewPage = pdf.ensureSpace(16);
+        if (brokeToNewPage) drawMemberTableHeader();
+        if (i % 2 === 1) pdf.rect(M, pdf.y, CW, 16, { fill: [0.97, 0.98, 1] });
+        const byName = {};
+        row.members.forEach(m => { byName[m.name] = m.amount; });
+        const monthLabel = `${PDF_MONTH_NAMES[Number(row.month.slice(5, 7)) - 1]} ${row.month.slice(0, 4)}`;
+        mCols.forEach((c, ci) => {
+          const isMonth = c.key === 'month';
+          const text = isMonth ? monthLabel : (byName[c.key] != null ? _pdfMoney(byName[c.key]) : '-');
+          pdf.text(mColX[ci] + 5, pdf.y + 4, text, { size: 8, bold: isMonth, color: isMonth ? [0.2, 0.23, 0.32] : [0.35, 0.38, 0.46], align: c.align, width: mColWidths[ci] - 10 });
+        });
+        pdf.advance(16);
+      });
+      pdf.advance(8);
+    }
+  }
+
   // --- All Expenses table (paginated - header row redraws on every new
   // page via ensureSpace()'s return value). Skipped entirely when the user
   // unchecked "include full expense list" on the filter form - a whole
@@ -223,11 +288,9 @@ function downloadPdfReport(data) {
     pdf.advance(20);
 
     const cols = [
-      { label: 'DATE', w: 0.14, align: 'left' },
-      { label: 'CATEGORY', w: 0.32, align: 'left' },
-      { label: 'TAG', w: 0.16, align: 'left' },
-      { label: 'NOTE', w: 0.20, align: 'left' },
-      { label: 'AMOUNT', w: 0.18, align: 'right' }
+      { label: 'DATE', w: 0.20, align: 'left' },
+      { label: 'CATEGORY', w: 0.55, align: 'left' },
+      { label: 'AMOUNT', w: 0.25, align: 'right' }
     ];
     const colWidths = cols.map(c => c.w * CW);
     const colX = [];
@@ -248,12 +311,9 @@ function downloadPdfReport(data) {
       if (brokeToNewPage) drawTableHeader();
       if (i % 2 === 1) pdf.rect(M, pdf.y, CW, 16, { fill: [0.97, 0.98, 1] });
       const catText = e.category + (e.subCategory ? ' > ' + e.subCategory : '');
-      const tagText = e.tag ? (getTagName(e.tag) || '-') : '-';
       pdf.text(colX[0] + 5, pdf.y + 4, e.date, { size: 8, color: [0.35, 0.38, 0.46], width: colWidths[0] - 10 });
       pdf.text(colX[1] + 5, pdf.y + 4, pdfTruncateToWidth(catText, colWidths[1] - 10, 8, false), { size: 8, color: [0.2, 0.23, 0.32], width: colWidths[1] - 10 });
-      pdf.text(colX[2] + 5, pdf.y + 4, pdfTruncateToWidth(tagText, colWidths[2] - 10, 8, false), { size: 8, color: [0.35, 0.38, 0.46], width: colWidths[2] - 10 });
-      pdf.text(colX[3] + 5, pdf.y + 4, pdfTruncateToWidth(e.note || '-', colWidths[3] - 10, 8, false), { size: 8, color: [0.35, 0.38, 0.46], width: colWidths[3] - 10 });
-      pdf.text(colX[4] + 5, pdf.y + 4, _pdfMoney(e.amount), { size: 8, bold: true, color: [0.1, 0.13, 0.2], align: 'right', width: colWidths[4] - 10 });
+      pdf.text(colX[2] + 5, pdf.y + 4, _pdfMoney(e.amount), { size: 8, bold: true, color: [0.1, 0.13, 0.2], align: 'right', width: colWidths[2] - 10 });
       pdf.advance(16);
     });
   }

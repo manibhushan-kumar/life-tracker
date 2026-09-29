@@ -5,9 +5,9 @@
 //     settings.json            <- categories + recurringItems + due items +
 //                                  budgets (global + per-month overrides) +
 //                                  familyMembers + tags + vehicles +
-//                                  fuelLogs. Always small, so it's just
-//                                  overwritten wholesale on every backup.
-//                                  No chunking.
+//                                  fuelLogs + loans. Always small, so it's
+//                                  just overwritten wholesale on every
+//                                  backup. No chunking.
 //     splitwise.json           <- Splitwise groups (members + expenses per
 //                                  group). Capped at 5 groups total, so like
 //                                  settings.json it's just overwritten
@@ -168,19 +168,19 @@ function tryRestoreDriveSession() {
   }
 }
 
-function authenticateGoogleDrive() {
-  if (!isGoogleDriveConfigured()) return alert('Google Drive backup is not configured yet. Set GOOGLE_OAUTH_CLIENT_ID in js/config.js first.');
+async function authenticateGoogleDrive() {
+  if (!isGoogleDriveConfigured()) return showAlert('Google Drive backup is not configured yet. Set GOOGLE_OAUTH_CLIENT_ID in js/config.js first.');
 
   if (typeof google === 'undefined' || !google.accounts) {
-    return alert('Google scripts are loading or offline. Check internet connection.');
+    return showAlert('Google scripts are loading or offline. Check internet connection.');
   }
 
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: GOOGLE_OAUTH_CLIENT_ID,
     scope: 'https://www.googleapis.com/auth/drive.file',
-    callback: (response) => {
+    callback: async (response) => {
       if (response.error) {
-        alert('Authentication failed: ' + response.error);
+        await showAlert('Authentication failed: ' + response.error);
         return;
       }
       gdriveToken = response.access_token;
@@ -562,8 +562,8 @@ async function updateDriveUploadButtonState() {
 // implementation instead of two copies quietly drifting apart over time.
 async function performBackupWrite({ rootId, expensesFolderId, manifest, manifestFileId, dirtyMonths, syncMeta }) {
   // Settings (categories + recurringItems + due items + budgets + family
-  // members + tags + vehicles + fuelLogs) are always small, so they're
-  // just overwritten wholesale every backup - no chunking needed.
+  // members + tags + vehicles + fuelLogs + loans) are always small, so
+  // they're just overwritten wholesale every backup - no chunking needed.
   driveSyncProgress('Syncing settings...');
   const settingsPayload = {
     categories: appData.categories,
@@ -574,6 +574,7 @@ async function performBackupWrite({ rootId, expensesFolderId, manifest, manifest
     tags: appData.tags,
     vehicles: appData.vehicles,
     fuelLogs: appData.fuelLogs,
+    loans: appData.loans,
     userName: appData.userName,
     savedAt: new Date().toISOString()
   };
@@ -853,7 +854,7 @@ async function resolveConflictPull() {
 // this, then just hit Backup - it should silently rebuild everything).
 async function deleteAllDriveBackupsExceptSettings() {
   if (!gdriveToken) { driveSyncDone('Authenticate with Google first!', true); return; }
-  if (!confirm('This permanently deletes your Drive backup - all expense history and Splitwise groups stored there - EXCEPT settings.json (categories/recurring items/due items/budgets/family members). Data on THIS device is untouched. This cannot be undone. Continue?')) return;
+  if (!(await showConfirm('This permanently deletes your Drive backup - all expense history and Splitwise groups stored there - EXCEPT settings.json (categories/recurring items/due items/budgets/family members). Data on THIS device is untouched. This cannot be undone. Continue?'))) return;
 
   setDriveActionBusy('btnBackupDrive', 'Deleting Drive backup...');
   driveSyncProgress('Deleting Drive backup...');

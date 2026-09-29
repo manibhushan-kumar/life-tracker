@@ -149,7 +149,7 @@ function onPdfPeriodModeChange(mode) {
   document.getElementById('pdfRangeFields').classList.toggle('hidden', mode !== 'range');
 }
 
-function generatePdfReportFromForm() {
+async function generatePdfReportFromForm() {
   const mode = document.getElementById('pdfPeriodMode').value;
   let tagIds = Array.from(document.querySelectorAll('.pdfTagCheckbox:checked')).map(cb => cb.value);
   // Ticking every configured tag via "Select All" should behave exactly
@@ -163,15 +163,15 @@ function generatePdfReportFromForm() {
 
   if (mode === 'month') {
     filters.month = document.getElementById('pdfMonthValue').value;
-    if (!filters.month) { alert('Pick a month.'); return; }
+    if (!filters.month) { await showAlert('Pick a month.'); return; }
   } else if (mode === 'year') {
     filters.year = document.getElementById('pdfYearValue').value;
-    if (!filters.year) { alert('Enter a year.'); return; }
+    if (!filters.year) { await showAlert('Enter a year.'); return; }
   } else {
     filters.from = document.getElementById('pdfRangeFrom').value;
     filters.to = document.getElementById('pdfRangeTo').value;
-    if (!filters.from || !filters.to) { alert('Pick both a "From" and "To" date.'); return; }
-    if (filters.from > filters.to) { alert('"From" date must be on or before "To" date.'); return; }
+    if (!filters.from || !filters.to) { await showAlert('Pick both a "From" and "To" date.'); return; }
+    if (filters.from > filters.to) { await showAlert('"From" date must be on or before "To" date.'); return; }
   }
 
   const built = _buildPdfReportData(filters);
@@ -182,142 +182,10 @@ function generatePdfReportFromForm() {
   renderPdfReportPage(document.getElementById('mainContainer'));
 }
 
-// --- Data crunching ----------------------------------------------------
-
-function _filterExpensesForPdfPeriod(filters) {
-  if (filters.mode === 'month') return appData.expenses.filter(e => e.date.startsWith(filters.month));
-  if (filters.mode === 'year') return appData.expenses.filter(e => e.date.startsWith(String(filters.year)));
-  return appData.expenses.filter(e => e.date >= filters.from && e.date <= filters.to);
-}
-
-function _pdfReportPeriodLabel(filters) {
-  if (filters.mode === 'month') {
-    const [y, m] = filters.month.split('-').map(Number);
-    return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  }
-  if (filters.mode === 'year') return `Year ${filters.year}`;
-  return `${filters.from} to ${filters.to}`;
-}
-
-// category -> { total, subs: [[name, amount], ...] }, sorted biggest spend
-// first at both levels - same convention Tag Reports already uses.
-function _groupByCategoryAndSub(expenses) {
-  const byCategory = {};
-  expenses.forEach(e => {
-    const cat = e.category || 'Uncategorized';
-    const sub = e.subCategory || '(No sub-category)';
-    if (!byCategory[cat]) byCategory[cat] = { total: 0, subs: {} };
-    byCategory[cat].total += Number(e.amount);
-    byCategory[cat].subs[sub] = (byCategory[cat].subs[sub] || 0) + Number(e.amount);
-  });
-  return Object.entries(byCategory)
-    .sort((a, b) => b[1].total - a[1].total)
-    .map(([name, data]) => ({
-      name,
-      total: data.total,
-      subs: Object.entries(data.subs).sort((a, b) => b[1] - a[1])
-    }));
-}
-
-// Total spend per tag for the PERIOD ONLY (deliberately ignores the report's
-// own tag-selection filter) - the "All Tags" overview, giving useful context
-// no matter which tags were picked. A tag with zero expenses in the period
-// simply never produces an entry here (this is built from what expenses
-// actually carry, not by enumerating appData.tags) - which is exactly what
-// keeps a tag with no matching spend from ever getting its own row/section.
-function _totalsByTagForPeriod(periodExpenses) {
-  // Untagged expenses are deliberately excluded (no "No tag" bucket) - this
-  // section is specifically about TAGS, and an expense with none isn't one;
-  // it still shows up fine in the raw expense table's Tag column as "-".
-  const totals = {};
-  periodExpenses.forEach(e => {
-    if (e.tag) totals[e.tag] = (totals[e.tag] || 0) + Number(e.amount);
-  });
-  return Object.entries(totals)
-    .map(([tagId, amount]) => ({ name: getTagName(tagId) || 'Former tag', amount }))
-    .sort((a, b) => b.amount - a.amount);
-}
-
-// --- Budget vs Actual --------------------------------------------------
-// This app's budgets are a single whole-month figure (global default + any
-// per-month override - see getBudgetForMonth/appData.budgets in
-// js/data-model.js), NOT broken out per-category, so "budget detail" here
-// means "your configured budget vs what you actually spent", aggregated
-// across every month the report's period touches. Only shown for the true
-// "All Tags" view (no tags picked) - sanity-checking a whole-month budget
-// against a tag-filtered SUBSET of spend would be misleading (the budget
-// doesn't know or care about any one tag), and only shown at all when a
-// budget is actually configured (totalBudget > 0) - otherwise the section
-// is omitted entirely rather than showing an empty/zero budget bar.
-
-function _monthsTouchedByPeriod(filters) {
-  if (filters.mode === 'month') return [filters.month];
-  if (filters.mode === 'year') return Array.from({ length: 12 }, (_, i) => `${filters.year}-${String(i + 1).padStart(2, '0')}`);
-  const months = [];
-  let cursor = filters.from.slice(0, 7);
-  const end = filters.to.slice(0, 7);
-  while (cursor <= end) {
-    months.push(cursor);
-    cursor = nextYearMonth(cursor);
-  }
-  return months;
-}
-
-function _pdfBudgetDetails(filters, periodExpenses) {
-  if ((filters.tagIds || []).length > 0) return null;
-  const totalBudget = _monthsTouchedByPeriod(filters).reduce((sum, m) => sum + getBudgetForMonth(m), 0);
-  if (totalBudget <= 0) return null;
-  const totalSpent = periodExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
-  const percent = (totalSpent / totalBudget) * 100;
-  return { totalBudget, totalSpent, percent, status: getBudgetStatus(percent) };
-}
-
-function _buildPdfReportData(filters) {
-  const periodExpenses = _filterExpensesForPdfPeriod(filters);
-  const tagIds = filters.tagIds || [];
-  // Multi-select is OR logic: any expense carrying ANY of the picked tags
-  // qualifies. Empty selection (nothing checked) means "All Tags", i.e. no
-  // tag filtering at all - the explicit default asked for.
-  const reportExpenses = tagIds.length > 0 ? periodExpenses.filter(e => e.tag && tagIds.includes(e.tag)) : periodExpenses;
-
-  // Deliberately NOT blocking here even if reportExpenses ends up empty
-  // (e.g. a selected tag has zero expenses this period, or the period
-  // itself has none) - the report still generates, with graceful empty
-  // states for the tag-filtered sections (see _pdfReportResultHtml). Never
-  // pop an alert that stops the user from getting a PDF at all.
-
-  const total = reportExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
-  const categoryRows = _groupByCategoryAndSub(reportExpenses);
-  const tagRows = _totalsByTagForPeriod(periodExpenses);
-  const budget = _pdfBudgetDetails(filters, periodExpenses);
-  const periodLabel = _pdfReportPeriodLabel(filters);
-  // Only used as a small aside on the "All Expenses" heading, never in the
-  // report's header banner - null means "All Tags" (default), which isn't
-  // worth calling out since it's not really a filter at all.
-  const tagFilterLabel = tagIds.length > 0 ? tagIds.map(id => getTagName(id) || 'Former tag').join(', ') : null;
-
-  return {
-    periodLabel,
-    tagFilterLabel,
-    total,
-    budget,
-    categoryRows,
-    tagRows,
-    includeExpenseList: filters.includeExpenseList !== false,
-    expenses: reportExpenses.slice().sort((a, b) => a.date.localeCompare(b.date)),
-    categoryLabels: categoryRows.map(c => c.name),
-    categoryValues: categoryRows.map(c => c.total),
-    categoryColors: categoryRows.map((_, i) => _pdfReportColor(i)),
-    tagLabels: tagRows.map(t => t.name),
-    tagValues: tagRows.map(t => t.amount),
-    tagColors: tagRows.map((_, i) => _pdfReportColor(i + 2))
-  };
-}
-
 // --- Result page ---------------------------------------------------------
 
 function _pdfReportResultHtml(data) {
-  const { periodLabel, tagFilterLabel, total, budget, categoryRows, tagRows, expenses, includeExpenseList } = data;
+  const { periodLabel, tagFilterLabel, total, budget, categoryRows, tagRows, memberRows, monthlyMemberRows, expenses, includeExpenseList } = data;
   const topCategory = categoryRows[0] ? categoryRows[0].name : '-';
   const topTag = tagRows[0] || null;
   const generatedAt = new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
@@ -362,12 +230,56 @@ function _pdfReportResultHtml(data) {
       </div>`;
   }).join('');
 
+  // "Paid By" total list - same visual treatment as the tag overview above,
+  // just a different dimension of the same data. Column order for the
+  // month-wise matrix below follows this same biggest-payer-first sort.
+  const PDF_MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const memberOverviewHtml = memberRows.map((m, i) => {
+    const color = _pdfReportColor(i + 2);
+    return `
+      <div class="flex items-center justify-between text-xs py-2 px-3 rounded-lg" style="background:${color}14;">
+        <span class="flex items-center gap-2 font-semibold text-slate-700"><span class="w-2.5 h-2.5 rounded-full inline-block" style="background:${color}"></span>${m.name}</span>
+        <span class="font-bold" style="color:${color}">\u20b9${Number(m.amount).toLocaleString()}</span>
+      </div>`;
+  }).join('');
+
+  // Month-wise "who paid what" matrix - columns are exactly the payers who
+  // show up in memberRows (same order), rows are only the months that
+  // actually had at least one paidBy expense (see
+  // _monthlyMemberTotalsForExpenses - months with none simply don't exist
+  // in this array, so there's nothing to filter here).
+  const memberColumnNames = memberRows.map(m => m.name);
+  const monthlyMemberTableHtml = monthlyMemberRows.length > 0 ? `
+    <div class="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm mb-4">
+      <div class="overflow-x-auto">
+        <table class="w-full border-collapse">
+          <thead>
+            <tr class="bg-slate-800 text-white text-[10px] uppercase">
+              <th class="px-2 py-2 text-left font-bold">Month</th>
+              ${memberColumnNames.map(name => `<th class="px-2 py-2 text-right font-bold">${name}</th>`).join('')}
+            </tr>
+          </thead>
+          <tbody>
+            ${monthlyMemberRows.map((row, i) => {
+              const byName = {};
+              row.members.forEach(m => { byName[m.name] = m.amount; });
+              const monthLabel = `${PDF_MONTH_NAMES[Number(row.month.slice(5, 7)) - 1]} ${row.month.slice(0, 4)}`;
+              return `
+                <tr class="${i % 2 === 0 ? 'bg-white' : 'bg-slate-50'}">
+                  <td class="px-2 py-1.5 text-[11px] font-semibold text-slate-700 whitespace-nowrap">${monthLabel}</td>
+                  ${memberColumnNames.map(name => `<td class="px-2 py-1.5 text-[11px] text-slate-600 text-right whitespace-nowrap">${byName[name] != null ? '\u20b9' + Number(byName[name]).toLocaleString() : '-'}</td>`).join('')}
+                </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  ` : '';
+
   const expenseRowsHtml = expenses.map((e, i) => `
     <tr class="${i % 2 === 0 ? 'bg-white' : 'bg-slate-50'}">
       <td class="px-2 py-1.5 text-[11px] text-slate-500 whitespace-nowrap">${e.date}</td>
       <td class="px-2 py-1.5 text-[11px] text-slate-700">${e.category}${e.subCategory ? ' &raquo; ' + e.subCategory : ''}</td>
-      <td class="px-2 py-1.5 text-[11px] text-slate-500">${e.tag ? (getTagName(e.tag) || '-') : '-'}</td>
-      <td class="px-2 py-1.5 text-[11px] text-slate-500">${e.note || '-'}</td>
       <td class="px-2 py-1.5 text-[11px] font-bold text-slate-800 text-right whitespace-nowrap">\u20b9${Number(e.amount).toLocaleString()}</td>
     </tr>`).join('');
 
@@ -453,21 +365,30 @@ function _pdfReportResultHtml(data) {
         <div class="space-y-1.5 mb-4 break-inside-avoid">${tagOverviewHtml}</div>
       ` : ''}
 
+      ${memberRows.length > 0 ? `
+        <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Paid By (Total Spend)</h3>
+        <div class="space-y-1.5 mb-4 break-inside-avoid">${memberOverviewHtml}</div>
+        ${monthlyMemberTableHtml ? `
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Paid By - Month Wise</h3>
+          ${monthlyMemberTableHtml}
+        ` : ''}
+      ` : ''}
+
       ${expenses.length > 0 && includeExpenseList ? `
         <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">All Expenses${tagFilterLabel ? ` <span class="text-slate-400 font-normal normal-case">(tags: ${tagFilterLabel})</span>` : ''}</h3>
         <div class="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm mb-4">
-          <table class="w-full border-collapse">
-            <thead>
-              <tr class="bg-slate-800 text-white text-[10px] uppercase">
-                <th class="px-2 py-2 text-left font-bold">Date</th>
-                <th class="px-2 py-2 text-left font-bold">Category</th>
-                <th class="px-2 py-2 text-left font-bold">Tag</th>
-                <th class="px-2 py-2 text-left font-bold">Note</th>
-                <th class="px-2 py-2 text-right font-bold">Amount</th>
-              </tr>
-            </thead>
-            <tbody>${expenseRowsHtml}</tbody>
-          </table>
+          <div class="overflow-x-auto">
+            <table class="w-full border-collapse">
+              <thead>
+                <tr class="bg-slate-800 text-white text-[10px] uppercase">
+                  <th class="px-2 py-2 text-left font-bold">Date</th>
+                  <th class="px-2 py-2 text-left font-bold">Category</th>
+                  <th class="px-2 py-2 text-right font-bold">Amount</th>
+                </tr>
+              </thead>
+              <tbody>${expenseRowsHtml}</tbody>
+            </table>
+          </div>
         </div>
       ` : ''}
 

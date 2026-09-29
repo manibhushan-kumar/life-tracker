@@ -178,9 +178,9 @@ function renderSplitwiseGroupList() {
   `;
 }
 
-function openNewGroupForm() {
+async function openNewGroupForm() {
   if (splitGroups.length >= MAX_SPLIT_GROUPS) {
-    alert(`You can only have ${MAX_SPLIT_GROUPS} split groups at a time. Delete one first.`);
+    await showAlert(`You can only have ${MAX_SPLIT_GROUPS} split groups at a time. Delete one first.`);
     return;
   }
   const modal = document.getElementById('formModal');
@@ -204,7 +204,7 @@ function openNewGroupForm() {
 async function saveNewSplitGroup(e) {
   e.preventDefault();
   if (splitGroups.length >= MAX_SPLIT_GROUPS) {
-    alert(`You can only have ${MAX_SPLIT_GROUPS} split groups at a time. Delete one first.`);
+    await showAlert(`You can only have ${MAX_SPLIT_GROUPS} split groups at a time. Delete one first.`);
     closeFormModal();
     return;
   }
@@ -228,7 +228,7 @@ async function saveNewSplitGroup(e) {
 async function deleteSplitGroup(groupId) {
   const group = splitGroups.find(g => g.id === groupId);
   if (!group) return;
-  if (!confirm(`Delete "${group.name}" and everything in it (members + expenses)? This can't be undone.`)) return;
+  if (!(await showConfirm(`Delete "${group.name}" and everything in it (members + expenses)? This can't be undone.`))) return;
 
   splitGroups = splitGroups.filter(g => g.id !== groupId);
   await IDB.delete('splitGroups', groupId);
@@ -495,12 +495,12 @@ async function deleteSplitMember(groupId, memberId) {
 
   const usedInExpense = group.expenses.some(e => e.paidBy === memberId || e.splitAmong.includes(memberId));
   if (usedInExpense) {
-    alert("This person is tied to one or more logged expenses in this group. Delete those expenses first if you really want to remove them.");
+    await showAlert("This person is tied to one or more logged expenses in this group. Delete those expenses first if you really want to remove them.");
     return;
   }
 
   const member = group.members.find(m => m.id === memberId);
-  if (!confirm(`Remove ${member ? member.name : 'this person'} from the group?`)) return;
+  if (!(await showConfirm(`Remove ${member ? member.name : 'this person'} from the group?`))) return;
 
   group.members = group.members.filter(m => m.id !== memberId);
   await IDB.put('splitGroups', group);
@@ -621,8 +621,8 @@ async function saveSplitExpense(e, groupId, expenseId) {
   const description = document.getElementById('splitExpDesc').value.trim();
   const splitAmong = Array.from(document.querySelectorAll('.splitExpMemberCheckbox:checked')).map(cb => cb.value);
 
-  if (isNaN(amount) || amount <= 0) { alert('Enter a valid amount.'); return; }
-  if (splitAmong.length === 0) { alert('Select at least one person to split this with.'); return; }
+  if (isNaN(amount) || amount <= 0) { await showAlert('Enter a valid amount.'); return; }
+  if (splitAmong.length === 0) { await showAlert('Select at least one person to split this with.'); return; }
 
   if (expenseId) {
     const expense = group.expenses.find(ex => ex.id === expenseId);
@@ -648,7 +648,7 @@ async function saveSplitExpense(e, groupId, expenseId) {
 async function deleteSplitExpense(groupId, expenseId) {
   const group = splitGroups.find(g => g.id === groupId);
   if (!group) return;
-  if (!confirm('Delete this expense from the group?')) return;
+  if (!(await showConfirm('Delete this expense from the group?'))) return;
 
   group.expenses = group.expenses.filter(e => e.id !== expenseId);
   await IDB.put('splitGroups', group);

@@ -38,7 +38,7 @@
     @media print {
       .no-print { display: none !important; }
       header, #bottomNav, #sideNavBackdrop, #sideNav, #quickAddModal, #formModal,
-      #driveBusyModal, #driveConnectHint, #splitwiseOverlay { display: none !important; }
+      #driveBusyModal, #driveConnectHint, #splitwiseOverlay, #dialogModal { display: none !important; }
       body { padding-bottom: 0 !important; background: #fff !important; }
       main#mainContainer { padding: 0 !important; max-width: 100% !important; }
     }
@@ -206,17 +206,23 @@
           <div class="w-9 h-9 rounded-lg bg-violet-500/10 text-violet-600 flex items-center justify-center"><i class="fa-solid fa-people-group text-sm"></i></div>
           <div class="text-left"><p class="text-xs font-bold text-slate-800">Splitwise</p><p class="text-[10px] text-slate-400">Split with friends</p></div>
         </button>
+        <button onclick="navigate('loans'); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
+          <div class="w-9 h-9 rounded-lg bg-orange-500/10 text-orange-600 flex items-center justify-center"><i class="fa-solid fa-hand-holding-dollar text-sm"></i></div>
+          <div class="text-left"><p class="text-xs font-bold text-slate-800">Add Loan</p><p class="text-[10px] text-slate-400">Track money borrowed</p></div>
+        </button>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
         <button onclick="navigate('fuel'); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
           <div class="w-9 h-9 rounded-lg bg-sky-500/10 text-sky-600 flex items-center justify-center"><i class="fa-solid fa-gas-pump text-sm"></i></div>
           <div class="text-left"><p class="text-xs font-bold text-slate-800">Fuel Log</p><p class="text-[10px] text-slate-400">Fill-ups & mileage</p></div>
         </button>
-      </div>
-      <div class="grid grid-cols-2 gap-3">
         <button onclick="navigate('reports'); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
           <div class="w-9 h-9 rounded-lg bg-amber-500/10 text-amber-600 flex items-center justify-center"><i class="fa-solid fa-chart-pie text-sm"></i></div>
           <div class="text-left"><p class="text-xs font-bold text-slate-800">Tag Reports</p><p class="text-[10px] text-slate-400">Spending by tag</p></div>
         </button>
-        <button onclick="navigate('pdfReport'); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <button onclick="navigate('pdfReport'); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition col-span-2">
           <div class="w-9 h-9 rounded-lg bg-fuchsia-500/10 text-fuchsia-600 flex items-center justify-center"><i class="fa-solid fa-file-pdf text-sm"></i></div>
           <div class="text-left"><p class="text-xs font-bold text-slate-800">Generate PDF</p><p class="text-[10px] text-slate-400">Report + charts</p></div>
         </button>
@@ -244,6 +250,18 @@
   <div id="driveBusyModal" class="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-live="assertive">
     <div id="driveBusyModalContent" class="bg-white w-full max-w-xs rounded-2xl p-6 shadow-2xl text-center">
       <!-- Injected: spinner+message while busy, icon+message+OK when done -->
+    </div>
+  </div>
+
+  <!-- Custom Alert / Confirm dialog (js/ui-dialogs.js) - drop-in replacement
+       for native alert()/confirm() everywhere in the app, styled to match
+       everything else instead of jarring OS chrome. Sits above formModal
+       (z-50) and driveBusyModal (z-[60]) since a confirmation can need to
+       appear on top of either (e.g. confirming a loan overpayment while its
+       own form is still open underneath). -->
+  <div id="dialogModal" class="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm hidden flex items-center justify-center p-4" role="alertdialog" aria-modal="true">
+    <div id="dialogModalContent" class="bg-white w-full max-w-xs rounded-2xl p-5 shadow-2xl text-center">
+      <!-- Injected by _renderDialog() in js/ui-dialogs.js -->
     </div>
   </div>
 
@@ -287,13 +305,16 @@
   </div>
 
   <script src="./js/config.js"></script>
+  <script src="./js/ui-dialogs.js"></script>
   <script src="./js/data-model.js"></script>
   <script src="./js/idb.js"></script>
   <script src="./js/storage.js"></script>
   <script src="./js/drive-sync.js"></script>
   <script src="./js/compare.js"></script>
   <script src="./js/splitwise.js"></script>
+  <script src="./js/loans.js"></script>
   <script src="./js/pdf-writer.js"></script>
+  <script src="./js/pdf-report-data.js"></script>
   <script src="./js/pdf-report.js"></script>
   <script src="./js/pdf-download.js"></script>
 
@@ -345,6 +366,7 @@
       else if (tab === 'reports') renderReports(container);
       else if (tab === 'fuel') renderFuel(container);
       else if (tab === 'pdfReport') renderPdfReportPage(container);
+      else if (tab === 'loans') renderLoansPage(container);
     }
 
     // --- Home Screen View ---
@@ -368,10 +390,10 @@
       `;
     }
 
-    function deleteExpense(id) {
+    async function deleteExpense(id) {
       const exp = appData.expenses.find(e => e.id === id);
       if (!exp) return;
-      if (!confirm(`Delete this expense?\n\n${exp.note || exp.category} \u2022 \u20b9${Number(exp.amount).toLocaleString()} \u2022 ${exp.date}`)) return;
+      if (!(await showConfirm(`Delete this expense?\n\n${exp.note || exp.category} \u2022 \u20b9${Number(exp.amount).toLocaleString()} \u2022 ${exp.date}`))) return;
 
       appData.expenses = appData.expenses.filter(e => e.id !== id);
       saveState();
@@ -525,11 +547,11 @@
       `;
     }
 
-    function onExpenseMonthChange(value) {
+    async function onExpenseMonthChange(value) {
       if (!value) return;
       const currentYear = currentYearStr();
       if (!value.startsWith(currentYear)) {
-        alert(`Expenses only shows ${currentYear}. Head to the Compare tab to look at other years, or Restore Data in Settings if ${value.slice(0, 4)} isn't loaded locally.`);
+        await showAlert(`Expenses only shows ${currentYear}. Head to the Compare tab to look at other years, or Restore Data in Settings if ${value.slice(0, 4)} isn't loaded locally.`);
         navigate('expenses');
         return;
       }
@@ -799,7 +821,7 @@
       }
     }
 
-    function saveExpense(e) {
+    async function saveExpense(e) {
       e.preventDefault();
       // Belt-and-suspenders alongside the `required` attribute on both
       // selects (see openExpenseForm) - a category is mandatory full stop,
@@ -811,11 +833,11 @@
       const categoryEl = document.getElementById('expCategory');
       const subCategoryEl = document.getElementById('expSubCategory');
       if (!categoryEl.value) {
-        alert('Please select a category.');
+        await showAlert('Please select a category.');
         return;
       }
       if (!subCategoryEl.disabled && !subCategoryEl.value) {
-        alert('Please select a sub-category.');
+        await showAlert('Please select a sub-category.');
         return;
       }
 
@@ -1037,10 +1059,10 @@
       }
     }
 
-    function deleteDueItem(id) {
+    async function deleteDueItem(id) {
       const item = appData.items.find(i => i.id === id);
       if (!item) return;
-      if (!confirm(`Delete "${item.title}"? It'll be removed from Due & Expiry Tracking entirely. Any expenses already logged from it in the past are NOT affected.`)) return;
+      if (!(await showConfirm(`Delete "${item.title}"? It'll be removed from Due & Expiry Tracking entirely. Any expenses already logged from it in the past are NOT affected.`))) return;
 
       appData.items = appData.items.filter(i => i.id !== id);
       saveState();
@@ -1364,14 +1386,14 @@
       `;
     }
 
-    function saveEndKm(e, id) {
+    async function saveEndKm(e, id) {
       e.preventDefault();
       const entry = appData.fuelLogs.find(f => f.id === id);
       if (!entry) return;
 
       const endKm = parseFloat(document.getElementById('fuelEndKm').value);
       if (endKm <= entry.startKm) {
-        alert(`End KM must be greater than the Start KM (${entry.startKm.toLocaleString()}).`);
+        await showAlert(`End KM must be greater than the Start KM (${entry.startKm.toLocaleString()}).`);
         return;
       }
 
@@ -1381,10 +1403,10 @@
       navigate(currentTab);
     }
 
-    function deleteFuelLog(id) {
+    async function deleteFuelLog(id) {
       const entry = appData.fuelLogs.find(f => f.id === id);
       if (!entry) return;
-      if (!confirm(`Delete this fuel log entry (${entry.date})? The Transport \u203a Fuel expense already logged for it will NOT be deleted - same "delete never rewrites history" rule as everywhere else.`)) return;
+      if (!(await showConfirm(`Delete this fuel log entry (${entry.date})? The Transport \u203a Fuel expense already logged for it will NOT be deleted - same "delete never rewrites history" rule as everywhere else.`))) return;
 
       appData.fuelLogs = appData.fuelLogs.filter(f => f.id !== id);
       saveState();
@@ -1747,21 +1769,20 @@
       updateHeaderGreeting();
     }
 
-    function clearAllExpenses() {
+    async function clearAllExpenses() {
       const splitCount = splitGroups.length || 0;
       if (appData.expenses.length === 0 && splitCount === 0) {
-        alert('There are no expenses or Splitwise groups to clear.');
+        await showAlert('There are no expenses or Splitwise groups to clear.');
         return;
       }
-      const confirmed = confirm(`This will permanently delete all ${appData.expenses.length} logged expense(s) and all Splitwise groups (with their members and expenses). Categories, sub-categories, recurring items, and due items will NOT be affected. This cannot be undone. Continue?`);
+      const confirmed = await showConfirm(`This will permanently delete all ${appData.expenses.length} logged expense(s) and all Splitwise groups (with their members and expenses). Categories, sub-categories, recurring items, and due items will NOT be affected. This cannot be undone. Continue?`);
       if (!confirmed) return;
 
       appData.expenses = [];
       saveState();
-      clearAllSplitGroups().then(() => {
-        renderSettings(document.getElementById('mainContainer'));
-        alert('All expenses and Splitwise data cleared.');
-      });
+      await clearAllSplitGroups();
+      renderSettings(document.getElementById('mainContainer'));
+      await showAlert('All expenses and Splitwise data cleared.');
     }
 
     // Frees up local space by dropping one year's worth of expenses from
@@ -1772,17 +1793,17 @@
     // itself) since Home/Expenses depend on it always being present.
     async function deleteYearDataFromSettings(year) {
       if (year === currentYearStr()) {
-        alert(`${year} is the active year and can't be deleted here - Home and Expenses need it. Use "Clear All Expenses & Splitwise Data" in the Danger Zone below if you really want to wipe everything.`);
+        await showAlert(`${year} is the active year and can't be deleted here - Home and Expenses need it. Use "Clear All Expenses & Splitwise Data" in the Danger Zone below if you really want to wipe everything.`);
         return;
       }
 
       const count = expensesInYear(year).length;
-      if (!confirm(`Remove ${count} expense(s) for ${year} from this device?\n\nYour Drive backup keeps the full history untouched - use Restore Data any time to bring ${year} back.`)) return;
+      if (!(await showConfirm(`Remove ${count} expense(s) for ${year} from this device?\n\nYour Drive backup keeps the full history untouched - use Restore Data any time to bring ${year} back.`))) return;
 
       try {
         await deleteYearDataLocally(year);
       } catch (err) {
-        alert(err.message);
+        await showAlert(err.message);
         return;
       }
       renderSettings(document.getElementById('mainContainer'));
@@ -1809,8 +1830,8 @@
       renderSettings(document.getElementById('mainContainer'));
     }
 
-    function deleteRecurringItem(id) {
-      if (!confirm('Remove this recurring item? Past logged expenses will NOT be affected — only future calendar toggles.')) return;
+    async function deleteRecurringItem(id) {
+      if (!(await showConfirm('Remove this recurring item? Past logged expenses will NOT be affected — only future calendar toggles.'))) return;
       appData.recurringItems = appData.recurringItems.filter(i => i.id !== id);
       if (selectedRecurringItemId === id) selectedRecurringItemId = null;
       saveState();
@@ -1821,12 +1842,12 @@
     // Plain {id, name} labels - see getFamilyMemberName() in
     // js/data-model.js for the display-side lookup used by expense rows,
     // the Add Expense/due-item-payment "Paid By" dropdowns, and Compare.
-    function addFamilyMember() {
+    async function addFamilyMember() {
       const input = document.getElementById('newFamilyMemberName');
       const name = input.value.trim();
       if (!name) return;
       if (appData.familyMembers.some(m => m.name.toLowerCase() === name.toLowerCase())) {
-        alert('That family member already exists.');
+        await showAlert('That family member already exists.');
         return;
       }
       appData.familyMembers.push({ id: 'member_' + Date.now(), name });
@@ -1834,7 +1855,7 @@
       renderSettings(document.getElementById('mainContainer'));
     }
 
-    function deleteFamilyMember(id) {
+    async function deleteFamilyMember(id) {
       const member = appData.familyMembers.find(m => m.id === id);
       if (!member) return;
 
@@ -1842,7 +1863,7 @@
       const msg = inUseCount > 0
         ? `"${member.name}" is tagged as "Paid By" on ${inUseCount} existing expense(s). Those will keep showing "${member.name}" — you just won't be able to pick them for new entries. Delete anyway?`
         : `Delete family member "${member.name}"?`;
-      if (!confirm(msg)) return;
+      if (!(await showConfirm(msg))) return;
 
       appData.familyMembers = appData.familyMembers.filter(m => m.id !== id);
       saveState();
@@ -1854,12 +1875,12 @@
     // Tags above - see getVehicleNumber() in js/data-model.js for the
     // display-side lookup used by Fuel Log entries and the Add Fill-up
     // "Vehicle" dropdown.
-    function addVehicle() {
+    async function addVehicle() {
       const input = document.getElementById('newVehicleNumber');
       const number = input.value.trim();
       if (!number) return;
       if (appData.vehicles.some(v => v.number.toLowerCase() === number.toLowerCase())) {
-        alert('That vehicle already exists.');
+        await showAlert('That vehicle already exists.');
         return;
       }
       appData.vehicles.push({ id: 'veh_' + Date.now(), number });
@@ -1867,7 +1888,7 @@
       renderSettings(document.getElementById('mainContainer'));
     }
 
-    function deleteVehicle(id) {
+    async function deleteVehicle(id) {
       const vehicle = appData.vehicles.find(v => v.id === id);
       if (!vehicle) return;
 
@@ -1875,7 +1896,7 @@
       const msg = inUseCount > 0
         ? `"${vehicle.number}" is used on ${inUseCount} existing fuel log entry(ies). Those will keep showing "${vehicle.number}" but it will disappear from the Fuel Log picker and can't be picked for new fill-ups. Delete anyway?`
         : `Delete vehicle "${vehicle.number}"?`;
-      if (!confirm(msg)) return;
+      if (!(await showConfirm(msg))) return;
 
       appData.vehicles = appData.vehicles.filter(v => v.id !== id);
       saveState();
@@ -1886,12 +1907,12 @@
     // Plain {id, name} labels, same shape/spirit as Family Members above -
     // see getTagName() in js/data-model.js for the display-side lookup used
     // by expense rows, the Add Expense "Tag" dropdown, and the Reports view.
-    function addTag() {
+    async function addTag() {
       const input = document.getElementById('newTagName');
       const name = input.value.trim();
       if (!name) return;
       if (appData.tags.some(t => t.name.toLowerCase() === name.toLowerCase())) {
-        alert('That tag already exists.');
+        await showAlert('That tag already exists.');
         return;
       }
       appData.tags.push({ id: 'tag_' + Date.now(), name });
@@ -1899,7 +1920,7 @@
       renderSettings(document.getElementById('mainContainer'));
     }
 
-    function deleteTag(id) {
+    async function deleteTag(id) {
       const tag = appData.tags.find(t => t.id === id);
       if (!tag) return;
 
@@ -1907,7 +1928,7 @@
       const msg = inUseCount > 0
         ? `"${tag.name}" is used on ${inUseCount} existing expense(s). Those will keep showing "${tag.name}" but it will disappear from the Tag Reports picker and can't be picked for new entries. Delete anyway?`
         : `Delete tag "${tag.name}"?`;
-      if (!confirm(msg)) return;
+      if (!(await showConfirm(msg))) return;
 
       appData.tags = appData.tags.filter(t => t.id !== id);
       saveState();
@@ -1946,7 +1967,7 @@
       `;
     }
 
-    function savePriceChange(e, itemId) {
+    async function savePriceChange(e, itemId) {
       e.preventDefault();
       const item = appData.recurringItems.find(i => i.id === itemId);
       if (!item) return;
@@ -1957,7 +1978,7 @@
 
       const startDate = getItemStartDate(item);
       if (from < startDate) {
-        alert(`This item started on ${startDate} - a price change can't be effective before that. Pick ${startDate} or later.`);
+        await showAlert(`This item started on ${startDate} - a price change can't be effective before that. Pick ${startDate} or later.`);
         return;
       }
 
@@ -1983,13 +2004,13 @@
       renderSettings(document.getElementById('mainContainer'));
     }
 
-    function deletePriceChange(itemId, from) {
+    async function deletePriceChange(itemId, from) {
       const item = appData.recurringItems.find(i => i.id === itemId);
       if (!item || !Array.isArray(item.priceHistory) || item.priceHistory.length <= 1) return;
 
       const entry = item.priceHistory.find(h => h.from === from);
       if (!entry) return;
-      if (!confirm(`Remove the ₹${entry.price} price change effective ${from}?`)) return;
+      if (!(await showConfirm(`Remove the ₹${entry.price} price change effective ${from}?`))) return;
 
       item.priceHistory = item.priceHistory.filter(h => h.from !== from);
       item.price = getEffectivePrice(item);
@@ -1997,12 +2018,12 @@
       renderSettings(document.getElementById('mainContainer'));
     }
 
-    function addCategory() {
+    async function addCategory() {
       const input = document.getElementById('newCategoryName');
       const name = input.value.trim();
       if (!name) return;
       if (appData.categories[name]) {
-        alert('That category already exists.');
+        await showAlert('That category already exists.');
         return;
       }
       appData.categories[name] = [];
@@ -2010,12 +2031,12 @@
       renderSettings(document.getElementById('mainContainer'));
     }
 
-    function deleteCategory(name) {
+    async function deleteCategory(name) {
       const inUseCount = appData.expenses.filter(e => e.category === name).length;
       const msg = inUseCount > 0
         ? `"${name}" is used on ${inUseCount} existing expense(s). Those will keep showing "${name}" — you just won't be able to pick it for new entries. Delete anyway?`
         : `Delete category "${name}"?`;
-      if (!confirm(msg)) return;
+      if (!(await showConfirm(msg))) return;
 
       delete appData.categories[name];
       if (selectedCategoryForSub === name) selectedCategoryForSub = null;
@@ -2040,7 +2061,7 @@
       renderSettings(document.getElementById('mainContainer'));
     }
 
-    function saveMonthlyBudgetOverride() {
+    async function saveMonthlyBudgetOverride() {
       const month = document.getElementById('budgetOverrideMonth').value;
       const amount = parseFloat(document.getElementById('budgetOverrideAmount').value) || 0;
       if (!month) return;
@@ -2048,11 +2069,11 @@
       // past month must never be editable, full stop, regardless of how the
       // value made it into the field.
       if (!isBudgetMonthEditable(month)) {
-        alert(`${month} is a past month and its budget is locked - only the running month and future months can be set.`);
+        await showAlert(`${month} is a past month and its budget is locked - only the running month and future months can be set.`);
         return;
       }
       if (amount <= 0) {
-        alert('Enter an amount greater than 0 - to remove an existing override, use the x button on its chip instead.');
+        await showAlert('Enter an amount greater than 0 - to remove an existing override, use the x button on its chip instead.');
         return;
       }
       appData.budgets.monthly[month] = amount;
@@ -2060,18 +2081,18 @@
       renderSettings(document.getElementById('mainContainer'));
     }
 
-    function deleteMonthlyBudgetOverride(month) {
+    async function deleteMonthlyBudgetOverride(month) {
       if (!isBudgetMonthEditable(month)) {
-        alert(`${month} is a past month and its budget is locked - it can't be removed.`);
+        await showAlert(`${month} is a past month and its budget is locked - it can't be removed.`);
         return;
       }
-      if (!confirm(`Remove the budget override for ${month}? It'll fall back to the global monthly budget.`)) return;
+      if (!(await showConfirm(`Remove the budget override for ${month}? It'll fall back to the global monthly budget.`))) return;
       delete appData.budgets.monthly[month];
       saveState();
       renderSettings(document.getElementById('mainContainer'));
     }
 
-    function addSubCategory() {
+    async function addSubCategory() {
       const catName = selectedCategoryForSub || Object.keys(appData.categories)[0];
       if (!catName) return;
 
@@ -2081,7 +2102,7 @@
 
       if (!appData.categories[catName]) appData.categories[catName] = [];
       if (appData.categories[catName].includes(sub)) {
-        alert('That sub-category already exists.');
+        await showAlert('That sub-category already exists.');
         return;
       }
 
@@ -2090,12 +2111,12 @@
       renderSettings(document.getElementById('mainContainer'));
     }
 
-    function deleteSubCategory(catName, sub) {
+    async function deleteSubCategory(catName, sub) {
       const inUseCount = appData.expenses.filter(e => e.category === catName && e.subCategory === sub).length;
       const msg = inUseCount > 0
         ? `"${sub}" is used on ${inUseCount} existing expense(s). Those will keep showing "${sub}" — you just won't be able to pick it for new entries. Delete anyway?`
         : `Delete sub-category "${sub}" from "${catName}"?`;
-      if (!confirm(msg)) return;
+      if (!(await showConfirm(msg))) return;
 
       appData.categories[catName] = (appData.categories[catName] || []).filter(s => s !== sub);
       saveState();
