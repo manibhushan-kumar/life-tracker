@@ -179,10 +179,6 @@
       </button>
     </div>
     <nav class="p-2 space-y-1">
-      <button onclick="navigate('groups'); closeSideNav()" id="nav-groups" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:bg-slate-50 transition text-left">
-        <i class="fa-solid fa-user-group text-base w-5"></i>
-        <span class="text-xs font-semibold">Groups</span>
-      </button>
       <button onclick="navigate('settings'); closeSideNav()" id="nav-settings" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:bg-slate-50 transition text-left">
         <i class="fa-solid fa-gear text-base w-5"></i>
         <span class="text-xs font-semibold">Settings</span>
@@ -1660,20 +1656,36 @@
             </div>
           </div>
 
-          ${Object.keys(appData.budgets.monthly || {}).length > 0 ? `
-            <div class="flex flex-wrap gap-2 pt-1">
-              ${Object.entries(appData.budgets.monthly).sort((a, b) => b[0].localeCompare(a[0])).map(([month, amount]) => isBudgetMonthEditable(month) ? `
+          ${(() => {
+            const entries = Object.entries(appData.budgets.monthly || {}).sort((a, b) => b[0].localeCompare(a[0]));
+            const editableEntries = entries.filter(([month]) => isBudgetMonthEditable(month));
+            const lockedEntries = entries.filter(([month]) => !isBudgetMonthEditable(month));
+            const chip = (month, amount, locked) => locked ? `
+                <span title="Past months are locked and can't be changed." class="flex items-center gap-1.5 pl-3 pr-2.5 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-[11px] font-semibold text-slate-400">
+                  <i class="fa-solid fa-lock text-[9px]"></i> ${month}: ₹${Number(amount).toLocaleString()}
+                </span>
+              ` : `
                 <span class="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
                   ${month}: ₹${Number(amount).toLocaleString()}
                   <button onclick="deleteMonthlyBudgetOverride('${month}')" class="w-4 h-4 rounded-full bg-slate-200 hover:bg-rose-500 hover:text-white text-slate-500 flex items-center justify-center text-[9px] transition"><i class="fa-solid fa-xmark"></i></button>
                 </span>
-              ` : `
-                <span title="Past months are locked and can't be changed." class="flex items-center gap-1.5 pl-3 pr-2.5 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-[11px] font-semibold text-slate-400">
-                  <i class="fa-solid fa-lock text-[9px]"></i> ${month}: ₹${Number(amount).toLocaleString()}
-                </span>
-              `).join('')}
-            </div>
-          ` : ''}
+              `;
+            return `
+              ${editableEntries.length > 0 ? `
+                <div class="flex flex-wrap gap-2 pt-1">
+                  ${editableEntries.map(([month, amount]) => chip(month, amount, false)).join('')}
+                </div>
+              ` : ''}
+              ${lockedEntries.length > 0 ? `
+                <details class="pt-1">
+                  <summary class="text-[10px] font-semibold text-slate-400 cursor-pointer select-none">Past months (${lockedEntries.length}) - click to expand</summary>
+                  <div class="flex flex-wrap gap-2 pt-2">
+                    ${lockedEntries.map(([month, amount]) => chip(month, amount, true)).join('')}
+                  </div>
+                </details>
+              ` : ''}
+            `;
+          })()}
         </div>
 
         <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-4">
