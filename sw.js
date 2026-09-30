@@ -1,6 +1,6 @@
 // Bump this whenever urlsToCache changes so returning users actually pick
 // up the new app shell instead of serving a stale cached copy forever.
-const CACHE_NAME = 'life-tracker-v57';
+const CACHE_NAME = 'life-tracker-v60';
 const urlsToCache = [
   './',
   './index.html',
@@ -16,6 +16,7 @@ const urlsToCache = [
   './js/drive-sync.js',
   './js/compare.js',
   './js/splitwise.js',
+  './js/groups.js',
   './js/pdf-report-data.js',
   './js/pdf-report.js',
   './js/pdf-writer.js',

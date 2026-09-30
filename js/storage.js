@@ -67,22 +67,25 @@ async function getSyncMeta() {
     manifestFileId: null,
     settingsFileId: null,
     splitwiseFileId: null,
+    groupsFileId: null,
     lastBackupAt: null,
     lastRestoreAt: null,
-    // Fingerprints of the settings/Splitwise payloads as of the last
+    // Fingerprints of the settings/Splitwise/Groups payloads as of the last
     // successful backup - see hasLocalChangesToSync() below for why these
-    // exist (settings.json/splitwise.json are overwritten wholesale on
-    // every backup, so dirty-month tracking alone can't tell us whether
-    // THOSE actually changed).
+    // exist (settings.json/splitwise.json/groups.json are overwritten
+    // wholesale on every backup, so dirty-month tracking alone can't tell
+    // us whether THOSE actually changed).
     lastSyncedSettingsFingerprint: null,
     lastSyncedSplitwiseFingerprint: null,
+    lastSyncedGroupsFingerprint: null,
     // What this device last actually SAW on Drive (the `savedAt` stamp
-    // inside settings.json/splitwise.json) - compared against Drive's
-    // CURRENT savedAt right before a backup writes anything, to catch
-    // "another device pushed since I last looked" conflicts. See
+    // inside settings.json/splitwise.json/groups.json) - compared against
+    // Drive's CURRENT savedAt right before a backup writes anything, to
+    // catch "another device pushed since I last looked" conflicts. See
     // findSyncConflicts() in drive-sync.js.
     knownRemoteSettingsSavedAt: null,
-    knownRemoteSplitwiseSavedAt: null
+    knownRemoteSplitwiseSavedAt: null,
+    knownRemoteGroupsSavedAt: null
   };
 }
 
@@ -154,6 +157,10 @@ async function hasLocalChangesToSync() {
   const splitGroups = await IDB.getAll('splitGroups');
   if (splitGroups.length > 0 && !meta.splitwiseFileId) return true;
   if (JSON.stringify(splitGroups) !== (meta.lastSyncedSplitwiseFingerprint || null)) return true;
+
+  const contactGroupsForSync = await IDB.getAll('contactGroups');
+  if (contactGroupsForSync.length > 0 && !meta.groupsFileId) return true;
+  if (JSON.stringify(contactGroupsForSync) !== (meta.lastSyncedGroupsFingerprint || null)) return true;
 
   return false;
 }
@@ -249,7 +256,7 @@ async function saveState(opts) {
 // slips past the overscroll-behavior CSS fix (e.g. the OS itself killing
 // and relaunching the PWA) - validated against a known-tabs list so a
 // stale/corrupted localStorage value can never navigate somewhere invalid.
-const VALID_TABS = ['home', 'expenses', 'compare', 'items', 'settings', 'reports', 'fuel', 'pdfReport', 'loans'];
+const VALID_TABS = ['home', 'expenses', 'compare', 'items', 'settings', 'reports', 'fuel', 'pdfReport', 'loans', 'groups'];
 
 async function initStorage() {
   await loadAppData();

@@ -1,3 +1,4 @@
+
 // --- Splitwise (bill splitting) --------------------------------------------
 // A self-contained "who owes who" feature for group expenses (trips,
 // flatmates, events). Structurally isolated from the rest of the app even
@@ -157,7 +158,7 @@ function renderSplitwiseGroupList() {
     <p class="text-[11px] text-slate-400">Backs up to Google Drive along with the rest of your data (Settings → Upload/Restore). Deleting a group wipes everything in it, right here and on Drive next sync.</p>
 
     <button onclick="openNewGroupForm()" ${atLimit ? 'disabled' : ''} class="w-full py-2.5 rounded-xl text-xs font-bold transition ${atLimit ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}">
-      <i class="fa-solid fa-plus mr-1"></i> ${atLimit ? 'Max 5 groups reached' : 'New Group'}
+      <i class="fa-solid fa-plus mr-1"></i> ${atLimit ? 'Max 5 splits reached' : 'New Split'}
     </button>
 
     <div class="space-y-2">
@@ -187,10 +188,10 @@ async function openNewGroupForm() {
   const content = document.getElementById('formModalContent');
   modal.classList.remove('hidden');
   content.innerHTML = `
-    <h3 class="text-sm font-bold text-slate-800 mb-3">New Split Group</h3>
+    <h3 class="text-sm font-bold text-slate-800 mb-3">New Split</h3>
     <form onsubmit="saveNewSplitGroup(event)" class="space-y-3">
       <div>
-        <label class="text-[11px] font-semibold text-slate-400">Group Name</label>
+        <label class="text-[11px] font-semibold text-slate-400">Split Name</label>
         <input type="text" required id="newSplitGroupName" placeholder="e.g. Goa Trip, Flatmates" class="w-full text-sm p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
       </div>
       <div class="flex gap-2 pt-2">
@@ -199,6 +200,7 @@ async function openNewGroupForm() {
       </div>
     </form>
   `;
+  document.getElementById('newSplitGroupName').focus();
 }
 
 async function saveNewSplitGroup(e) {
@@ -408,7 +410,7 @@ function renderSplitGroupDetail(group) {
     </div>
 
     <button onclick="deleteSplitGroup('${group.id}')" class="w-full py-2.5 bg-rose-50 text-rose-600 border border-rose-200 rounded-xl text-xs font-bold hover:bg-rose-100 transition">
-      <i class="fa-solid fa-trash mr-1"></i> Delete This Group
+      <i class="fa-solid fa-trash mr-1"></i> Delete This Split
     </button>
   `;
 }
@@ -422,25 +424,148 @@ function renderSplitGroupDetail(group) {
 // of silently discarding an in-progress entry.
 let _pendingExpenseFormReturn = null;
 
-function openAddMemberForm(groupId) {
+// "Add Person" now has two modes, toggled via tabs inside the same modal:
+//   'new'  - type a brand-new name straight into this group (original flow)
+//   'copy' - pick one of your general-purpose Groups (js/groups.js - a
+//            reusable contact list, NOT a Splitwise group) from a dropdown,
+//            then multi-select which of ITS members to copy into this
+//            Splitwise group - avoids re-typing the same names every time a
+//            new trip/event needs people you've already grouped elsewhere.
+// Copied members become brand-new member records (new id) in the target
+// Splitwise group - Splitwise groups and general Groups don't share member
+// identity, only the name is cloned across.
+let _addMemberMode = 'new';
+let _addMemberCopySourceGroupId = null;
+
+async function openAddMemberForm(groupId) {
+  _addMemberMode = 'new';
+  _addMemberCopySourceGroupId = null;
+  // Always re-read from IDB rather than trusting groups.js's in-memory
+  // `contactGroups` - that array is only guaranteed fresh while the Groups
+  // page itself is open, and this modal can be reached from Splitwise
+  // without ever having visited that page first this session.
+  await loadContactGroups();
   const modal = document.getElementById('formModal');
   const content = document.getElementById('formModalContent');
   modal.classList.remove('hidden');
+  content.innerHTML = _addMemberFormHtml(groupId);
+}
+
+// Switches tabs in-place (re-renders the same modal content) rather than
+// closing/reopening it - keeps focus/scroll steady and mirrors how the rest
+// of this file re-renders form innerHTML after small state changes.
+function setAddMemberMode(groupId, mode) {
+  _addMemberMode = mode;
+  document.getElementById('formModalContent').innerHTML = _addMemberFormHtml(groupId);
+}
+
+function _addMemberFormHtml(groupId) {
   const isMidExpenseEntry = _pendingExpenseFormReturn && _pendingExpenseFormReturn.groupId === groupId;
   const cancelHandler = isMidExpenseEntry ? `cancelAddPersonFromExpenseForm('${groupId}')` : 'closeFormModal()';
-  content.innerHTML = `
+  // Source pool for the "From a Group" tab is the general-purpose Groups
+  // feature (js/groups.js) - NOT other Splitwise groups. Any group with at
+  // least one member is eligible; there's no "exclude the current group"
+  // filter needed since these are a completely separate collection.
+  const pickableGroups = contactGroups.filter(g => g.members.length > 0);
+  const tabClass = active => `flex-1 py-2 text-[11px] font-bold rounded-lg transition ${active ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`;
+
+  return `
     <h3 class="text-sm font-bold text-slate-800 mb-3">Add Person</h3>
-    <form onsubmit="saveNewSplitMember(event, '${groupId}')" class="space-y-3">
+    <div class="flex gap-2 mb-3">
+      <button type="button" onclick="setAddMemberMode('${groupId}', 'new')" class="${tabClass(_addMemberMode === 'new')}">New Person</button>
+      <button type="button" onclick="setAddMemberMode('${groupId}', 'copy')" ${pickableGroups.length === 0 ? 'disabled title="No Groups with members yet - create one from the + Quick Add menu"' : ''} class="${pickableGroups.length === 0 ? 'flex-1 py-2 text-[11px] font-bold rounded-lg bg-slate-50 text-slate-300 cursor-not-allowed' : tabClass(_addMemberMode === 'copy')}">From a Group</button>
+    </div>
+    ${_addMemberMode === 'copy' ? _copyMemberFormHtml(groupId, pickableGroups, cancelHandler) : `
+      <form onsubmit="saveNewSplitMember(event, '${groupId}')" class="space-y-3">
+        <div>
+          <label class="text-[11px] font-semibold text-slate-400">Name</label>
+          <input type="text" required id="newSplitMemberName" placeholder="e.g. Priya" class="w-full text-sm p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+        </div>
+        <div class="flex gap-2 pt-2">
+          <button type="button" onclick="${cancelHandler}" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
+          <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Add</button>
+        </div>
+      </form>
+    `}
+  `;
+}
+
+function _copyMemberFormHtml(groupId, pickableGroups, cancelHandler) {
+  return `
+    <div class="space-y-3">
       <div>
-        <label class="text-[11px] font-semibold text-slate-400">Name</label>
-        <input type="text" required id="newSplitMemberName" placeholder="e.g. Priya" class="w-full text-sm p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+        <label class="text-[11px] font-semibold text-slate-400">Copy members from</label>
+        <select id="copyMemberSourceGroup" onchange="onCopyMemberSourceChange('${groupId}')" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
+          <option value="">Select a group...</option>
+          ${pickableGroups.map(g => `<option value="${g.id}" ${_addMemberCopySourceGroupId === g.id ? 'selected' : ''}>${g.name} (${g.members.length} member${g.members.length === 1 ? '' : 's'})</option>`).join('')}
+        </select>
       </div>
+      <div id="copyMemberCheckboxes">${_copyMemberCheckboxesHtml(groupId)}</div>
       <div class="flex gap-2 pt-2">
         <button type="button" onclick="${cancelHandler}" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
-        <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Add</button>
+        <button type="button" onclick="saveCopiedSplitMembers('${groupId}')" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Add Selected</button>
       </div>
-    </form>
+    </div>
   `;
+}
+
+// Only re-renders the checkbox list (not the whole modal) when the source
+// group dropdown changes, so the dropdown itself doesn't lose focus/scroll.
+function onCopyMemberSourceChange(groupId) {
+  _addMemberCopySourceGroupId = document.getElementById('copyMemberSourceGroup').value || null;
+  document.getElementById('copyMemberCheckboxes').innerHTML = _copyMemberCheckboxesHtml(groupId);
+}
+
+function _copyMemberCheckboxesHtml(groupId) {
+  if (!_addMemberCopySourceGroupId) return '<p class="text-[11px] text-slate-400">Pick a group above to see its members.</p>';
+  const source = contactGroups.find(g => g.id === _addMemberCopySourceGroupId);
+  if (!source || source.members.length === 0) return '<p class="text-[11px] text-slate-400">That group has no members yet.</p>';
+
+  const target = splitGroups.find(g => g.id === groupId);
+  const existingNames = new Set((target ? target.members : []).map(m => m.name.toLowerCase()));
+
+  return `
+    <div class="space-y-1 max-h-40 overflow-y-auto">
+      ${source.members.map(m => {
+        const already = existingNames.has(m.name.toLowerCase());
+        return `
+          <label class="flex items-center gap-2 text-xs p-1.5 rounded-lg ${already ? 'text-slate-300' : 'text-slate-600 hover:bg-slate-50'}">
+            <input type="checkbox" class="copyMemberCheckbox" value="${m.name.replace(/"/g, '&quot;')}" ${already ? 'disabled' : ''}>
+            ${m.name}${already ? ' (already here)' : ''}
+          </label>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+// Bulk-adds every checked name from the "From a Group" tab as brand-new
+// members of the target group - same downstream effects as saveNewSplitMember
+// (IDB write, Drive-dirty flag, mid-expense-entry resume) just for many
+// names in one go instead of one form submit per person.
+async function saveCopiedSplitMembers(groupId) {
+  const group = splitGroups.find(g => g.id === groupId);
+  if (!group) return;
+
+  const names = Array.from(document.querySelectorAll('.copyMemberCheckbox:checked')).map(cb => cb.value);
+  if (names.length === 0) { await showAlert('Select at least one person to add.'); return; }
+
+  const newMembers = names.map(name => ({ id: _sgId('m'), name }));
+  group.members.push(...newMembers);
+  await IDB.put('splitGroups', group);
+  _refreshDriveButtonAfterSplitwiseChange();
+
+  if (_pendingExpenseFormReturn && _pendingExpenseFormReturn.groupId === groupId) {
+    const restore = _pendingExpenseFormReturn;
+    _pendingExpenseFormReturn = null;
+    restore.splitAmong = [...restore.splitAmong, ...newMembers.map(m => m.id)];
+    const existing = restore.expenseId ? group.expenses.find(ex => ex.id === restore.expenseId) : null;
+    document.getElementById('formModalContent').innerHTML = _splitExpenseFormHtml(group, existing, restore);
+    return;
+  }
+
+  closeFormModal();
+  renderSplitwiseView();
 }
 
 // Bounces back to a still-in-progress expense form after cancelling out of

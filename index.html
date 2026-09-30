@@ -179,6 +179,10 @@
       </button>
     </div>
     <nav class="p-2 space-y-1">
+      <button onclick="navigate('groups'); closeSideNav()" id="nav-groups" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:bg-slate-50 transition text-left">
+        <i class="fa-solid fa-user-group text-base w-5"></i>
+        <span class="text-xs font-semibold">Groups</span>
+      </button>
       <button onclick="navigate('settings'); closeSideNav()" id="nav-settings" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:bg-slate-50 transition text-left">
         <i class="fa-solid fa-gear text-base w-5"></i>
         <span class="text-xs font-semibold">Settings</span>
@@ -209,6 +213,21 @@
         <button onclick="navigate('loans'); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
           <div class="w-9 h-9 rounded-lg bg-orange-500/10 text-orange-600 flex items-center justify-center"><i class="fa-solid fa-hand-holding-dollar text-sm"></i></div>
           <div class="text-left"><p class="text-xs font-bold text-slate-800">Add Loan</p><p class="text-[10px] text-slate-400">Track money borrowed</p></div>
+        </button>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <!-- General-purpose Groups (js/groups.js) - a reusable contact list,
+             NOT a Splitwise group. quickNewGroup() just navigates to the
+             Groups page - it deliberately does NOT auto-open the create
+             form, so there's exactly one place that ever opens it (the
+             page's own "+ New Group" button), not two subtly different
+             entry points to keep in sync. These groups can then be pulled
+             from inside Splitwise's Add Person flow ("From a Group" tab),
+             and are built to plug into any future feature the same way,
+             not just Splitwise. -->
+        <button onclick="quickNewGroup(); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition col-span-2">
+          <div class="w-9 h-9 rounded-lg bg-violet-500/10 text-violet-600 flex items-center justify-center"><i class="fa-solid fa-user-group text-sm"></i></div>
+          <div class="text-left"><p class="text-xs font-bold text-slate-800">New Group</p><p class="text-[10px] text-slate-400">Manage reusable people lists</p></div>
         </button>
       </div>
       <div class="grid grid-cols-2 gap-3">
@@ -312,6 +331,7 @@
   <script src="./js/drive-sync.js"></script>
   <script src="./js/compare.js"></script>
   <script src="./js/splitwise.js"></script>
+  <script src="./js/groups.js"></script>
   <script src="./js/loans.js"></script>
   <script src="./js/pdf-writer.js"></script>
   <script src="./js/pdf-report-data.js"></script>
@@ -367,6 +387,7 @@
       else if (tab === 'fuel') renderFuel(container);
       else if (tab === 'pdfReport') renderPdfReportPage(container);
       else if (tab === 'loans') renderLoansPage(container);
+      else if (tab === 'groups') renderGroupsPage(container);
     }
 
     // --- Home Screen View ---
