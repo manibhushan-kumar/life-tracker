@@ -256,7 +256,7 @@ async function saveState(opts) {
 // slips past the overscroll-behavior CSS fix (e.g. the OS itself killing
 // and relaunching the PWA) - validated against a known-tabs list so a
 // stale/corrupted localStorage value can never navigate somewhere invalid.
-const VALID_TABS = ['home', 'expenses', 'compare', 'items', 'settings', 'reports', 'fuel', 'pdfReport', 'loans', 'groups'];
+const VALID_TABS = ['home', 'expenses', 'compare', 'items', 'settings', 'reports', 'fuel', 'pdfReport', 'loans', 'groups', 'worldClock'];
 
 async function initStorage() {
   await loadAppData();

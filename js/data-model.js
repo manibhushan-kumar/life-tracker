@@ -57,7 +57,8 @@ const TAB_DISPLAY_NAMES = {
   fuel: 'Fuel Log',
   pdfReport: 'Generate PDF',
   loans: 'Loans',
-  groups: 'Groups'
+  groups: 'Groups',
+  worldClock: 'World Clock'
 };
 
 // Sets the " / PageName" breadcrumb suffix after the clickable "Life

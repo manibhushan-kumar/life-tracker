@@ -221,9 +221,17 @@
              from inside Splitwise's Add Person flow ("From a Group" tab),
              and are built to plug into any future feature the same way,
              not just Splitwise. -->
-        <button onclick="quickNewGroup(); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition col-span-2">
+        <button onclick="quickNewGroup(); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
           <div class="w-9 h-9 rounded-lg bg-violet-500/10 text-violet-600 flex items-center justify-center"><i class="fa-solid fa-user-group text-sm"></i></div>
-          <div class="text-left"><p class="text-xs font-bold text-slate-800">New Group</p><p class="text-[10px] text-slate-400">Manage reusable people lists</p></div>
+          <div class="text-left"><p class="text-xs font-bold text-slate-800">New Group</p><p class="text-[10px] text-slate-400">Reusable people lists</p></div>
+        </button>
+        <!-- World Clock (js/world-clock.js) lives here rather than the side
+             drawer - it's a lookup/utility screen you jump to occasionally,
+             same shelf as Fuel Log/Tag Reports/New Group below, not a
+             constantly-visible nav item like Settings. -->
+        <button onclick="navigate('worldClock'); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
+          <div class="w-9 h-9 rounded-lg bg-cyan-500/10 text-cyan-600 flex items-center justify-center"><i class="fa-solid fa-earth-americas text-sm"></i></div>
+          <div class="text-left"><p class="text-xs font-bold text-slate-800">World Clock</p><p class="text-[10px] text-slate-400">Time zones by country</p></div>
         </button>
       </div>
       <div class="grid grid-cols-2 gap-3">
@@ -329,6 +337,8 @@
   <script src="./js/splitwise.js"></script>
   <script src="./js/groups.js"></script>
   <script src="./js/loans.js"></script>
+  <script src="./js/timezone-data.js"></script>
+  <script src="./js/world-clock.js"></script>
   <script src="./js/pdf-writer.js"></script>
   <script src="./js/pdf-report-data.js"></script>
   <script src="./js/pdf-report.js"></script>
@@ -360,6 +370,13 @@
         closeSplitwise();
       }
 
+      // World Clock's live-updating cards run on a setInterval (see
+      // js/world-clock.js) - has to be torn down BEFORE switching away from
+      // it, same "stop it before leaving" spirit as the Splitwise overlay
+      // close above, otherwise it'd keep ticking against a container that's
+      // no longer showing its cards.
+      if (typeof _wcStopTicker === 'function') _wcStopTicker();
+
       currentTab = tab;
       localStorage.setItem(LAST_TAB_STORAGE_KEY, tab);
       setAppHeaderCrumb(TAB_DISPLAY_NAMES[tab]);
@@ -384,6 +401,7 @@
       else if (tab === 'pdfReport') renderPdfReportPage(container);
       else if (tab === 'loans') renderLoansPage(container);
       else if (tab === 'groups') renderGroupsPage(container);
+      else if (tab === 'worldClock') renderWorldClockPage(container);
     }
 
     // --- Home Screen View ---
