@@ -168,7 +168,10 @@ function renderSplitwiseGroupList() {
         return `
           <div onclick="openGroupDetail('${g.id}')" class="p-3.5 rounded-xl border border-slate-100 bg-white shadow-sm flex items-center justify-between cursor-pointer hover:bg-slate-50 transition">
             <div>
-              <p class="text-xs font-bold text-slate-800">${g.name}</p>
+              <p class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                ${g.name}
+                ${g.settled ? '<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-[9px] font-bold"><i class="fa-solid fa-lock text-[8px]"></i>Settled</span>' : ''}
+              </p>
               <p class="text-[10px] text-slate-400">${g.members.length} member(s) &bull; ₹${total.toLocaleString()} logged</p>
             </div>
             <button onclick="event.stopPropagation(); deleteSplitGroup('${g.id}')" class="text-rose-500 hover:text-rose-600 px-2"><i class="fa-solid fa-trash text-xs"></i></button>
@@ -213,7 +216,7 @@ async function saveNewSplitGroup(e) {
   const name = document.getElementById('newSplitGroupName').value.trim();
   if (!name) return;
 
-  const group = { id: _sgId('sg'), name, createdAt: new Date().toISOString(), members: [], expenses: [] };
+  const group = { id: _sgId('sg'), name, createdAt: new Date().toISOString(), members: [], expenses: [], settled: false };
   splitGroups.push(group);
   await IDB.put('splitGroups', group);
   _refreshDriveButtonAfterSplitwiseChange();
@@ -331,14 +334,27 @@ function renderSplitGroupDetail(group) {
   const balances = calculateSplitBalances(group);
   const settleUp = simplifySplitDebts(balances);
   const memberName = id => (group.members.find(m => m.id === id) || {}).name || 'Removed member';
-  const canAddExpense = group.members.length >= 2;
+  const isSettled = !!group.settled;
+  const canAddExpense = group.members.length >= 2 && !isSettled;
 
   const content = document.getElementById('splitwiseContent');
   content.innerHTML = `
+    ${isSettled ? `
+      <div class="bg-emerald-50 border border-emerald-100 rounded-xl px-3 py-2.5 flex items-center gap-2">
+        <i class="fa-solid fa-lock text-emerald-600"></i>
+        <p class="text-[11px] text-emerald-700 flex-1"><span class="font-bold">Settled & locked.</span> Members and expenses can't be changed.</p>
+        <button onclick="reopenSplitGroup('${group.id}')" class="text-[10px] font-semibold text-emerald-700 underline hover:text-emerald-800 shrink-0">Reopen</button>
+      </div>
+    ` : `
+      <button onclick="markSplitGroupSettled('${group.id}')" class="w-full py-2.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold hover:bg-emerald-100 transition">
+        <i class="fa-solid fa-lock mr-1"></i> Mark as Settled
+      </button>
+    `}
+
     <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-2">
       <div class="flex items-center justify-between">
         <h3 class="text-xs font-bold text-slate-800">Members</h3>
-        <button onclick="openAddMemberForm('${group.id}')" class="text-[10px] font-semibold text-blue-600 hover:text-blue-700">+ Add Person</button>
+        ${isSettled ? '' : `<button onclick="openAddMemberForm('${group.id}')" class="text-[10px] font-semibold text-blue-600 hover:text-blue-700">+ Add Person</button>`}
       </div>
       ${group.members.length === 0 ? `
         <p class="text-[11px] text-slate-400">No members yet - add people before logging expenses.</p>
@@ -356,7 +372,7 @@ function renderSplitGroupDetail(group) {
                 <span class="text-xs font-semibold text-slate-700">${m.name}</span>
                 <div class="flex items-center gap-2">
                   <span class="text-[10px]">${balLabel}</span>
-                  <button onclick="deleteSplitMember('${group.id}', '${m.id}')" class="text-slate-300 hover:text-rose-500 transition"><i class="fa-solid fa-xmark text-xs"></i></button>
+                  ${isSettled ? '' : `<button onclick="deleteSplitMember('${group.id}', '${m.id}')" class="text-slate-300 hover:text-rose-500 transition"><i class="fa-solid fa-xmark text-xs"></i></button>`}
                 </div>
               </div>
             `;
@@ -388,9 +404,9 @@ function renderSplitGroupDetail(group) {
     <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-2">
       <div class="flex items-center justify-between">
         <h3 class="text-xs font-bold text-slate-800">Expenses</h3>
-        <button onclick="openAddSplitExpenseForm('${group.id}')" ${canAddExpense ? '' : 'disabled'} class="text-[10px] font-semibold transition ${canAddExpense ? 'text-blue-600 hover:text-blue-700' : 'text-slate-300 cursor-not-allowed'}">+ Add Expense</button>
+        ${isSettled ? '' : `<button onclick="openAddSplitExpenseForm('${group.id}')" ${canAddExpense ? '' : 'disabled'} class="text-[10px] font-semibold transition ${canAddExpense ? 'text-blue-600 hover:text-blue-700' : 'text-slate-300 cursor-not-allowed'}">+ Add Expense</button>`}
       </div>
-      ${!canAddExpense ? '<p class="text-[11px] text-slate-400">Add at least 2 people before logging an expense to split.</p>' : ''}
+      ${!isSettled && group.members.length < 2 ? '<p class="text-[11px] text-slate-400">Add at least 2 people before logging an expense to split.</p>' : ''}
       ${canAddExpense && group.expenses.length === 0 ? '<p class="text-[11px] text-slate-400 text-center py-2">No expenses logged yet.</p>' : ''}
       <div class="space-y-1.5">
         ${group.expenses.slice().sort((a, b) => b.date.localeCompare(a.date)).map(e => `
@@ -399,8 +415,10 @@ function renderSplitGroupDetail(group) {
               <p class="text-xs font-bold text-slate-800 truncate">${e.description || 'Expense'}</p>
               <div class="flex items-center gap-2 shrink-0">
                 <p class="text-xs font-bold text-slate-800">₹${Number(e.amount).toLocaleString()}</p>
-                <button onclick="openEditSplitExpenseForm('${group.id}', '${e.id}')" class="text-slate-300 hover:text-blue-500 transition"><i class="fa-solid fa-pen text-[10px]"></i></button>
-                <button onclick="deleteSplitExpense('${group.id}', '${e.id}')" class="text-slate-300 hover:text-rose-500 transition"><i class="fa-solid fa-trash text-[10px]"></i></button>
+                ${isSettled ? '' : `
+                  <button onclick="openEditSplitExpenseForm('${group.id}', '${e.id}')" class="text-slate-300 hover:text-blue-500 transition"><i class="fa-solid fa-pen text-[10px]"></i></button>
+                  <button onclick="deleteSplitExpense('${group.id}', '${e.id}')" class="text-slate-300 hover:text-rose-500 transition"><i class="fa-solid fa-trash text-[10px]"></i></button>
+                `}
               </div>
             </div>
             <p class="text-[10px] text-slate-400">Paid by ${memberName(e.paidBy)} &bull; split ${e.splitAmong.length} way(s) &bull; ${e.date}</p>
@@ -413,6 +431,40 @@ function renderSplitGroupDetail(group) {
       <i class="fa-solid fa-trash mr-1"></i> Delete This Split
     </button>
   `;
+}
+
+// Locks a group against further member/expense edits - the balance math
+// (calculateSplitBalances/simplifySplitDebts above) is read-only either way,
+// so "settled" doesn't touch any of that, it just freezes the inputs once
+// everyone's actually paid up outside the app. Warns (but doesn't block) if
+// Settle Up still lists outstanding transactions, since someone might
+// legitimately want to lock a group they settled in cash without logging
+// every last transfer here.
+async function markSplitGroupSettled(groupId) {
+  const group = splitGroups.find(g => g.id === groupId);
+  if (!group) return;
+
+  if (!(await showConfirm('Do you want to mark this settled?', { danger: false }))) return;
+
+  group.settled = true;
+  await IDB.put('splitGroups', group);
+  _refreshDriveButtonAfterSplitwiseChange();
+  renderSplitwiseView();
+}
+
+// Escape hatch for settling by mistake - unlocks a group back to normal
+// editing. Deliberately a plain confirm, not a scary "danger" one: undoing a
+// settle is far less destructive than any of the deletes elsewhere in this
+// file, it's just flipping the lock back off.
+async function reopenSplitGroup(groupId) {
+  const group = splitGroups.find(g => g.id === groupId);
+  if (!group) return;
+  if (!(await showConfirm(`Reopen "${group.name}" for editing again?`, { danger: false }))) return;
+
+  group.settled = false;
+  await IDB.put('splitGroups', group);
+  _refreshDriveButtonAfterSplitwiseChange();
+  renderSplitwiseView();
 }
 
 // --- Members --------------------------------------------------------------
@@ -438,6 +490,15 @@ let _addMemberMode = 'new';
 let _addMemberCopySourceGroupId = null;
 
 async function openAddMemberForm(groupId) {
+  // Belt-and-suspenders alongside renderSplitGroupDetail hiding the "+ Add
+  // Person" button entirely once settled - same spirit as
+  // isBudgetMonthEditable's double-check in index.html's budget overrides,
+  // in case this is ever reached some other way than that button.
+  const group = splitGroups.find(g => g.id === groupId);
+  if (group && group.settled) {
+    await showAlert('This split is settled and locked - reopen it first if you need to add people.');
+    return;
+  }
   _addMemberMode = 'new';
   _addMemberCopySourceGroupId = null;
   // Always re-read from IDB rather than trusting groups.js's in-memory
@@ -546,6 +607,10 @@ function _copyMemberCheckboxesHtml(groupId) {
 async function saveCopiedSplitMembers(groupId) {
   const group = splitGroups.find(g => g.id === groupId);
   if (!group) return;
+  if (group.settled) {
+    await showAlert('This split is settled and locked - reopen it first if you need to add people.');
+    return;
+  }
 
   const names = Array.from(document.querySelectorAll('.copyMemberCheckbox:checked')).map(cb => cb.value);
   if (names.length === 0) { await showAlert('Select at least one person to add.'); return; }
@@ -585,6 +650,10 @@ async function saveNewSplitMember(e, groupId) {
   e.preventDefault();
   const group = splitGroups.find(g => g.id === groupId);
   if (!group) return;
+  if (group.settled) {
+    await showAlert('This split is settled and locked - reopen it first if you need to add people.');
+    return;
+  }
   const name = document.getElementById('newSplitMemberName').value.trim();
   if (!name) return;
 
@@ -617,6 +686,10 @@ async function saveNewSplitMember(e, groupId) {
 async function deleteSplitMember(groupId, memberId) {
   const group = splitGroups.find(g => g.id === groupId);
   if (!group) return;
+  if (group.settled) {
+    await showAlert('This split is settled and locked - reopen it first if you need to remove people.');
+    return;
+  }
 
   const usedInExpense = group.expenses.some(e => e.paidBy === memberId || e.splitAmong.includes(memberId));
   if (usedInExpense) {
@@ -707,9 +780,13 @@ function addPersonFromExpenseForm(groupId, expenseId) {
   openAddMemberForm(groupId);
 }
 
-function openAddSplitExpenseForm(groupId) {
+async function openAddSplitExpenseForm(groupId) {
   const group = splitGroups.find(g => g.id === groupId);
   if (!group || group.members.length < 2) return;
+  if (group.settled) {
+    await showAlert('This split is settled and locked - reopen it first if you need to log an expense.');
+    return;
+  }
 
   const modal = document.getElementById('formModal');
   const content = document.getElementById('formModalContent');
@@ -721,11 +798,15 @@ function openAddSplitExpenseForm(groupId) {
 // you fix a typo'd amount, change who paid, or adjust who it's split among
 // without deleting and re-creating the whole entry (which would also lose
 // its original id/createdAt for no reason).
-function openEditSplitExpenseForm(groupId, expenseId) {
+async function openEditSplitExpenseForm(groupId, expenseId) {
   const group = splitGroups.find(g => g.id === groupId);
   if (!group) return;
   const expense = group.expenses.find(ex => ex.id === expenseId);
   if (!expense) return;
+  if (group.settled) {
+    await showAlert('This split is settled and locked - reopen it first if you need to edit an expense.');
+    return;
+  }
 
   const modal = document.getElementById('formModal');
   const content = document.getElementById('formModalContent');
@@ -739,6 +820,10 @@ async function saveSplitExpense(e, groupId, expenseId) {
   e.preventDefault();
   const group = splitGroups.find(g => g.id === groupId);
   if (!group) return;
+  if (group.settled) {
+    await showAlert('This split is settled and locked - reopen it first if you need to make changes.');
+    return;
+  }
 
   const amount = parseFloat(document.getElementById('splitExpAmount').value);
   const paidBy = document.getElementById('splitExpPaidBy').value;
@@ -773,6 +858,10 @@ async function saveSplitExpense(e, groupId, expenseId) {
 async function deleteSplitExpense(groupId, expenseId) {
   const group = splitGroups.find(g => g.id === groupId);
   if (!group) return;
+  if (group.settled) {
+    await showAlert('This split is settled and locked - reopen it first if you need to delete an expense.');
+    return;
+  }
   if (!(await showConfirm('Delete this expense from the group?'))) return;
 
   group.expenses = group.expenses.filter(e => e.id !== expenseId);
