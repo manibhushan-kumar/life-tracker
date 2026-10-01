@@ -808,12 +808,11 @@
             <label class="text-[11px] font-semibold text-slate-400">Date</label>
             <input type="date" required id="expDate" value="${getTodayStr()}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
           </div>
-          ${appData.familyMembers.length > 0 ? `
+          ${activeFamilyMembers().length > 0 ? `
             <div>
               <label class="text-[11px] font-semibold text-slate-400">Paid By (Optional)</label>
               <select id="expPaidBy" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
-                <option value="">-- Not specified --</option>
-                ${appData.familyMembers.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
+                ${paidByOptionsHtml(null)}
               </select>
             </div>
           ` : ''}
@@ -1024,12 +1023,11 @@
               <p class="text-[9px] text-slate-400 mt-1">Defaults to ${item.dueDate} + ${item.recurrence.toLowerCase()} - change it if the real next due date is different, or leave it as-is.</p>
             </div>
           ` : '<p class="text-[10px] text-slate-400">This is a one-time item - it will be marked completed after logging.</p>'}
-          ${appData.familyMembers.length > 0 ? `
+          ${activeFamilyMembers().length > 0 ? `
             <div>
               <label class="text-[11px] font-semibold text-slate-400">Paid By (Optional)</label>
               <select id="dueItemPaidBy" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
-                <option value="">-- Not specified --</option>
-                ${appData.familyMembers.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
+                ${paidByOptionsHtml(null)}
               </select>
             </div>
           ` : '<p class="text-[10px] text-slate-400">Add family members in Settings to track who paid this.</p>'}
@@ -1321,12 +1319,11 @@
             </div>
           </div>
           <p class="text-[11px] text-slate-400">Liters filled: <span id="fuelLitersPreview" class="font-bold text-slate-700">${existing ? existing.liters : '0'}</span> L (auto-calculated)</p>
-          ${appData.familyMembers.length > 0 ? `
+          ${(activeFamilyMembers().length > 0 || (existing && existing.paidBy)) ? `
             <div>
               <label class="text-[11px] font-semibold text-slate-400">Paid By (Optional)</label>
               <select id="fuelPaidBy" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
-                <option value="">-- Not specified --</option>
-                ${appData.familyMembers.map(m => `<option value="${m.id}" ${existing && existing.paidBy === m.id ? 'selected' : ''}>${m.name}</option>`).join('')}
+                ${paidByOptionsHtml(existing ? existing.paidBy : null)}
               </select>
             </div>
           ` : ''}
@@ -1533,13 +1530,13 @@
           <p class="text-[10px] text-slate-400 -mt-2">Optional "Paid By" tag you can attach to an expense or a due-item payment - handy for tracking who actually paid what. Deleting someone only hides them from new entries - past expenses keep showing their name.</p>
 
           <div class="flex flex-wrap gap-2">
-            ${appData.familyMembers.map(m => `
+            ${activeFamilyMembers().map(m => `
               <span class="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
                 ${m.name}
                 <button onclick="deleteFamilyMember('${m.id}')" class="w-4 h-4 rounded-full bg-slate-200 hover:bg-rose-500 hover:text-white text-slate-500 flex items-center justify-center text-[9px] transition"><i class="fa-solid fa-xmark"></i></button>
               </span>
             `).join('')}
-            ${appData.familyMembers.length === 0 ? '<p class="text-[11px] text-slate-400">No family members added yet.</p>' : ''}
+            ${activeFamilyMembers().length === 0 ? '<p class="text-[11px] text-slate-400">No family members added yet.</p>' : ''}
           </div>
 
           <div class="flex gap-2 pt-1">
@@ -1897,10 +1894,42 @@
       const input = document.getElementById('newFamilyMemberName');
       const name = input.value.trim();
       if (!name) return;
-      if (appData.familyMembers.some(m => m.name.toLowerCase() === name.toLowerCase())) {
+      if (activeFamilyMembers().some(m => m.name.toLowerCase() === name.toLowerCase())) {
         await showAlert('That family member already exists.');
         return;
       }
+
+      // A SOFT-deleted member with this exact name (see the familyMembers
+      // shape comment in js/data-model.js) is very likely the same person
+      // being re-added after being removed earlier - offer to restore them
+      // under their ORIGINAL id instead of silently creating a second,
+      // unrelated record that happens to share a name. Restoring re-attaches
+      // their whole past "Paid By" history in one move (every display site
+      // already resolves by id); a same-named-but-different-id duplicate
+      // would instead split that history across two indistinguishable "Mom"
+      // entries with no way to tell them apart later.
+      const retiredMatch = appData.familyMembers.find(m => m.deleted && m.name.toLowerCase() === name.toLowerCase());
+      if (retiredMatch) {
+        const choice = await _renderDialog({
+          title: 'Restore this person?',
+          message: `"${name}" was removed earlier. Restore them to bring back their past "Paid By" history - or use a different name if this is actually someone else.`,
+          tone: 'info',
+          buttons: [
+            { label: 'Use a different name', style: 'secondary', value: 'rename' },
+            { label: 'Restore', style: 'primary', value: 'restore' }
+          ]
+        });
+        if (choice === 'restore') {
+          retiredMatch.deleted = false;
+          saveState();
+          input.value = '';
+          renderSettings(document.getElementById('mainContainer'));
+        }
+        // 'rename' (or the dialog otherwise closing) adds nothing - leave
+        // the typed name in place so the user can edit it to something else.
+        return;
+      }
+
       appData.familyMembers.push({ id: 'member_' + Date.now(), name });
       saveState();
       renderSettings(document.getElementById('mainContainer'));
@@ -1910,13 +1939,25 @@
       const member = appData.familyMembers.find(m => m.id === id);
       if (!member) return;
 
-      const inUseCount = appData.expenses.filter(e => e.paidBy === id).length;
-      const msg = inUseCount > 0
-        ? `"${member.name}" is tagged as "Paid By" on ${inUseCount} existing expense(s). Those will keep showing "${member.name}" — you just won't be able to pick them for new entries. Delete anyway?`
-        : `Delete family member "${member.name}"?`;
-      if (!(await showConfirm(msg))) return;
+      // Counts BOTH places paidBy can live - expenses (incl. ones created
+      // from a logged due-item payment) and fuel logs - see the familyMembers
+      // shape comment in js/data-model.js for why a still-referenced member
+      // gets soft- rather than hard-deleted below.
+      const inUseCount = appData.expenses.filter(e => e.paidBy === id).length
+        + (appData.fuelLogs || []).filter(f => f.paidBy === id).length;
 
-      appData.familyMembers = appData.familyMembers.filter(m => m.id !== id);
+      if (inUseCount === 0) {
+        if (!(await showConfirm(`Delete family member "${member.name}"?`))) return;
+        appData.familyMembers = appData.familyMembers.filter(m => m.id !== id);
+      } else {
+        const msg = `"${member.name}" is tagged as "Paid By" on ${inUseCount} existing expense(s)/fuel log(s). Those will keep showing "${member.name}" — you just won't be able to pick them for new entries. Delete anyway?`;
+        if (!(await showConfirm(msg))) return;
+        // Soft-delete: keep the record (activeFamilyMembers() already hides
+        // it from every dropdown) instead of removing it outright, so
+        // getFamilyMemberName keeps resolving the real name forever instead
+        // of every past reference degrading to "Former member".
+        member.deleted = true;
+      }
       saveState();
       renderSettings(document.getElementById('mainContainer'));
     }

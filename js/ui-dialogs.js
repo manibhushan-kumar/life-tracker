@@ -52,13 +52,29 @@ function _renderDialog({ title, message, tone, buttons }) {
       ${title ? `<h3 class="text-sm font-bold text-slate-800 mb-1">${title}</h3>` : ''}
       <p class="text-xs text-slate-500 leading-relaxed whitespace-pre-line mb-4">${message}</p>
       <div class="flex gap-2">
-        ${buttons.map(b => `
-          <button onclick="window.__dialogResolve(${JSON.stringify(b.value)})" class="flex-1 py-2.5 text-xs font-bold rounded-xl transition ${
+        ${buttons.map(b => {
+          // JSON.stringify(undefined) returns the literal JS value
+          // `undefined` (not a string) - showAlert's one button relies on
+          // exactly that (value: undefined) stringifying straight into
+          // `window.__dialogResolve(undefined)` via template-literal
+          // coercion, so that case has to stay untouched. A STRING value
+          // (e.g. the Restore/"Use a different name" buttons in
+          // addFamilyMember) stringifies to a double-quoted literal like
+          // `"restore"` - embedded as-is inside this onclick="..." attribute,
+          // those inner double quotes close the attribute early and the
+          // button silently does nothing when clicked. Only strings need
+          // escaping here; undefined/true/false never contain a `"` to begin
+          // with, so escaping only the string case is safe either way.
+          const serialized = JSON.stringify(b.value);
+          const safeValue = typeof serialized === 'string' ? serialized.replace(/"/g, '&quot;') : serialized;
+          return `
+          <button onclick="window.__dialogResolve(${safeValue})" class="flex-1 py-2.5 text-xs font-bold rounded-xl transition ${
             b.style === 'danger' ? 'bg-rose-600 text-white hover:bg-rose-700'
             : b.style === 'primary' ? 'bg-blue-600 text-white hover:bg-blue-700'
             : 'border border-slate-200 text-slate-600 hover:bg-slate-50'
           }">${b.label}</button>
-        `).join('')}
+        `;
+        }).join('')}
       </div>
     `;
     modal.classList.remove('hidden');
