@@ -85,7 +85,29 @@ async function getSyncMeta() {
     // findSyncConflicts() in drive-sync.js.
     knownRemoteSettingsSavedAt: null,
     knownRemoteSplitwiseSavedAt: null,
-    knownRemoteGroupsSavedAt: null
+    knownRemoteGroupsSavedAt: null,
+    // Credentials & Cards Vault (js/vault/vaultSync.js) - deliberately NOT
+    // folded into the settings/splitwise/groups backup-and-restore pipeline
+    // above. The vault syncs itself, independently, via its own buttons on
+    // the Vault page - see vaultSync.js for why. vaultFileId caches
+    // vault.enc's Drive file id (same "skip the name search" trick as
+    // settingsFileId etc); knownRemoteVaultSavedAt is what this device last
+    // saw on Drive, compared against Drive's current value before every
+    // vault push/pull so one device can never silently clobber another's
+    // newer encrypted blob.
+    vaultFileId: null,
+    knownRemoteVaultSavedAt: null,
+    // Set by vaultResetVault() (js/vault/vaultService.js - the "forgot my
+    // master password" recovery path) whenever the LOCAL vault blob is
+    // wiped and later recreated from scratch. A fresh local vault's
+    // updatedAt is always "newer" than whatever's on Drive, which would
+    // otherwise sail straight past vaultSyncUpload's normal "only ask if
+    // remote is newer" conflict check and silently overwrite a perfectly
+    // good Drive backup the very next time this device syncs. This flag
+    // forces that one sync to ask Pull/Overwrite/Cancel regardless of
+    // timestamps, then clears itself - see vaultSyncUpload() in
+    // js/vault/vaultSync.js.
+    vaultLocalResetSinceSync: false
   };
 }
 
@@ -256,7 +278,7 @@ async function saveState(opts) {
 // slips past the overscroll-behavior CSS fix (e.g. the OS itself killing
 // and relaunching the PWA) - validated against a known-tabs list so a
 // stale/corrupted localStorage value can never navigate somewhere invalid.
-const VALID_TABS = ['home', 'expenses', 'compare', 'items', 'settings', 'reports', 'fuel', 'pdfReport', 'loans', 'groups', 'worldClock'];
+const VALID_TABS = ['home', 'expenses', 'compare', 'items', 'settings', 'reports', 'fuel', 'pdfReport', 'loans', 'groups', 'worldClock', 'vault'];
 
 async function initStorage() {
   await loadAppData();

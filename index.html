@@ -245,9 +245,19 @@
         </button>
       </div>
       <div class="grid grid-cols-2 gap-3">
-        <button onclick="navigate('pdfReport'); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition col-span-2">
+        <button onclick="navigate('pdfReport'); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
           <div class="w-9 h-9 rounded-lg bg-fuchsia-500/10 text-fuchsia-600 flex items-center justify-center"><i class="fa-solid fa-file-pdf text-sm"></i></div>
           <div class="text-left"><p class="text-xs font-bold text-slate-800">Generate PDF</p><p class="text-[10px] text-slate-400">Report + charts</p></div>
+        </button>
+        <!-- Credentials & Cards Vault (js/vault/) - lock-gated, so it lives
+             here as a deliberate "jump to it" entry like World Clock/New
+             Group above, rather than a persistent side-nav item next to
+             Settings - navigate('vault') renders the locked/create screen
+             first regardless of entry point, so there's nothing unsafe
+             about reaching it from the Quick Add sheet. -->
+        <button onclick="navigate('vault'); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
+          <div class="w-9 h-9 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center"><i class="fa-solid fa-shield-halved text-sm"></i></div>
+          <div class="text-left"><p class="text-xs font-bold text-slate-800">Vault</p><p class="text-[10px] text-slate-400">Logins & cards</p></div>
         </button>
       </div>
     </div>
@@ -343,6 +353,17 @@
   <script src="./js/pdf-report-data.js"></script>
   <script src="./js/pdf-report.js"></script>
   <script src="./js/pdf-download.js"></script>
+  <!-- Credentials & Cards Vault - crypto.js has zero dependencies and must
+       load first; vaultStore.js (IDB) needs js/idb.js already loaded above;
+       vaultService.js needs both; vaultSync.js needs js/drive-sync.js's
+       low-level helpers (already loaded above) plus vaultService/vaultStore;
+       vaultUI.js needs all of the above. -->
+  <script src="./js/vault/crypto.js"></script>
+  <script src="./js/vault/vaultStore.js"></script>
+  <script src="./js/vault/vaultService.js"></script>
+  <script src="./js/vault/vaultSync.js"></script>
+  <script src="./js/vault/patternLock.js"></script>
+  <script src="./js/vault/vaultUI.js"></script>
 
   <script>
     // --- Application State ---
@@ -377,6 +398,14 @@
       // no longer showing its cards.
       if (typeof _wcStopTicker === 'function') _wcStopTicker();
 
+      // The Vault (js/vault/) locks itself the instant you navigate away
+      // from it, whether or not it's actually idle yet - leaving the
+      // decrypted vault sitting in memory just because you tapped over to
+      // Expenses would defeat the point of it being lock-gated at all. This
+      // also clears the vault page's own DOM (see the vaultOnLock listener
+      // in vaultUI.js) before whatever tab comes next renders over it.
+      if (tab !== 'vault' && typeof vaultLock === 'function') vaultLock();
+
       currentTab = tab;
       localStorage.setItem(LAST_TAB_STORAGE_KEY, tab);
       setAppHeaderCrumb(TAB_DISPLAY_NAMES[tab]);
@@ -402,6 +431,7 @@
       else if (tab === 'loans') renderLoansPage(container);
       else if (tab === 'groups') renderGroupsPage(container);
       else if (tab === 'worldClock') renderWorldClockPage(container);
+      else if (tab === 'vault') renderVaultPage(container);
     }
 
     // --- Home Screen View ---
