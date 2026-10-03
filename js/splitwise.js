@@ -848,6 +848,15 @@ async function openAddSplitExpenseForm(groupId) {
   content.innerHTML = _splitExpenseFormHtml(group, null);
 }
 
+// A PNG card has a real ceiling: some mobile browsers (notably older iOS
+// WebKit) refuse to render/export a canvas past a certain height, which
+// silently produces a blank or truncated image rather than an error - the
+// larger the split (more members/settle-up transactions/expenses), the more
+// likely a single tall image hits that ceiling. Past this height, switch to
+// a paginated PDF (js/pdf-writer.js's SimplePdf, which has no such limit)
+// instead of trying to cram everything into one image.
+const MAX_SHARE_IMAGE_HEIGHT = 4000;
+
 // Renders the WHOLE split as one shareable PNG card - name, every member's
 // balance, the simplified settle-up transactions, and every expense - using
 // the generic block-layout renderer in js/share-image.js. Deliberately
@@ -856,8 +865,9 @@ async function openAddSplitExpenseForm(groupId) {
 // when you'd want to send everyone a final record. Numbers come straight
 // from calculateSplitBalances()/simplifySplitDebts() above - the same
 // functions the on-screen "Members"/"Settle Up" sections use - so the image
-// can never drift from what the app itself shows.
-function shareSplitGroupImage(groupId) {
+// can never drift from what the app itself shows. Falls back to a PDF (see
+// _buildSplitGroupPdf below) for splits too long to fit safely in one image.
+async function shareSplitGroupImage(groupId) {
   const group = splitGroups.find(g => g.id === groupId);
   if (!group) return;
 
@@ -920,8 +930,109 @@ function shareSplitGroupImage(groupId) {
 
   blocks.push({ kind: 'footer', text: 'Shared from Life Tracker', height: 80 });
 
+  const fileBase = (group.name || 'split').replace(/[^a-z0-9]+/gi, '-');
+
+  if (_shareBlocksTotalHeight(blocks) > MAX_SHARE_IMAGE_HEIGHT) {
+    await showAlert('This split has too many members/expenses to fit safely in one shareable image - sharing as a PDF instead.');
+    const pdf = _buildSplitGroupPdf(group, balances, settleUp, memberName);
+    _shareOrDownloadBlob(new Blob([pdf.toBytes()], { type: 'application/pdf' }), `${fileBase}.pdf`, 'application/pdf', group.name || 'Split');
+    return;
+  }
+
   const canvas = _renderShareBlocks(blocks);
-  _shareOrDownloadCanvas(canvas, `${(group.name || 'split').replace(/[^a-z0-9]+/gi, '-')}.png`, group.name || 'Split');
+  _shareOrDownloadCanvas(canvas, `${fileBase}.png`, group.name || 'Split');
+}
+
+// PDF twin of the block list above, for splits too long for one image (see
+// MAX_SHARE_IMAGE_HEIGHT). Built directly with js/pdf-writer.js's SimplePdf
+// rather than sharing a layout description with the canvas renderer - a PDF
+// paginates automatically via ensureSpace()/_newPage(), which a single
+// canvas has no equivalent of, so the two renderers necessarily work
+// differently even though they show the same three sections. Money is
+// formatted "Rs. X" rather than with the ₹ glyph - see pdf-writer.js's file
+// header on why (the standard PDF fonts have no Rupee sign).
+function _buildSplitGroupPdf(group, balances, settleUp, memberName) {
+  const pdf = new SimplePdf();
+  const left = pdf.margin;
+  const width = pdf.contentWidth;
+  const SLATE_BG = [0.973, 0.980, 0.988];
+  const MUTED = [0.580, 0.639, 0.722];
+
+  pdf.text(left, pdf.y, pdfTruncateToWidth(group.name || 'Split', width, 20, true), { size: 20, bold: true });
+  pdf.advance(28);
+  pdf.text(left, pdf.y, `${group.members.length} member(s)  -  ${group.expenses.length} expense(s)`, { size: 10, color: MUTED });
+  pdf.advance(22);
+  pdf.line(left, pdf.y, left + width, pdf.y);
+  pdf.advance(16);
+
+  pdf.ensureSpace(42);
+  pdf.text(left, pdf.y, 'Members', { size: 13, bold: true });
+  pdf.advance(22);
+  if (group.members.length === 0) {
+    pdf.text(left, pdf.y, 'No members yet.', { size: 10, color: MUTED });
+    pdf.advance(20);
+  } else {
+    group.members.forEach(m => {
+      pdf.ensureSpace(24);
+      const bal = balances[m.id] || 0;
+      const label = bal > 0.5 ? `gets back Rs. ${bal.toFixed(2)}` : bal < -0.5 ? `owes Rs. ${Math.abs(bal).toFixed(2)}` : 'settled up';
+      const color = bal > 0.5 ? [0.020, 0.588, 0.412] : bal < -0.5 ? [0.882, 0.114, 0.282] : MUTED;
+      pdf.rect(left, pdf.y, width, 20, { fill: SLATE_BG });
+      pdf.text(left + 8, pdf.y + 5, pdfTruncateToWidth(m.name, width * 0.5, 10, true), { size: 10, bold: true });
+      pdf.text(left, pdf.y + 5, label, { size: 10, bold: true, color, align: 'right', width: width - 8 });
+      pdf.advance(24);
+    });
+  }
+  pdf.advance(8);
+  pdf.line(left, pdf.y, left + width, pdf.y);
+  pdf.advance(16);
+
+  pdf.ensureSpace(42);
+  pdf.text(left, pdf.y, 'Settle Up', { size: 13, bold: true });
+  pdf.advance(22);
+  if (group.expenses.length === 0) {
+    pdf.text(left, pdf.y, 'No expenses logged yet.', { size: 10, color: MUTED });
+    pdf.advance(20);
+  } else if (settleUp.length === 0) {
+    pdf.text(left, pdf.y, "Everyone's settled up!", { size: 10, bold: true, color: [0.020, 0.588, 0.412] });
+    pdf.advance(20);
+  } else {
+    const settledKeys = group.settledTxKeys || [];
+    settleUp.forEach(t => {
+      pdf.ensureSpace(24);
+      const settled = settledKeys.includes(_settleTxKey(t));
+      const bg = settled ? [0.925, 0.980, 0.957] : [0.961, 0.953, 1.0];
+      const accent = settled ? [0.016, 0.471, 0.337] : [0.427, 0.157, 0.851];
+      pdf.rect(left, pdf.y, width, 20, { fill: bg });
+      const line = `${memberName(t.from)} -> ${memberName(t.to)}`;
+      pdf.text(left + 8, pdf.y + 5, pdfTruncateToWidth(line, width * 0.6, 10, true), { size: 10, bold: true });
+      pdf.text(left, pdf.y + 5, `Rs. ${t.amount.toFixed(2)}`, { size: 10, bold: true, color: accent, align: 'right', width: width - 8 });
+      pdf.advance(24);
+    });
+  }
+  pdf.advance(8);
+  pdf.line(left, pdf.y, left + width, pdf.y);
+  pdf.advance(16);
+
+  pdf.ensureSpace(42);
+  pdf.text(left, pdf.y, 'Expenses', { size: 13, bold: true });
+  pdf.advance(22);
+  if (group.expenses.length === 0) {
+    pdf.text(left, pdf.y, 'No expenses logged yet.', { size: 10, color: MUTED });
+  } else {
+    group.expenses.slice().sort((a, b) => b.date.localeCompare(a.date)).forEach(e => {
+      pdf.ensureSpace(38);
+      pdf.rect(left, pdf.y, width, 34, { fill: SLATE_BG });
+      const amountStr = `Rs. ${Number(e.amount).toLocaleString()}`;
+      pdf.text(left + 8, pdf.y + 6, pdfTruncateToWidth(e.description || 'Expense', width - 120, 11, true), { size: 11, bold: true });
+      pdf.text(left, pdf.y + 6, amountStr, { size: 11, bold: true, align: 'right', width: width - 8 });
+      const meta = `Paid by ${memberName(e.paidBy)} - split ${e.splitAmong.length} way(s) - ${e.date}`;
+      pdf.text(left + 8, pdf.y + 20, pdfTruncateToWidth(meta, width - 16, 9), { size: 9, color: MUTED });
+      pdf.advance(38);
+    });
+  }
+
+  return pdf;
 }
 
 // Opens the same form pre-filled with an existing expense's values - lets

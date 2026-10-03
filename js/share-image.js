@@ -38,9 +38,21 @@ const _SHARE_TOP_PAD = 100;
 const _SHARE_BOTTOM_PAD = 40;
 const _SHARE_SIDE_PAD = 80;
 
+// Exposed separately from _renderShareBlocks so a caller can check "would
+// this be too tall to render reliably" BEFORE actually building a canvas -
+// see shareSplitGroupImage() in js/splitwise.js, which falls back to a
+// paginated PDF (js/pdf-writer.js's SimplePdf) once a split has enough
+// members/transactions/expenses to push this past a safe canvas-height
+// ceiling. Mobile WebKit in particular has historically capped canvas
+// dimensions/area well below what a very long single-page image would need;
+// there's no such ceiling on a multi-page PDF.
+function _shareBlocksTotalHeight(blocks) {
+  return _SHARE_TOP_PAD + blocks.reduce((sum, b) => sum + b.height, 0) + _SHARE_BOTTOM_PAD;
+}
+
 function _renderShareBlocks(blocks) {
   const width = _SHARE_CARD_W;
-  const totalHeight = _SHARE_TOP_PAD + blocks.reduce((sum, b) => sum + b.height, 0) + _SHARE_BOTTOM_PAD;
+  const totalHeight = _shareBlocksTotalHeight(blocks);
 
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -240,26 +252,25 @@ function _truncateText(ctx, text, maxWidth) {
 }
 
 // Tries the native share sheet first (mobile Chrome/Safari support sharing
-// image FILES, not just text/links) and falls back to a plain download -
-// the exact Blob -> object URL -> temporary <a download> -> click ->
-// revokeObjectURL sequence js/pdf-writer.js already uses for PDFs.
-function _shareOrDownloadCanvas(canvas, filename, shareTitle) {
-  canvas.toBlob(async (blob) => {
-    if (!blob) return;
-    const file = new File([blob], filename, { type: 'image/png' });
+// FILES, not just text/links - any mime type, not just images) and falls
+// back to a plain download - the exact Blob -> object URL -> temporary
+// <a download> -> click -> revokeObjectURL sequence js/pdf-writer.js's
+// SimplePdf.download() already uses. Shared by both the PNG card
+// (_shareOrDownloadCanvas below) and the PDF fallback for large splits
+// (see shareSplitGroupImage in js/splitwise.js) so there's exactly one
+// "share this file, or download it" implementation in the app.
+function _shareOrDownloadBlob(blob, filename, mimeType, shareTitle) {
+  const file = new File([blob], filename, { type: mimeType });
 
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try {
-        await navigator.share({ files: [file], title: shareTitle });
-        return; // shared successfully (or the user picked an app) - done
-      } catch (err) {
-        if (err && err.name === 'AbortError') return; // user dismissed the share sheet - not an error
-        // Any other failure (e.g. share target rejected the file) falls
-        // through to the plain download below instead of leaving the user
-        // with nothing.
-      }
-    }
+  const tryShare = navigator.canShare && navigator.canShare({ files: [file] })
+    ? navigator.share({ files: [file], title: shareTitle }).then(() => true).catch(err => {
+        if (err && err.name === 'AbortError') return true; // user dismissed the share sheet - not an error, don't also download
+        return false; // any other failure (e.g. share target rejected the file) - fall through to download
+      })
+    : Promise.resolve(false);
 
+  tryShare.then(shared => {
+    if (shared) return;
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -268,5 +279,12 @@ function _shareOrDownloadCanvas(canvas, filename, shareTitle) {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  });
+}
+
+function _shareOrDownloadCanvas(canvas, filename, shareTitle) {
+  canvas.toBlob(blob => {
+    if (!blob) return;
+    _shareOrDownloadBlob(blob, filename, 'image/png', shareTitle);
   }, 'image/png');
 }
