@@ -35,6 +35,18 @@ let vaultUnlockInputMode = 'password'; // 'password' | 'pattern'
 let _vaultCreatePendingPattern = null; // first of the two confirm-by-redrawing draws
 let _vaultPatternTooShortMsg = null;
 
+// Change-master-password form has TWO independent fields that each need
+// their own password/pattern toggle: proving the CURRENT credential (single
+// draw, same as unlock) and choosing a NEW one (draw-twice-to-confirm, same
+// as create). Without this, a vault created with a pattern would have no
+// way to ever prove its current credential through this form at all - the
+// text input has nothing a pattern-only user could type into it.
+let vaultChangeCurrentMode = 'password'; // 'password' | 'pattern'
+let vaultChangeNewMode = 'password'; // 'password' | 'pattern'
+let _vaultChangeCurrentPattern = null; // captured from a single draw on the "current" grid
+let _vaultChangeNewPendingPattern = null; // first of the two confirm-by-redrawing draws for "new"
+let _vaultChangeNewPattern = null; // captured once the two "new" draws match
+
 // --- Escaping (self-contained - no dependency on another feature file) ---
 function _vltEsc(str) {
   return String(str == null ? '' : str).replace(/[&<>]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]));
@@ -707,51 +719,176 @@ async function deleteVaultItem(id) {
 // --- Change master password -------------------------------------------------
 
 function openVaultChangePasswordForm() {
-  const modal = document.getElementById('formModal');
+  vaultChangeCurrentMode = 'password';
+  vaultChangeNewMode = 'password';
+  _vaultChangeCurrentPattern = null;
+  _vaultChangeNewPendingPattern = null;
+  _vaultChangeNewPattern = null;
+  document.getElementById('formModal').classList.remove('hidden');
+  _renderVaultChangePasswordForm();
+}
+
+// Rebuilt from scratch on every toggle/pattern-draw (not just on open) -
+// same "re-render the whole form, re-wire whichever grid is present"
+// approach as renderVaultPage() uses for the create/unlock screens, so the
+// current-credential and new-credential fields can be toggled completely
+// independently of each other.
+function _renderVaultChangePasswordForm() {
+  vaultPatternLockDestroy('vcpCurrentPattern');
+  vaultPatternLockDestroy('vcpNewPattern');
+
   const content = document.getElementById('formModalContent');
-  modal.classList.remove('hidden');
+  const curPattern = vaultChangeCurrentMode === 'pattern';
+  const newPattern = vaultChangeNewMode === 'pattern';
+
   content.innerHTML = `
     <h3 class="text-sm font-bold text-slate-800 mb-3">Change Master Password</h3>
     <form onsubmit="saveVaultChangePassword(event)" class="space-y-3">
       <div>
-        <label class="text-[11px] font-semibold text-slate-400">Current Master Password</label>
-        <input type="password" required id="vcpCurrent" autocomplete="current-password" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+        <div class="flex items-center justify-between mb-1">
+          <label class="text-[11px] font-semibold text-slate-400">Current Master Password</label>
+          <button type="button" onclick="vaultToggleChangeCurrentMode()" class="text-[10px] font-semibold text-blue-600 hover:text-blue-700 underline underline-offset-2">
+            ${curPattern ? 'Use password instead' : 'Use pattern instead'}
+          </button>
+        </div>
+        ${curPattern ? `
+          <p class="text-[11px] ${_vaultChangeCurrentPattern ? 'text-emerald-600' : 'text-slate-500'} mb-1">
+            ${_vaultChangeCurrentPattern ? '<i class="fa-solid fa-circle-check"></i> Pattern captured - draw again to replace it.' : 'Draw your current pattern.'}
+          </p>
+          ${vaultPatternLockHtml('vcpCurrentPattern', { gridSize: 4 })}
+        ` : `
+          <input type="password" required id="vcpCurrent" autocomplete="current-password" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+        `}
       </div>
+
       <div>
-        <label class="text-[11px] font-semibold text-slate-400">New Master Password</label>
-        <input type="password" required minlength="8" id="vcpNew" autocomplete="new-password" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+        <div class="flex items-center justify-between mb-1">
+          <label class="text-[11px] font-semibold text-slate-400">New Master Password</label>
+          <button type="button" onclick="vaultToggleChangeNewMode()" class="text-[10px] font-semibold text-blue-600 hover:text-blue-700 underline underline-offset-2">
+            ${newPattern ? 'Use password instead' : 'Use pattern instead'}
+          </button>
+        </div>
+        ${newPattern ? `
+          <p class="text-[11px] ${_vaultChangeNewPattern ? 'text-emerald-600' : 'text-slate-500'} mb-1">
+            ${_vaultChangeNewPendingPattern ? 'Draw the SAME new pattern again to confirm it.' : (_vaultChangeNewPattern ? '<i class="fa-solid fa-circle-check"></i> New pattern confirmed - draw again to replace it.' : 'Draw a new pattern connecting at least 6 dots.')}
+          </p>
+          <p class="text-[10px] text-amber-600 bg-amber-50 rounded-lg p-2 mb-1"><i class="fa-solid fa-triangle-exclamation"></i> A drawn pattern is much weaker than a typed password - this 4x4 grid has only ~5.8 million possible 6-dot patterns, small enough to brute-force offline against a stolen vault file. Use a typed password if this vault's backup matters.</p>
+          ${vaultPatternLockHtml('vcpNewPattern', { gridSize: 4 })}
+        ` : `
+          <input type="password" required minlength="8" id="vcpNew" autocomplete="new-password" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+          <label class="text-[11px] font-semibold text-slate-400 mt-2 block mb-1">Confirm New Password</label>
+          <input type="password" required minlength="8" id="vcpConfirm" autocomplete="new-password" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+        `}
       </div>
-      <div>
-        <label class="text-[11px] font-semibold text-slate-400">Confirm New Password</label>
-        <input type="password" required minlength="8" id="vcpConfirm" autocomplete="new-password" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
-      </div>
-      <p class="text-[10px] text-amber-600 bg-amber-50 rounded-lg p-2"><i class="fa-solid fa-triangle-exclamation"></i> If this vault is synced to Google Drive from other devices, re-sync it from each of them after this change - they still have the OLD password's key until then.</p>
+
+      <p class="text-[10px] text-amber-600 bg-amber-50 rounded-lg p-2"><i class="fa-solid fa-triangle-exclamation"></i> If this vault is synced to Google Drive from other devices, re-sync it from each of them after this change - they still have the OLD credential's key until then.</p>
       <div class="flex gap-2 pt-2">
         <button type="button" onclick="closeFormModal()" class="flex-1 py-2.5 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">Cancel</button>
         <button type="submit" class="flex-1 py-2.5 text-xs bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Change Password</button>
       </div>
     </form>
   `;
+
+  _vaultWireChangePasswordPatternInputs();
+}
+
+function _vaultWireChangePasswordPatternInputs() {
+  if (document.getElementById('vcpCurrentPattern')) {
+    vaultPatternLockInit('vcpCurrentPattern', {
+      minLength: 6,
+      onComplete: vaultOnChangeCurrentPatternComplete,
+      onTooShort: () => { /* grid resets itself; nothing else to do */ }
+    });
+  }
+  if (document.getElementById('vcpNewPattern')) {
+    vaultPatternLockInit('vcpNewPattern', {
+      minLength: 6,
+      onComplete: vaultOnChangeNewPatternComplete,
+      onTooShort: () => { /* grid resets itself; nothing else to do */ }
+    });
+  }
+}
+
+function vaultToggleChangeCurrentMode() {
+  vaultChangeCurrentMode = vaultChangeCurrentMode === 'password' ? 'pattern' : 'password';
+  _vaultChangeCurrentPattern = null;
+  _renderVaultChangePasswordForm();
+}
+
+function vaultToggleChangeNewMode() {
+  vaultChangeNewMode = vaultChangeNewMode === 'password' ? 'pattern' : 'password';
+  _vaultChangeNewPendingPattern = null;
+  _vaultChangeNewPattern = null;
+  _renderVaultChangePasswordForm();
+}
+
+// Single draw is enough to "fill in" the current-credential field - same as
+// typing a password once, it's just held until Change Password is clicked,
+// which is what actually proves it's correct (via vaultUnlock).
+function vaultOnChangeCurrentPatternComplete(patternStr) {
+  _vaultChangeCurrentPattern = patternStr;
+  _renderVaultChangePasswordForm();
+}
+
+// Draw-twice-to-confirm, same as the create screen - this is choosing a
+// brand NEW credential, not proving an existing one, so a typo should be
+// caught here rather than silently locking the vault under a pattern the
+// user didn't mean to set.
+async function vaultOnChangeNewPatternComplete(patternStr) {
+  if (!_vaultChangeNewPendingPattern) {
+    _vaultChangeNewPendingPattern = patternStr;
+    _vaultChangeNewPattern = null;
+    _renderVaultChangePasswordForm();
+    return;
+  }
+  if (patternStr !== _vaultChangeNewPendingPattern) {
+    _vaultChangeNewPendingPattern = null;
+    _renderVaultChangePasswordForm();
+    await showAlert('Patterns didn\'t match. Draw the new pattern again from the start.');
+    return;
+  }
+  _vaultChangeNewPattern = _vaultChangeNewPendingPattern;
+  _vaultChangeNewPendingPattern = null;
+  _renderVaultChangePasswordForm();
 }
 
 async function saveVaultChangePassword(event) {
   event.preventDefault();
-  const oldPwd = document.getElementById('vcpCurrent').value;
-  const newPwd = document.getElementById('vcpNew').value;
-  const confirmPwd = document.getElementById('vcpConfirm').value;
-  if (newPwd !== confirmPwd) { await showAlert('New passwords do not match.'); return; }
-  if (newPwd.length < 8) { await showAlert('Use at least 8 characters.'); return; }
+
+  let oldCredential, newCredential;
+
+  if (vaultChangeCurrentMode === 'pattern') {
+    if (!_vaultChangeCurrentPattern) { await showAlert('Draw your current pattern first.'); return; }
+    oldCredential = _vaultChangeCurrentPattern;
+  } else {
+    oldCredential = document.getElementById('vcpCurrent').value;
+  }
+
+  if (vaultChangeNewMode === 'pattern') {
+    if (!_vaultChangeNewPattern) { await showAlert('Draw and confirm your new pattern first.'); return; }
+    newCredential = _vaultChangeNewPattern;
+  } else {
+    newCredential = document.getElementById('vcpNew').value;
+    const confirmPwd = document.getElementById('vcpConfirm').value;
+    if (newCredential !== confirmPwd) { await showAlert('New passwords do not match.'); return; }
+    if (newCredential.length < 8) { await showAlert('Use at least 8 characters.'); return; }
+  }
+
   try {
-    // Re-verifies the CURRENT password through the exact same code path as
-    // a normal unlock (vaultUnlock throws WRONG_PASSWORD on a bad one)
-    // rather than a second, parallel verification routine.
-    await vaultUnlock(oldPwd);
-    await vaultChangeMasterPassword(newPwd);
+    // Re-verifies the CURRENT credential through the exact same code path
+    // as a normal unlock (vaultUnlock throws WRONG_PASSWORD on a bad one)
+    // rather than a second, parallel verification routine - works
+    // identically whether oldCredential came from a text field or a drawn
+    // pattern, since both are just strings by this point.
+    await vaultUnlock(oldCredential);
+    await vaultChangeMasterPassword(newCredential);
+    vaultPatternLockDestroy('vcpCurrentPattern');
+    vaultPatternLockDestroy('vcpNewPattern');
     closeFormModal();
     await showAlert('Master password changed. Re-sync this vault from any other devices.');
     renderVaultPage(document.getElementById('mainContainer'));
   } catch (e) {
-    await showAlert(e.code === 'WRONG_PASSWORD' ? 'Current password is incorrect.' : (e.message || 'Could not change password.'));
+    await showAlert(e.code === 'WRONG_PASSWORD' ? 'Current password/pattern is incorrect.' : (e.message || 'Could not change password.'));
   }
 }
 

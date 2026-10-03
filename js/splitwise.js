@@ -327,6 +327,19 @@ function simplifySplitDebts(balances) {
   return transactions;
 }
 
+// Identifies one simplified settle-up transaction so a manual "mark as
+// paid" checkbox (see the Settle Up section in renderSplitGroupDetail) can
+// survive a re-render. simplifySplitDebts() recomputes its output fresh
+// from the group's CURRENT balances every time, so there's no stored id to
+// key off of - this key is recomputed the same way and only matches as long
+// as the underlying expenses (and therefore this exact from/to/amount
+// triple) haven't changed. If they have, the old key simply stops matching
+// anything and that checkbox reverts to unchecked - which is correct, since
+// a changed balance means that specific debt doesn't exist anymore anyway.
+function _settleTxKey(t) {
+  return `${t.from}|${t.to}|${t.amount.toFixed(2)}`;
+}
+
 function renderSplitGroupDetail(group) {
   document.getElementById('splitwiseSubHeader').classList.remove('hidden');
   document.getElementById('splitwiseTitle').textContent = group.name;
@@ -350,6 +363,10 @@ function renderSplitGroupDetail(group) {
         <i class="fa-solid fa-lock mr-1"></i> Mark as Settled
       </button>
     `}
+
+    <button onclick="shareSplitGroupImage('${group.id}')" class="w-full py-2.5 bg-blue-50 text-blue-600 border border-blue-200 rounded-xl text-xs font-bold hover:bg-blue-100 transition">
+      <i class="fa-solid fa-share-nodes mr-1"></i> Share This Split
+    </button>
 
     <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-2">
       <div class="flex items-center justify-between">
@@ -384,18 +401,24 @@ function renderSplitGroupDetail(group) {
     ${group.expenses.length > 0 ? `
       <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-2">
         <h3 class="text-xs font-bold text-slate-800">Settle Up <span class="font-normal text-slate-400">(simplified)</span></h3>
+        ${!isSettled && settleUp.length > 0 ? `<p class="text-[10px] text-slate-400">Check off each transfer once it's actually been paid - once every one is checked, this split marks itself Settled automatically.</p>` : ''}
         ${settleUp.length === 0 ? `
           <p class="text-[11px] text-emerald-600 font-semibold text-center py-1"><i class="fa-solid fa-circle-check mr-1"></i>Everyone's settled up!</p>
         ` : `
           <div class="space-y-1.5">
-            ${settleUp.map(t => `
-              <div class="flex items-center gap-2 p-2 rounded-lg bg-violet-50 border border-violet-100 text-[11px]">
+            ${settleUp.map(t => {
+              const txSettled = (group.settledTxKeys || []).includes(_settleTxKey(t));
+              const clickAttr = isSettled ? '' : `onclick="toggleSettleTxMarked('${group.id}', '${t.from}', '${t.to}', ${t.amount})"`;
+              return `
+              <div ${clickAttr} class="flex items-center gap-2 p-2 rounded-lg border text-[11px] transition ${txSettled ? 'bg-emerald-50 border-emerald-200' : 'bg-violet-50 border-violet-100'} ${isSettled ? '' : 'cursor-pointer hover:brightness-95'}">
+                <i class="fa-solid ${txSettled ? 'fa-circle-check text-emerald-500' : 'fa-circle text-violet-200'} text-xs"></i>
                 <span class="font-bold text-slate-700">${memberName(t.from)}</span>
-                <i class="fa-solid fa-arrow-right text-violet-400"></i>
+                <i class="fa-solid fa-arrow-right ${txSettled ? 'text-emerald-400' : 'text-violet-400'}"></i>
                 <span class="font-bold text-slate-700">${memberName(t.to)}</span>
-                <span class="ml-auto font-bold text-violet-700">₹${t.amount.toFixed(2)}</span>
+                <span class="ml-auto font-bold ${txSettled ? 'text-emerald-700' : 'text-violet-700'}">₹${t.amount.toFixed(2)}</span>
               </div>
-            `).join('')}
+            `;
+            }).join('')}
           </div>
         `}
       </div>
@@ -440,6 +463,33 @@ function renderSplitGroupDetail(group) {
 // Settle Up still lists outstanding transactions, since someone might
 // legitimately want to lock a group they settled in cash without logging
 // every last transfer here.
+// Toggles one simplified settle-up transaction between "paid" and "not yet
+// paid" (see _settleTxKey above for why it's matched by value, not by a
+// stored id). The moment every transaction currently in the simplified
+// Settle Up list is checked off, the whole split auto-locks itself via the
+// same `group.settled = true` flag the manual "Mark as Settled" button
+// uses - no separate "is it fully settled" state to keep in sync.
+async function toggleSettleTxMarked(groupId, fromId, toId, amount) {
+  const group = splitGroups.find(g => g.id === groupId);
+  if (!group || group.settled) return;
+
+  const key = `${fromId}|${toId}|${Number(amount).toFixed(2)}`;
+  const keys = group.settledTxKeys || [];
+  group.settledTxKeys = keys.includes(key) ? keys.filter(k => k !== key) : [...keys, key];
+
+  // Re-derive the CURRENT simplified transactions fresh (not whatever was
+  // on screen when this click happened) so a stale list can't trigger an
+  // incorrect auto-settle.
+  const settleUp = simplifySplitDebts(calculateSplitBalances(group));
+  const allChecked = settleUp.length > 0 && settleUp.every(t => group.settledTxKeys.includes(_settleTxKey(t)));
+  if (allChecked) group.settled = true;
+
+  await IDB.put('splitGroups', group);
+  _refreshDriveButtonAfterSplitwiseChange();
+  renderSplitwiseView();
+  if (allChecked) await showAlert('Every transfer is checked off - this split has been marked as Settled automatically.');
+}
+
 async function markSplitGroupSettled(groupId) {
   const group = splitGroups.find(g => g.id === groupId);
   if (!group) return;
@@ -462,6 +512,10 @@ async function reopenSplitGroup(groupId) {
   if (!(await showConfirm(`Reopen "${group.name}" for editing again?`, { danger: false }))) return;
 
   group.settled = false;
+  // Clear so reopening doesn't immediately re-trigger the auto-settle in
+  // toggleSettleTxMarked() - every transaction being already-checked is
+  // exactly how this group got settled in the first place.
+  group.settledTxKeys = [];
   await IDB.put('splitGroups', group);
   _refreshDriveButtonAfterSplitwiseChange();
   renderSplitwiseView();
@@ -792,6 +846,82 @@ async function openAddSplitExpenseForm(groupId) {
   const content = document.getElementById('formModalContent');
   modal.classList.remove('hidden');
   content.innerHTML = _splitExpenseFormHtml(group, null);
+}
+
+// Renders the WHOLE split as one shareable PNG card - name, every member's
+// balance, the simplified settle-up transactions, and every expense - using
+// the generic block-layout renderer in js/share-image.js. Deliberately
+// available even on a SETTLED group (not gated behind `isSettled`, unlike
+// edit/delete) since sharing is read-only and a settled group is exactly
+// when you'd want to send everyone a final record. Numbers come straight
+// from calculateSplitBalances()/simplifySplitDebts() above - the same
+// functions the on-screen "Members"/"Settle Up" sections use - so the image
+// can never drift from what the app itself shows.
+function shareSplitGroupImage(groupId) {
+  const group = splitGroups.find(g => g.id === groupId);
+  if (!group) return;
+
+  const balances = calculateSplitBalances(group);
+  const settleUp = simplifySplitDebts(balances);
+  const memberName = id => (group.members.find(m => m.id === id) || {}).name || 'Removed member';
+
+  const blocks = [];
+  blocks.push({ kind: 'title', text: group.name || 'Split', height: 70 });
+  blocks.push({ kind: 'subtitle', text: `${group.members.length} member(s) • ${group.expenses.length} expense(s)`, height: 50 });
+  blocks.push({ kind: 'divider', height: 36 });
+
+  blocks.push({ kind: 'sectionHeader', text: 'Members', height: 50 });
+  if (group.members.length === 0) {
+    blocks.push({ kind: 'note', text: 'No members yet.', height: 50 });
+  } else {
+    group.members.forEach(m => {
+      const bal = balances[m.id] || 0;
+      const label = bal > 0.5 ? `gets back ₹${bal.toFixed(2)}` : bal < -0.5 ? `owes ₹${Math.abs(bal).toFixed(2)}` : 'settled up';
+      const color = bal > 0.5 ? '#059669' : bal < -0.5 ? '#e11d48' : '#94a3b8';
+      blocks.push({ kind: 'memberRow', name: m.name, label, color, height: 64 });
+    });
+  }
+  blocks.push({ kind: 'divider', height: 36 });
+
+  blocks.push({ kind: 'sectionHeader', text: 'Settle Up', height: 50 });
+  if (group.expenses.length === 0) {
+    blocks.push({ kind: 'note', text: 'No expenses logged yet.', height: 50 });
+  } else if (settleUp.length === 0) {
+    blocks.push({ kind: 'note', text: "Everyone's settled up!", height: 50 });
+  } else {
+    const settledKeys = group.settledTxKeys || [];
+    settleUp.forEach(t => {
+      blocks.push({
+        kind: 'settleRow',
+        leftName: memberName(t.from),
+        rightName: memberName(t.to),
+        amount: `₹${t.amount.toFixed(2)}`,
+        settled: settledKeys.includes(_settleTxKey(t)),
+        height: 66
+      });
+    });
+  }
+  blocks.push({ kind: 'divider', height: 36 });
+
+  blocks.push({ kind: 'sectionHeader', text: 'Expenses', height: 50 });
+  if (group.expenses.length === 0) {
+    blocks.push({ kind: 'note', text: 'No expenses logged yet.', height: 50 });
+  } else {
+    group.expenses.slice().sort((a, b) => b.date.localeCompare(a.date)).forEach(e => {
+      blocks.push({
+        kind: 'expenseRow',
+        desc: e.description || 'Expense',
+        amount: `₹${Number(e.amount).toLocaleString()}`,
+        meta: `Paid by ${memberName(e.paidBy)} • split ${e.splitAmong.length} way(s) • ${e.date}`,
+        height: 90
+      });
+    });
+  }
+
+  blocks.push({ kind: 'footer', text: 'Shared from Life Tracker', height: 80 });
+
+  const canvas = _renderShareBlocks(blocks);
+  _shareOrDownloadCanvas(canvas, `${(group.name || 'split').replace(/[^a-z0-9]+/gi, '-')}.png`, group.name || 'Split');
 }
 
 // Opens the same form pre-filled with an existing expense's values - lets
