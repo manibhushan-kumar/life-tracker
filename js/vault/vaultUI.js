@@ -413,6 +413,7 @@ function _vaultItemCardHtml(item) {
             <i class="fa-solid ${icon} text-xs"></i>
           </div>
           <p class="text-xs font-bold text-slate-800 truncate">${_vltEsc(item.title || defaultTitle)}</p>
+          ${isCard && item.cardNetwork ? `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 shrink-0">${_vltEsc(item.cardNetwork)}</span>` : ''}
         </div>
         <div class="flex items-center gap-1 shrink-0">
           <button type="button" onclick="${editFn}('${item.id}')" class="w-7 h-7 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-100" title="Edit">
@@ -426,7 +427,7 @@ function _vaultItemCardHtml(item) {
       <div class="divide-y divide-slate-50">
         ${isCard ? `
           ${item.cardholderName ? `<p class="text-[10px] text-slate-400 py-1">${_vltEsc(item.cardholderName)}</p>` : ''}
-          ${_vaultMaskedFieldHtml(item.id, 'cardNumber', item.cardNumber, 'Card Number')}
+          ${_vaultMaskedFieldHtml(item.id, 'cardNumber', item.cardNumber, 'Card Number', { cardNumberMask: true })}
           ${item.expiry ? `<p class="text-[10px] text-slate-400 py-1">Expires ${_vltEsc(item.expiry)}</p>` : ''}
           ${_vaultMaskedFieldHtml(item.id, 'cvv', item.cvv, 'CVV')}
           ${_vaultMaskedFieldHtml(item.id, 'pin', item.pin, 'PIN')}
@@ -451,15 +452,27 @@ function _vaultItemCardHtml(item) {
 // text content, and only when toggled to "shown") - see the dialog-button
 // bug fixed earlier in js/ui-dialogs.js for exactly the class of bug this
 // sidesteps.
+// Card numbers get a friendlier hidden state than the generic dot-mask: the
+// real last 4 digits stay visible (same convention every bank/wallet app
+// uses - on their own they're not enough to do anything with) with the rest
+// blocked out in groups of 4, so the list is actually usable for picking
+// "which card is this" without a reveal tap every time.
+function _vaultMaskedCardNumber(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  const last4 = digits.slice(-4);
+  return last4 ? `•••• •••• •••• ${last4}` : '•••• •••• •••• ••••';
+}
+
 function _vaultMaskedFieldHtml(itemId, field, value, label, opts) {
   if (value == null || value === '') return '';
   const multiline = opts && opts.multiline;
   const shown = vaultVisibleSecrets.has(itemId + '|' + field);
+  const hiddenDisplay = (opts && opts.cardNumberMask) ? _vaultMaskedCardNumber(value) : '••••••••';
   return `
     <div class="flex items-center justify-between gap-2 py-1">
       <div class="min-w-0 flex-1">
         <p class="text-[9px] font-semibold text-slate-400 uppercase">${label}</p>
-        <p class="text-xs font-mono text-slate-800 ${shown && multiline ? 'whitespace-pre-line' : 'truncate'}">${shown ? _vltEsc(value) : '••••••••'}</p>
+        <p class="text-xs font-mono text-slate-800 ${shown && multiline ? 'whitespace-pre-line' : 'truncate'}">${shown ? _vltEsc(value) : hiddenDisplay}</p>
       </div>
       <div class="flex items-center gap-1 shrink-0">
         <button type="button" onclick="vaultToggleSecretVisible('${itemId}','${field}')" class="w-7 h-7 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-100" title="${shown ? 'Hide' : 'Show'} ${label}">
@@ -611,19 +624,22 @@ function openVaultCardForm(id) {
       <div>
         <label class="text-[11px] font-semibold text-slate-400">Card Number</label>
         <div class="flex gap-1">
-          <input type="password" inputmode="numeric" id="vfCNumber" value="${_vltEscAttr(existing ? existing.cardNumber : '')}" class="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+          <div class="relative flex-1">
+            <input type="password" inputmode="numeric" id="vfCNumber" oninput="vaultOnCardNumberInput(this)" value="${_vltEscAttr(existing ? existing.cardNumber : '')}" class="w-full text-xs p-2.5 pr-14 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            <span id="vfCNetworkIcon" class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none flex items-center"></span>
+          </div>
           <button type="button" onclick="vaultToggleInputType('vfCNumber')" class="w-9 rounded-xl border border-slate-200 text-slate-400 hover:bg-slate-50"><i class="fa-solid fa-eye text-xs"></i></button>
         </div>
       </div>
       <div class="grid grid-cols-2 gap-2">
         <div>
           <label class="text-[11px] font-semibold text-slate-400">Expiry (MM/YY)</label>
-          <input type="text" id="vfCExpiry" placeholder="MM/YY" value="${_vltEscAttr(existing ? existing.expiry : '')}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+          <input type="text" inputmode="numeric" maxlength="5" oninput="vaultFormatExpiryInput(this)" id="vfCExpiry" placeholder="MM/YY" value="${_vltEscAttr(existing ? existing.expiry : '')}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
         </div>
         <div>
           <label class="text-[11px] font-semibold text-slate-400">CVV</label>
           <div class="flex gap-1">
-            <input type="password" inputmode="numeric" id="vfCCvv" value="${_vltEscAttr(existing ? existing.cvv : '')}" class="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            <input type="password" inputmode="numeric" maxlength="${existing && existing.cardNetwork === 'Amex' ? 4 : 3}" oninput="vaultFormatCvvInput(this)" id="vfCCvv" value="${_vltEscAttr(existing ? existing.cvv : '')}" class="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
             <button type="button" onclick="vaultToggleInputType('vfCCvv')" class="w-9 rounded-xl border border-slate-200 text-slate-400 hover:bg-slate-50"><i class="fa-solid fa-eye text-xs"></i></button>
           </div>
         </div>
@@ -645,15 +661,114 @@ function openVaultCardForm(id) {
       </div>
     </form>
   `;
+  vaultOnCardNumberInput(document.getElementById('vfCNumber')); // picks up the pre-filled number when editing an existing card
+}
+
+// Reformats the expiry field to MM/YY as the user types - strips everything
+// but digits, caps at 4 of them, and re-inserts the "/" once there are at
+// least 3 (i.e. the user has started on the year). Like most simple
+// auto-formatting inputs, this always places the cursor at the end after
+// reformatting rather than preserving its exact prior position - an
+// acceptable tradeoff for a 5-character field where that's rarely noticed.
+function vaultFormatExpiryInput(el) {
+  let digits = el.value.replace(/\D/g, '').slice(0, 4);
+  el.value = digits.length >= 3 ? `${digits.slice(0, 2)}/${digits.slice(2)}` : digits;
+}
+
+// Best-effort card network detection from the number's leading digits
+// (IIN/BIN prefix). Card networks don't publish one single exhaustive
+// public range list (RuPay's in particular is maintained by NPCI and only
+// partially documented), so this covers the common, well-known prefixes -
+// good enough for a quick "looks like Visa" hint, not a guarantee.
+function _vaultDetectCardNetwork(rawNumber) {
+  const num = String(rawNumber || '').replace(/\D/g, '');
+  if (num.length < 2) return null;
+  const p2 = Number(num.slice(0, 2));
+  const p4 = num.length >= 4 ? Number(num.slice(0, 4)) : null;
+
+  if (num[0] === '4') return 'Visa';
+  if (p2 >= 51 && p2 <= 55) return 'Mastercard';
+  if (p4 !== null && p4 >= 2221 && p4 <= 2720) return 'Mastercard';
+  if (p2 === 34 || p2 === 37) return 'Amex';
+  if (p2 === 60 || p2 === 65 || p2 === 81 || p2 === 82 || num.slice(0, 3) === '508') return 'RuPay';
+  return null;
+}
+
+// Font Awesome's free "cc-visa"/"cc-mastercard"/"cc-amex" glyphs are each a
+// SINGLE-color path, so tinting one with CSS can only ever produce a flat
+// one-color silhouette - that's fundamentally why Mastercard's two
+// overlapping red/orange circles (its whole visual identity) looked wrong
+// no matter what color was picked. These are small hand-rolled multi-color
+// badges instead: real SVG for Mastercard's two-circle mark (the one that
+// actually needs two colors to be recognizable), and simple styled
+// wordmarks for Visa/Amex using their official brand colors. RuPay has no
+// widely-reusable mark to hand-roll safely, so it still falls back to a
+// plain text chip.
+function _vaultCardNetworkIconHtml(network) {
+  if (network === 'Visa') {
+    return `<span style="font-family:Georgia,serif;font-style:italic;font-weight:800;font-size:17px;color:#1434CB;letter-spacing:-0.5px;" title="Visa">VISA</span>`;
+  }
+  if (network === 'Mastercard') {
+    return `
+      <svg width="34" height="22" viewBox="0 0 34 22" xmlns="http://www.w3.org/2000/svg" title="Mastercard">
+        <circle cx="13" cy="11" r="11" fill="#EB001B"/>
+        <circle cx="21" cy="11" r="11" fill="#F79E1B"/>
+        <path d="M17 2.6a11 11 0 0 1 0 16.8 11 11 0 0 1 0-16.8z" fill="#FF5F00"/>
+      </svg>
+    `;
+  }
+  if (network === 'Amex') {
+    return `<span style="background:#2E77BC;color:#fff;font-weight:800;font-size:11px;padding:3px 6px;border-radius:4px;letter-spacing:0.3px;" title="American Express">AMEX</span>`;
+  }
+  if (network) return `<span class="text-[9px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">${_vltEsc(network)}</span>`;
+  return '';
+}
+
+// Combined "format as 4-digit blocks + update the network icon" handler for
+// the Card Number field, run on every keystroke. Spaces are inserted purely
+// for readability (type="password" still renders each character, space
+// included, as its own masked dot, so the grouping is visible even hidden) -
+// _vaultDetectCardNetwork strips them straight back out again, so the
+// grouping never affects detection. Capped at 19 digits, the longest any
+// real card network currently issues.
+function vaultOnCardNumberInput(el) {
+  if (!el) return;
+  const digits = el.value.replace(/\D/g, '').slice(0, 19);
+  el.value = digits.replace(/(.{4})/g, '$1 ').trim();
+  const network = _vaultDetectCardNetwork(digits);
+
+  const icon = document.getElementById('vfCNetworkIcon');
+  if (icon) icon.innerHTML = _vaultCardNetworkIconHtml(network);
+
+  // Amex is the one mainstream network with a 4-digit CVV printed on the
+  // FRONT of the card - everyone else prints 3 on the back. Updating this
+  // live as the number is typed (rather than only at save time) means the
+  // CVV field won't silently let someone type/keep a 4th digit on a non-Amex
+  // card, or cap them at 3 while they're mid-typing an Amex one.
+  const cvv = document.getElementById('vfCCvv');
+  if (cvv) {
+    cvv.maxLength = network === 'Amex' ? 4 : 3;
+    vaultFormatCvvInput(cvv); // re-truncates immediately if the limit just shrank
+  }
+}
+
+// Digits-only, capped at whatever vaultOnCardNumberInput most recently set
+// el.maxLength to (3 normally, 4 for a detected Amex number) - read live
+// rather than hardcoded so this one handler serves both cases.
+function vaultFormatCvvInput(el) {
+  if (!el) return;
+  el.value = el.value.replace(/\D/g, '').slice(0, el.maxLength > 0 ? el.maxLength : 4);
 }
 
 async function saveVaultCardForm(event, id) {
   event.preventDefault();
+  const cardNumber = document.getElementById('vfCNumber').value.trim();
   const payload = {
     type: 'card',
     title: document.getElementById('vfCTitle').value.trim(),
     cardholderName: document.getElementById('vfCName').value.trim(),
-    cardNumber: document.getElementById('vfCNumber').value.trim(),
+    cardNumber,
+    cardNetwork: _vaultDetectCardNetwork(cardNumber),
     expiry: document.getElementById('vfCExpiry').value.trim(),
     cvv: document.getElementById('vfCCvv').value.trim(),
     pin: document.getElementById('vfCPin').value.trim(),
