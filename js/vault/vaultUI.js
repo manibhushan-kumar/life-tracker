@@ -638,9 +638,14 @@ function openVaultCardForm(id) {
         </div>
         <div>
           <label class="text-[11px] font-semibold text-slate-400">CVV</label>
-          <div class="flex gap-1">
-            <input type="password" inputmode="numeric" maxlength="${existing && existing.cardNetwork === 'Amex' ? 4 : 3}" oninput="vaultFormatCvvInput(this)" id="vfCCvv" value="${_vltEscAttr(existing ? existing.cvv : '')}" class="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
-            <button type="button" onclick="vaultToggleInputType('vfCCvv')" class="w-9 rounded-xl border border-slate-200 text-slate-400 hover:bg-slate-50"><i class="fa-solid fa-eye text-xs"></i></button>
+          <div class="flex items-center gap-1">
+            <!-- Fixed width, not flex-1: a flex-growing input (flex-basis 0%)
+                 in this cramped a column can end up narrower than its own
+                 content needs on tight Android viewports, clipping the
+                 digits - a short fixed-width box has no such ambiguity, and
+                 suits a 3-4 digit value better than a full-width stretch. -->
+            <input type="password" inputmode="numeric" maxlength="${existing && existing.cardNetwork === 'Amex' ? 4 : 3}" oninput="vaultFormatCvvInput(this)" id="vfCCvv" value="${_vltEscAttr(existing ? existing.cvv : '')}" class="w-16 shrink-0 text-xs text-center p-2 rounded-xl border border-slate-200 outline-none focus:border-blue-500">
+            <button type="button" onclick="vaultToggleInputType('vfCCvv')" class="w-9 h-9 shrink-0 rounded-xl border border-slate-200 text-slate-400 hover:bg-slate-50 flex items-center justify-center"><i class="fa-solid fa-eye text-xs"></i></button>
           </div>
         </div>
       </div>
