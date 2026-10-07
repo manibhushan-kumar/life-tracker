@@ -399,12 +399,7 @@
       // no longer showing its cards.
       if (typeof _wcStopTicker === 'function') _wcStopTicker();
 
-      // The Vault (js/vault/) locks itself the instant you navigate away
-      // from it, whether or not it's actually idle yet - leaving the
-      // decrypted vault sitting in memory just because you tapped over to
-      // Expenses would defeat the point of it being lock-gated at all. This
-      // also clears the vault page's own DOM (see the vaultOnLock listener
-      // in vaultUI.js) before whatever tab comes next renders over it.
+      // The Vault (js/vault/) locks itself the instant you navigate away from it.
       if (tab !== 'vault' && typeof vaultLock === 'function') vaultLock();
 
       currentTab = tab;

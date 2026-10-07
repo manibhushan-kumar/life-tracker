@@ -7,60 +7,118 @@
 // Neither is ever assigned to `window`, written to localStorage/
 // sessionStorage/IndexedDB, logged, or included in anything sent to Google
 // Drive. They live ONLY as closures inside this IIFE and are nulled out
-// the moment the vault locks (manually, via auto-lock, or because the user
-// navigated away from the Vault tab - see index.html's navigate()).
+// the moment the vault locks (manually, or via auto-lock after 2 minutes idle).
 //
 // vaultStore.js is the only other file this one talks to, and only ever
 // with opaque {kdf, encryption, ciphertext} blobs - this is the one place
 // in the whole feature that actually calls crypto.subtle.
 
-const VAULT_INACTIVITY_LOCK_MS = 5 * 60 * 1000; // 5 min idle-but-visible
-const VAULT_HIDDEN_LOCK_MS = 60 * 1000; // 1 min after the tab/app is hidden
+const VAULT_INACTIVITY_LOCK_MS = 2 * 60 * 1000; // 2 min idle
+const VAULT_COUNTDOWN_THRESHOLD_MS = 30 * 1000; // 30 sec before expiry
 
 const vaultService = (() => {
   let _vaultKey = null;
   let _vaultData = null; // { items: [...] }
   let _lockListeners = [];
+  let _countdownListeners = [];
 
-  let _inactivityTimer = null;
-  let _hiddenTimer = null;
+  let _tickerInterval = null;
   let _watchersActive = false;
+  let _lastActivityTime = 0;
+  let _lastReportedSeconds = null;
+
+  function _notifyCountdown(secondsRemaining) {
+    _countdownListeners.forEach(cb => {
+      try { cb(secondsRemaining); } catch (e) {}
+    });
+  }
+
+  function vaultOnCountdown(callback) {
+    _countdownListeners.push(callback);
+  }
+
+  function _tick() {
+    if (!_watchersActive) return;
+    const idleTime = Date.now() - _lastActivityTime;
+    const remainingMs = VAULT_INACTIVITY_LOCK_MS - idleTime;
+    if (remainingMs <= 0) {
+      vaultLock();
+      return;
+    }
+    if (remainingMs <= VAULT_COUNTDOWN_THRESHOLD_MS) {
+      const remainingSecs = Math.max(1, Math.ceil(remainingMs / 1000));
+      if (remainingSecs !== _lastReportedSeconds) {
+        _lastReportedSeconds = remainingSecs;
+        _notifyCountdown(remainingSecs);
+      }
+    } else {
+      if (_lastReportedSeconds !== null) {
+        _lastReportedSeconds = null;
+        _notifyCountdown(null);
+      }
+    }
+  }
 
   function _onActivity() {
     if (!_watchersActive) return;
-    clearTimeout(_inactivityTimer);
-    _inactivityTimer = setTimeout(() => { vaultLock(); }, VAULT_INACTIVITY_LOCK_MS);
+    const now = Date.now();
+    if (_lastActivityTime && (now - _lastActivityTime >= VAULT_INACTIVITY_LOCK_MS)) {
+      vaultLock();
+      return;
+    }
+    _lastActivityTime = now;
+    if (_lastReportedSeconds !== null) {
+      _lastReportedSeconds = null;
+      _notifyCountdown(null);
+    }
+  }
+
+  function vaultResetActivity() {
+    _onActivity();
   }
 
   function _onVisibilityChange() {
     if (!_watchersActive) return;
     if (document.hidden) {
-      clearTimeout(_hiddenTimer);
-      _hiddenTimer = setTimeout(() => { vaultLock(); }, VAULT_HIDDEN_LOCK_MS);
-    } else {
-      clearTimeout(_hiddenTimer);
-      _onActivity(); // coming back counts as activity too
+      vaultLock();
     }
   }
+
+  function _onPageHide() {
+    if (vaultIsUnlocked()) {
+      vaultLock();
+    }
+  }
+
+  const ACTIVITY_EVENTS = ['click', 'keydown', 'touchstart', 'pointerdown', 'input', 'wheel'];
 
   function vaultStartAutoLockWatchers() {
     if (_watchersActive) return;
     _watchersActive = true;
-    ['click', 'keydown', 'touchstart', 'input'].forEach(evt =>
+    _lastActivityTime = Date.now();
+    _lastReportedSeconds = null;
+    ACTIVITY_EVENTS.forEach(evt =>
       document.addEventListener(evt, _onActivity, { passive: true })
     );
     document.addEventListener('visibilitychange', _onVisibilityChange);
-    _onActivity(); // arms the initial inactivity timer
+    window.addEventListener('pagehide', _onPageHide);
+    clearInterval(_tickerInterval);
+    _tickerInterval = setInterval(_tick, 500);
   }
 
   function vaultStopAutoLockWatchers() {
     _watchersActive = false;
-    clearTimeout(_inactivityTimer);
-    clearTimeout(_hiddenTimer);
-    ['click', 'keydown', 'touchstart', 'input'].forEach(evt =>
+    _lastActivityTime = 0;
+    clearInterval(_tickerInterval);
+    if (_lastReportedSeconds !== null) {
+      _lastReportedSeconds = null;
+      _notifyCountdown(null);
+    }
+    ACTIVITY_EVENTS.forEach(evt =>
       document.removeEventListener(evt, _onActivity)
     );
     document.removeEventListener('visibilitychange', _onVisibilityChange);
+    window.removeEventListener('pagehide', _onPageHide);
   }
 
   function vaultOnLock(callback) {
@@ -68,6 +126,10 @@ const vaultService = (() => {
   }
 
   function vaultIsUnlocked() {
+    if (_watchersActive && _lastActivityTime && (Date.now() - _lastActivityTime >= VAULT_INACTIVITY_LOCK_MS)) {
+      vaultLock();
+      return false;
+    }
     return !!_vaultKey && !!_vaultData;
   }
 
@@ -104,6 +166,7 @@ const vaultService = (() => {
     _vaultKey = await vaultDeriveKey(masterPassword, salt, kdf.iterations);
     _vaultData = { items: [] };
     await _persist(kdf);
+    vaultStartAutoLockWatchers();
   }
 
   // Throws a plain Error with `.code === 'WRONG_PASSWORD'` on a bad
@@ -134,9 +197,8 @@ const vaultService = (() => {
   }
 
   // Locking is the ONE operation that must never throw and never partially
-  // complete - it's called from timers and from navigate() teardown, not
-  // just a button, so it has to be safe to call unconditionally and often
-  // (including when already locked - a no-op in that case).
+  // complete - it's called from idle timers, not just a button, so it has
+  // to be safe to call unconditionally and often (including when already locked - a no-op in that case).
   function vaultLock() {
     vaultStopAutoLockWatchers();
     _vaultKey = null;
@@ -236,6 +298,8 @@ const vaultService = (() => {
     vaultUpdateItem,
     vaultDeleteItem,
     vaultOnLock,
+    vaultOnCountdown,
+    vaultResetActivity,
     vaultStartAutoLockWatchers,
     vaultStopAutoLockWatchers
   };

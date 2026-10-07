@@ -73,6 +73,7 @@ function _positionSplitwiseOverlay() {
 // --- Open / close / view dispatch -----------------------------------------
 
 async function openSplitwise() {
+  if (typeof vaultLock === 'function') vaultLock();
   const overlay = document.getElementById('splitwiseOverlay');
   overlay.classList.remove('hidden');
   _positionSplitwiseOverlay();

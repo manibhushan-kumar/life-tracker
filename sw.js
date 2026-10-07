@@ -1,6 +1,6 @@
 // Bump this whenever urlsToCache changes so returning users actually pick
 // up the new app shell instead of serving a stale cached copy forever.
-const CACHE_NAME = 'life-tracker-v73';
+const CACHE_NAME = 'life-tracker-v75';
 const urlsToCache = [
   './',
   './index.html',

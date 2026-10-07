@@ -14,10 +14,9 @@
 // Security note on the masked fields below: toggling "show" or using "copy"
 // puts the real secret into the DOM/clipboard, same as any password manager
 // while unlocked - this app makes no claim that DevTools/clipboard history
-// can't see it in that moment. What IS guaranteed is that locking (manual,
-// idle-timeout, tab-hidden timeout, or navigating away) wipes this page's
-// DOM and the in-memory decrypted vault immediately - see the vaultOnLock
-// listener at the bottom of this file.
+// can't see it in that moment. What IS guaranteed is that locking (manual or
+// 2-minute idle timeout) wipes this page's DOM and the in-memory decrypted vault
+// immediately - see the vaultOnLock listener at the bottom of this file.
 
 let _vaultItemsCache = [];
 let vaultUnlockError = null;
@@ -303,13 +302,28 @@ async function confirmVaultReset() {
 function _vaultUnlockedHtml() {
   return `
     <div id="vaultUnlockedRoot">
+      <!-- 30-second expiry countdown banner -->
+      <div id="vaultExpiryBanner" class="hidden fixed top-3 left-1/2 -translate-x-1/2 z-[60] w-[calc(100%-2rem)] max-w-md p-3 rounded-2xl bg-amber-500 text-white flex items-center justify-between text-xs shadow-2xl border border-amber-400/40 transition-all duration-200">
+        <div class="flex items-center gap-2.5 font-semibold">
+          <span class="relative flex h-2.5 w-2.5">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-white"></span>
+          </span>
+          <i class="fa-solid fa-clock text-amber-100 text-sm"></i>
+          <span>Auto-locking in <strong id="vaultExpirySeconds" class="font-extrabold text-white text-sm">30</strong>s due to inactivity</span>
+        </div>
+        <button type="button" onclick="vaultStayActive()" class="px-3 py-1.5 rounded-xl bg-white text-amber-900 hover:bg-amber-100 font-bold text-[11px] shadow-sm transition active:scale-95">
+          Stay Active
+        </button>
+      </div>
+
       <div class="flex items-center justify-between mb-1">
         <h2 class="text-sm font-bold text-slate-800">Vault</h2>
         <button type="button" onclick="vaultLock(); renderVaultPage(document.getElementById('mainContainer'))" class="px-3 py-1.5 text-[11px] font-bold text-slate-500 border border-slate-200 rounded-full hover:bg-slate-50 transition">
           <i class="fa-solid fa-lock text-[10px]"></i> Lock
         </button>
       </div>
-      <p class="text-[11px] text-slate-400 mb-3">Auto-locks after 5 minutes idle, or about a minute after you switch away from the app.</p>
+      <p class="text-[11px] text-slate-400 mb-3">Auto-locks after 2 minutes idle, or when you leave the vault.</p>
 
       <div class="relative mb-3">
         <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 text-xs pointer-events-none"></i>
@@ -1059,19 +1073,45 @@ async function vaultImportBackup(event) {
 
 // --- Lock listener ----------------------------------------------------------
 // Registered once, at script load. Fires on EVERY lock - manual button,
-// inactivity timeout, tab-hidden timeout, a Drive pull, or the navigate()
-// teardown hook in index.html - and is what actually makes "locking" mean
-// something: it wipes this page's own transient UI state and, if the vault
-// page happens to still be what's on screen (checked via the DOM marker
-// rather than `currentTab`, since teardown hooks run before currentTab
-// updates), immediately re-renders to the locked/create screen - clearing
-// every item, password and card number out of the DOM in the same tick the
-// in-memory vault itself is cleared.
+// 2-minute idle timeout, or a Drive pull - and is what actually makes "locking"
+// mean something: it wipes this page's own transient UI state, closes any open
+// vault modal, and if the vault page happens to still be what's on screen
+// (checked via the DOM marker), immediately re-renders to the locked/create
+// screen - clearing every item, password and card number out of the DOM in the
+// same tick the in-memory vault itself is cleared.
+function vaultStayActive() {
+  if (typeof vaultResetActivity === 'function') vaultResetActivity();
+}
+
 vaultOnLock(() => {
   vaultUnlockError = null;
   vaultVisibleSecrets.clear();
   vaultItemSearch = '';
   _vaultItemsCache = [];
+  const banner = document.getElementById('vaultExpiryBanner');
+  if (banner) banner.classList.add('hidden');
+  const modal = document.getElementById('formModal');
+  if (modal && !modal.classList.contains('hidden')) {
+    const content = document.getElementById('formModalContent');
+    if (content && (content.querySelector('form[onsubmit*="saveVault"]') || content.querySelector('#vaultChangePasswordForm') || content.querySelector('#vaultResetForm'))) {
+      closeFormModal();
+    }
+  }
   const marker = document.getElementById('vaultUnlockedRoot');
   if (marker) renderVaultPage(document.getElementById('mainContainer'));
 });
+
+// --- Countdown listener (updates warning banner when <= 30s remain) ---------
+if (typeof vaultOnCountdown === 'function') {
+  vaultOnCountdown((secondsRemaining) => {
+    const banner = document.getElementById('vaultExpiryBanner');
+    const secEl = document.getElementById('vaultExpirySeconds');
+    if (!banner) return;
+    if (secondsRemaining !== null && secondsRemaining !== undefined && secondsRemaining > 0) {
+      if (secEl) secEl.textContent = String(secondsRemaining);
+      banner.classList.remove('hidden');
+    } else {
+      banner.classList.add('hidden');
+    }
+  });
+}
