@@ -1101,10 +1101,9 @@ async function restoreFromGoogleDrive() {
     const rootId = await resolveRootFolderId(folderName);
     const syncMeta = await getSyncMeta();
 
-    // Splitwise groups aren't year-scoped like expenses (max 5 groups,
-    // wholesale-synced) - so this happens right here, unconditionally,
-    // BEFORE any of the expense year-picker branching below. It used to be
-    // deferred into _pendingRestore and only applied once the user picked a
+    // Splitwise groups aren't year-scoped like expenses (wholesale-synced) -
+    // so this happens right here, unconditionally, BEFORE any of the expense
+    // year-picker branching below. It used to be deferred into _pendingRestore and only applied once the user picked a
     // year and clicked "Restore" inside that modal - which meant it never
     // ran at all if there was nothing new expense-wise to restore, or if
     // the user hadn't gotten around to completing that flow yet. Splitting
