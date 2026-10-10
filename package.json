@@ -1,0 +1,23 @@
+{
+  "name": "life-tracker",
+  "version": "1.0.0",
+  "description": "Life Tracker - Track expenses, splits, recurring bills, and reminders",
+  "private": true,
+  "scripts": {
+    "build": "rm -rf dist && mkdir -p dist && cp -r index.html manifest.json sw.js privacy.html oauth-native.html icons js life-tracker-logo.png dist/",
+    "clean": "./manage.sh clean",
+    "setup": "./manage.sh setup",
+    "cap:sync": "npm run build && npx cap sync android",
+    "cap:copy": "npm run build && npx cap copy android",
+    "cap:open": "npx cap open android",
+    "build:apk": "npm run build && npx cap sync android && cd android && ./gradlew assembleDebug && cd .."
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.0.1",
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/browser": "^7.0.5",
+    "@capacitor/cli": "^7.0.1",
+    "@capacitor/core": "^7.0.1",
+    "@capacitor/local-notifications": "^7.0.0"
+  }
+}

@@ -7,7 +7,7 @@
 // IndexedDB work" (single responsibility, nothing fancier than that).
 const IDB = (() => {
   const DB_NAME = 'life_tracker_db';
-  const DB_VERSION = 3;
+  const DB_VERSION = 4;
   let dbPromise = null;
 
   function openDB() {
@@ -53,6 +53,12 @@ const IDB = (() => {
           // one. Syncs to Drive wholesale via its own groups.json file, same
           // pattern as splitGroups/splitwise.json.
           db.createObjectStore('contactGroups', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('reminders')) {
+          // Reminders (js/reminders.js) - timed alerts with optional repeat.
+          // Its own store so it mirrors the expenses/items pattern (each
+          // reminder is its own keyed record, easy to add/remove).
+          db.createObjectStore('reminders', { keyPath: 'id' });
         }
       };
 

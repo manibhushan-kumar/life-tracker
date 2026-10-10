@@ -149,6 +149,8 @@ function _settingsSyncFingerprint() {
     vehicles: appData.vehicles,
     fuelLogs: appData.fuelLogs,
     loans: appData.loans,
+    reminders: appData.reminders || [],
+    reminderSounds: appData.reminderSounds || [],
     userName: appData.userName
   });
 }
@@ -212,13 +214,14 @@ async function _migrateFromLocalStorageIfNeeded() {
 }
 
 async function loadAppData() {
-  const [expenses, items, settingsRow] = await Promise.all([
+  const [expenses, items, reminders, settingsRow] = await Promise.all([
     IDB.getAll('expenses'),
     IDB.getAll('items'),
+    IDB.getAll('reminders'),
     IDB.get('meta', 'settings')
   ]);
 
-  const hasAnyIdbData = expenses.length > 0 || items.length > 0 || !!settingsRow;
+  const hasAnyIdbData = expenses.length > 0 || items.length > 0 || reminders.length > 0 || !!settingsRow;
 
   if (!hasAnyIdbData) {
     const migrated = await _migrateFromLocalStorageIfNeeded();
@@ -228,6 +231,7 @@ async function loadAppData() {
   appData = getDefaultAppData();
   if (expenses.length) appData.expenses = expenses;
   if (items.length) appData.items = items;
+  if (reminders.length) appData.reminders = reminders;
   if (settingsRow) mergeIntoAppData(settingsRow);
 
   _lastSavedExpenseSnapshot = new Map(appData.expenses.map(e => [e.id, JSON.stringify(e)]));
@@ -253,7 +257,8 @@ async function saveState(opts) {
     await Promise.all([
       IDB.replaceAll('expenses', appData.expenses),
       IDB.replaceAll('items', appData.items),
-      IDB.put('meta', { key: 'settings', recurringItems: appData.recurringItems, categories: appData.categories, budgets: appData.budgets, familyMembers: appData.familyMembers, tags: appData.tags, vehicles: appData.vehicles, fuelLogs: appData.fuelLogs, loans: appData.loans, userName: appData.userName })
+      IDB.replaceAll('reminders', appData.reminders || []),
+      IDB.put('meta', { key: 'settings', recurringItems: appData.recurringItems, categories: appData.categories, budgets: appData.budgets, familyMembers: appData.familyMembers, tags: appData.tags, vehicles: appData.vehicles, fuelLogs: appData.fuelLogs, loans: appData.loans, reminders: appData.reminders || [], reminderSounds: appData.reminderSounds || [], userName: appData.userName })
     ]);
   } catch (e) {
     console.error('Life Tracker: failed to persist to IndexedDB.', e);
@@ -278,7 +283,7 @@ async function saveState(opts) {
 // slips past the overscroll-behavior CSS fix (e.g. the OS itself killing
 // and relaunching the PWA) - validated against a known-tabs list so a
 // stale/corrupted localStorage value can never navigate somewhere invalid.
-const VALID_TABS = ['home', 'expenses', 'compare', 'items', 'settings', 'reports', 'fuel', 'pdfReport', 'loans', 'groups', 'worldClock', 'vault'];
+const VALID_TABS = ['home', 'expenses', 'compare', 'items', 'settings', 'reports', 'fuel', 'pdfReport', 'loans', 'groups', 'worldClock', 'vault', 'reminders'];
 
 async function initStorage() {
   await loadAppData();
@@ -292,15 +297,30 @@ async function initStorage() {
   updateHeaderGreeting();
 
   const lastTab = localStorage.getItem(LAST_TAB_STORAGE_KEY);
-  navigate(VALID_TABS.includes(lastTab) ? lastTab : 'home');
+  const underlyingTab = (lastTab === 'reminders')
+    ? (localStorage.getItem('lifeTracker_prevTabBeforeReminders') || 'home')
+    : lastTab;
+  navigate(VALID_TABS.includes(underlyingTab) ? underlyingTab : 'home');
 
   // Splitwise is an overlay on top of whatever tab, not a tab itself, so it
   // gets its own resume step (see resumeSplitwiseIfWasOpen in splitwise.js)
   // rather than being folded into the navigate() call above.
   await resumeSplitwiseIfWasOpen();
 
+  // Reminders is also an overlay on top of whatever tab, so it gets its own
+  // resume step (see resumeRemindersIfWasOpen in reminders.js) so refreshing while
+  // on Reminders lands right back on Reminders instead of the previous tab.
+  if (typeof resumeRemindersIfWasOpen === 'function') {
+    await resumeRemindersIfWasOpen();
+  }
+
   tryRestoreDriveSession();
   maybeShowDriveConnectHint();
+  if (typeof setupNativeOAuthListener === 'function') setupNativeOAuthListener();
+
+  // Start the reminder notification engine (checks every 30s for due
+  // reminders while the page is open - see js/reminders.js).
+  if (typeof startReminderEngine === 'function') startReminderEngine();
 }
 
 // --- Year-scoped local deletion -------------------------------------------

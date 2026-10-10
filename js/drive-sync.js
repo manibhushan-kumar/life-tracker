@@ -175,9 +175,99 @@ function tryRestoreDriveSession() {
   }
 }
 
+// --- Native OAuth Deep Link Listener (Android APK via Capacitor) ----------
+let _nativeOAuthListenerSetup = false;
+
+function setupNativeOAuthListener() {
+  if (_nativeOAuthListenerSetup) return;
+  if (typeof Capacitor === 'undefined' || !Capacitor.Plugins || !Capacitor.Plugins.App) return;
+
+  try {
+    const { App } = Capacitor.Plugins;
+
+    const handleCallbackUrl = async (rawUrl) => {
+      if (!rawUrl || !rawUrl.startsWith('lifetracker://oauth-callback')) return;
+
+      if (Capacitor.Plugins && Capacitor.Plugins.Browser) {
+        try { await Capacitor.Plugins.Browser.close(); } catch (e) {}
+      }
+
+      try {
+        const queryPart = rawUrl.includes('?') ? rawUrl.substring(rawUrl.indexOf('?') + 1) : '';
+        const params = new URLSearchParams(queryPart);
+        const token = params.get('token');
+        const expiresIn = params.get('expires_in');
+        const error = params.get('error');
+        const cancelled = params.get('cancelled');
+
+        if (cancelled) return;
+
+        if (error) {
+          if (typeof showAlert === 'function') await showAlert('Google Drive authentication failed: ' + error);
+          return;
+        }
+
+        if (token) {
+          gdriveToken = token;
+          persistDriveToken(token, expiresIn || 3600);
+          setDriveConnectedUI(true);
+          if (typeof currentTab !== 'undefined' && currentTab === 'settings') {
+            renderSettings(document.getElementById('mainContainer'));
+          }
+          if (typeof showAlert === 'function') {
+            await showAlert('✓ Google Drive connected successfully!');
+          }
+        }
+      } catch (err) {
+        console.error('Error parsing OAuth callback url:', err);
+      }
+    };
+
+    App.addListener('appUrlOpen', async (data) => {
+      if (data && data.url) {
+        await handleCallbackUrl(data.url);
+      }
+    });
+
+    if (typeof App.getLaunchUrl === 'function') {
+      App.getLaunchUrl().then(res => {
+        if (res && res.url) handleCallbackUrl(res.url);
+      }).catch(() => {});
+    }
+
+    _nativeOAuthListenerSetup = true;
+  } catch (e) {
+    console.warn('Could not register native OAuth deep link listener:', e);
+  }
+}
+
+if (typeof Capacitor !== 'undefined' && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform()) {
+  setupNativeOAuthListener();
+}
+
 async function authenticateGoogleDrive() {
   if (!isGoogleDriveConfigured()) return showAlert('Google Drive backup is not configured yet. Set GOOGLE_OAUTH_CLIENT_ID in js/config.js first.');
 
+  // If running inside Android APK via Capacitor:
+  // Open Chrome Custom Tabs to avoid Google's "403: disallowed_useragent" WebView restriction
+  if (typeof Capacitor !== 'undefined' && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform()) {
+    setupNativeOAuthListener();
+    if (Capacitor.Plugins && Capacitor.Plugins.Browser) {
+      try {
+        const nativeAuthUrl = `https://manibhushan-kumar.github.io/life-tracker/?auth=native&client_id=${encodeURIComponent(GOOGLE_OAUTH_CLIENT_ID)}`;
+        await Capacitor.Plugins.Browser.open({
+          url: nativeAuthUrl,
+          presentationStyle: 'popover',
+          toolbarColor: '#2563eb'
+        });
+        return;
+      } catch (e) {
+        console.warn('Capacitor Browser open failed, attempting web fallback:', e);
+      }
+    }
+  }
+
+  // Web Browser Flow (Standard Google Identity Services on GitHub Pages / Web):
   if (typeof google === 'undefined' || !google.accounts) {
     return showAlert('Google scripts are loading or offline. Check internet connection.');
   }
@@ -193,6 +283,35 @@ async function authenticateGoogleDrive() {
       gdriveToken = response.access_token;
       persistDriveToken(response.access_token, response.expires_in);
       setDriveConnectedUI(true);
+
+      // Check if native APK requested authentication (?auth=native):
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('auth') === 'native') {
+        const callbackUrl = `lifetracker://oauth-callback?token=${encodeURIComponent(response.access_token)}&expires_in=${encodeURIComponent(response.expires_in || 3600)}`;
+        
+        const modal = document.getElementById('nativeAuthPromptModal');
+        if (modal) {
+          modal.innerHTML = `
+            <div class="bg-white rounded-3xl max-w-sm w-full p-6 text-center space-y-4 shadow-2xl animate-in fade-in">
+              <div class="w-14 h-14 bg-emerald-500 rounded-2xl mx-auto flex items-center justify-center text-white text-2xl shadow-lg shadow-emerald-500/30">
+                <i class="fa-solid fa-check"></i>
+              </div>
+              <div>
+                <h3 class="text-base font-bold text-slate-900">Google Drive Authorized!</h3>
+                <p class="text-xs text-slate-500 mt-1">Connecting to Life Tracker Android App...</p>
+              </div>
+              <a href="${callbackUrl}" class="w-full py-3.5 bg-blue-600 text-white rounded-2xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-blue-500/20">
+                <span>Return to Life Tracker App</span>
+              </a>
+            </div>
+          `;
+        }
+
+        setTimeout(() => {
+          window.location.href = callbackUrl;
+        }, 400);
+        return;
+      }
 
       // Re-render settings if open
       if (currentTab === 'settings') renderSettings(document.getElementById('mainContainer'));
@@ -212,6 +331,71 @@ function disconnectDrive() {
     renderSettings(document.getElementById('mainContainer'));
     document.getElementById('driveSyncNotice').innerText = 'Drive disconnected from this session.';
     document.getElementById('driveSyncNotice').className = 'text-[11px] text-center text-slate-500 font-medium h-4';
+  }
+}
+
+// Transfer active Drive token to Life Tracker Android app via deep link
+function linkToAndroidApp() {
+  if (!gdriveToken) {
+    if (typeof showAlert === 'function') showAlert('Please sign in with Google Drive first.');
+    return;
+  }
+  const callbackUrl = `lifetracker://oauth-callback?token=${encodeURIComponent(gdriveToken)}&expires_in=3600`;
+  window.location.href = callbackUrl;
+}
+
+// Fallback: manually paste a token if deep linking fails on certain devices
+function promptManualTokenPaste() {
+  const token = prompt('Enter your Google Drive Access Token:');
+  if (!token || !token.trim()) return;
+  gdriveToken = token.trim();
+  persistDriveToken(gdriveToken, 3600);
+  setDriveConnectedUI(true);
+  if (typeof currentTab !== 'undefined' && currentTab === 'settings') {
+    renderSettings(document.getElementById('mainContainer'));
+  }
+  if (typeof showAlert === 'function') showAlert('✓ Token saved! Google Drive connected.');
+}
+
+// When GitHub Pages is opened from the Android APK with ?auth=native, prompt user to sign in
+function _checkNativeAuthParam() {
+  if (typeof window === 'undefined' || !window.location) return;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('auth') === 'native') {
+    setTimeout(() => {
+      const existing = document.getElementById('nativeAuthPromptModal');
+      if (existing) return;
+      const modal = document.createElement('div');
+      modal.id = 'nativeAuthPromptModal';
+      modal.className = 'fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4';
+      modal.innerHTML = `
+        <div class="bg-white rounded-3xl max-w-sm w-full p-6 text-center space-y-4 shadow-2xl border border-slate-100 animate-in fade-in zoom-in duration-200">
+          <div class="w-16 h-16 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-white text-2xl shadow-lg shadow-blue-500/30">
+            <i class="fa-brands fa-google-drive"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-slate-900">Connect Google Drive</h3>
+            <p class="text-xs text-slate-500 mt-1">Authorize your Google Drive to sync data with the Life Tracker Android app.</p>
+          </div>
+          <button onclick="authenticateGoogleDrive()" class="w-full py-3.5 bg-blue-600 text-white rounded-2xl font-bold text-xs hover:bg-blue-700 active:scale-95 transition shadow-md shadow-blue-500/20 flex items-center justify-center gap-2">
+            <i class="fa-brands fa-google"></i>
+            <span>Sign In with Google</span>
+          </button>
+          <button onclick="window.location.href='lifetracker://oauth-callback?cancelled=true'" class="w-full py-2.5 text-xs text-slate-500 hover:text-slate-700 font-semibold">
+            Cancel & Return to App
+          </button>
+        </div>
+      `;
+      document.body.appendChild(modal);
+    }, 400);
+  }
+}
+
+if (typeof window !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _checkNativeAuthParam);
+  } else {
+    _checkNativeAuthParam();
   }
 }
 
@@ -582,6 +766,8 @@ async function performBackupWrite({ rootId, expensesFolderId, manifest, manifest
     vehicles: appData.vehicles,
     fuelLogs: appData.fuelLogs,
     loans: appData.loans,
+    reminders: appData.reminders || [],
+    reminderSounds: appData.reminderSounds || [],
     userName: appData.userName,
     savedAt: new Date().toISOString()
   };

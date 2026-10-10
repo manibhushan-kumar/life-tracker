@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connect Google Drive • Life Tracker</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="./js/config.js"></script>
+</head>
+<body class="bg-slate-50 min-h-screen flex items-center justify-center p-4 font-sans text-slate-800">
+  <div class="max-w-sm w-full bg-white rounded-3xl shadow-xl border border-slate-100 p-6 text-center space-y-5">
+    <div class="w-16 h-16 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-white text-2xl shadow-lg shadow-blue-500/30">
+      <i class="fa-solid fa-layer-group"></i>
+    </div>
+    
+    <div>
+      <h1 class="text-xl font-bold text-slate-900">Life Tracker</h1>
+      <p class="text-xs text-slate-500 mt-1">Connect your private Google Drive to securely backup & sync your data.</p>
+    </div>
+
+    <div class="p-4 bg-blue-50/60 rounded-2xl border border-blue-100 text-left space-y-2">
+      <div class="flex items-center gap-2 text-blue-700 text-xs font-bold">
+        <i class="fa-brands fa-google-drive text-amber-500 text-sm"></i>
+        <span>Google Drive Sync</span>
+      </div>
+      <p class="text-[11px] text-slate-600 leading-relaxed">
+        Backups are stored inside your own Google Drive folder (<code class="bg-blue-100 px-1 py-0.5 rounded text-blue-800">LifeTrackerBackup</code>). Only you have access to your data.
+      </p>
+    </div>
+
+    <div id="statusBox" class="text-xs text-slate-500 py-1 min-h-[2rem] flex items-center justify-center">
+      <p id="statusMsg" class="flex items-center gap-1.5 text-slate-500 font-medium">
+        <i class="fa-solid fa-spinner fa-spin text-blue-600 text-xs"></i> Initializing Google Sign-in...
+      </p>
+    </div>
+
+    <div class="space-y-2.5">
+      <button id="signInBtn" onclick="requestGoogleToken()" class="w-full py-3.5 bg-blue-600 text-white rounded-2xl font-bold text-xs hover:bg-blue-700 active:scale-95 transition shadow-md shadow-blue-500/20 flex items-center justify-center gap-2">
+        <i class="fa-brands fa-google"></i>
+        <span>Sign In & Authorize Drive</span>
+      </button>
+
+      <button onclick="cancelAndReturn()" class="w-full py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold text-xs hover:bg-slate-200 transition">
+        Cancel & Return to App
+      </button>
+    </div>
+  </div>
+
+  <script>
+    let tokenClient = null;
+
+    function getClientId() {
+      const params = new URLSearchParams(window.location.search);
+      const paramId = params.get('client_id');
+      if (paramId) return paramId;
+      if (typeof GOOGLE_OAUTH_CLIENT_ID !== 'undefined' && GOOGLE_OAUTH_CLIENT_ID) {
+        return GOOGLE_OAUTH_CLIENT_ID;
+      }
+      return '1093951580426-47u9ubrcu0b2tgioevkfq2ocm1ard0ql.apps.googleusercontent.com';
+    }
+
+    function initTokenClient() {
+      if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+        setTimeout(initTokenClient, 300);
+        return;
+      }
+
+      const clientId = getClientId();
+      try {
+        tokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: 'https://www.googleapis.com/auth/drive.file',
+          callback: (response) => {
+            if (response.error) {
+              const el = document.getElementById('statusMsg');
+              if (el) {
+                el.innerHTML = '<span class="text-rose-600 font-semibold"><i class="fa-solid fa-circle-exclamation mr-1"></i>Authentication error: ' + response.error + '</span>';
+              }
+              return;
+            }
+            if (response.access_token) {
+              const redirectUri = 'lifetracker://oauth-callback?token=' + encodeURIComponent(response.access_token) + '&expires_in=' + encodeURIComponent(response.expires_in || 3600);
+              const el = document.getElementById('statusMsg');
+              if (el) {
+                el.innerHTML = '<span class="text-emerald-600 font-semibold"><i class="fa-solid fa-circle-check mr-1"></i>Authorized! Returning to app...</span>';
+              }
+              const box = document.getElementById('statusBox');
+              if (box) {
+                box.innerHTML += '<div class="mt-2"><a href="' + redirectUri + '" class="inline-block px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold shadow-md">Open Life Tracker App</a></div>';
+              }
+              setTimeout(() => {
+                window.location.href = redirectUri;
+              }, 400);
+            }
+          }
+        });
+
+        const el = document.getElementById('statusMsg');
+        if (el) {
+          el.innerHTML = '<span class="text-slate-600 font-medium">Ready. Tap "Sign In & Authorize Drive" to continue.</span>';
+        }
+      } catch (err) {
+        const el = document.getElementById('statusMsg');
+        if (el) {
+          el.innerHTML = '<span class="text-rose-600 font-semibold"><i class="fa-solid fa-circle-exclamation mr-1"></i>Failed to initialize Google Sign-in: ' + (err.message || err) + '</span>';
+        }
+      }
+    }
+
+    function requestGoogleToken() {
+      if (!tokenClient) {
+        initTokenClient();
+        return;
+      }
+      const el = document.getElementById('statusMsg');
+      if (el) {
+        el.innerHTML = '<span class="text-blue-600 font-medium"><i class="fa-solid fa-spinner fa-spin mr-1"></i>Opening Google authorization prompt...</span>';
+      }
+      tokenClient.requestAccessToken({ prompt: 'consent' });
+    }
+
+    function cancelAndReturn() {
+      window.location.href = 'lifetracker://oauth-callback?cancelled=true';
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      initTokenClient();
+    });
+  </script>
+</body>
+</html>

@@ -74,6 +74,12 @@ function _positionSplitwiseOverlay() {
 
 async function openSplitwise() {
   if (typeof vaultLock === 'function') vaultLock();
+  const remindersOverlay = document.getElementById('remindersOverlay');
+  if (remindersOverlay && !remindersOverlay.classList.contains('hidden')) {
+    if (typeof closeRemindersOverlay === 'function') closeRemindersOverlay();
+    else remindersOverlay.classList.add('hidden');
+  }
+  if (typeof _clearRemindersUiState === 'function') _clearRemindersUiState();
   const overlay = document.getElementById('splitwiseOverlay');
   overlay.classList.remove('hidden');
   _positionSplitwiseOverlay();
@@ -101,6 +107,13 @@ async function resumeSplitwiseIfWasOpen() {
     return;
   }
   if (!state || !state.open) return;
+
+  const remindersOverlay = document.getElementById('remindersOverlay');
+  if (remindersOverlay && !remindersOverlay.classList.contains('hidden')) {
+    if (typeof closeRemindersOverlay === 'function') closeRemindersOverlay();
+    else remindersOverlay.classList.add('hidden');
+  }
+  if (typeof _clearRemindersUiState === 'function') _clearRemindersUiState();
 
   const overlay = document.getElementById('splitwiseOverlay');
   overlay.classList.remove('hidden');

@@ -1,0 +1,18 @@
+{
+  "appId": "com.lifetracker.app",
+  "appName": "Life Tracker",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_notification",
+      "iconColor": "#2563eb",
+      "sound": "default"
+    }
+  },
+  "android": {
+    "webContentsDebuggingEnabled": false
+  }
+}

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Life Tracker</title>
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="./icons/icon-192.png">
@@ -12,6 +12,14 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
+    /* Safe-area insets for mobile status bar & edge-to-edge screens */
+    header.app-header, header:first-of-type {
+      padding-top: max(0.75rem, calc(0.75rem + env(safe-area-inset-top, 0px)));
+    }
+    #sideNav {
+      padding-top: env(safe-area-inset-top, 0px);
+    }
+
     /* Kills the browser's native pull-to-refresh gesture. Without this, a
        simple overscroll bounce at the top of ANY tab (not even a deliberate
        "refresh" swipe) triggers a full page reload - which wipes every bit
@@ -48,7 +56,7 @@
 <body class="bg-slate-50 text-slate-900 pb-24 font-sans select-none">
 
   <!-- Top App Bar -->
-  <header class="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200 px-4 py-3 flex items-center justify-between">
+  <header class="app-header sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200 px-4 py-3 flex items-center justify-between">
     <div class="flex items-center gap-2">
       <button onclick="openSideNav()" aria-label="Open menu" class="w-8 h-8 -ml-1 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 transition">
         <i class="fa-solid fa-bars"></i>
@@ -179,10 +187,6 @@
       </button>
     </div>
     <nav class="p-2 space-y-1">
-      <button onclick="navigate('reminders'); closeSideNav()" id="nav-reminders" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:bg-slate-50 transition text-left">
-        <i class="fa-solid fa-bell text-base w-5"></i>
-        <span class="text-xs font-semibold">Reminders & Alerts</span>
-      </button>
       <button onclick="navigate('settings'); closeSideNav()" id="nav-settings" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:bg-slate-50 transition text-left">
         <i class="fa-solid fa-gear text-base w-5"></i>
         <span class="text-xs font-semibold">Settings</span>
@@ -264,21 +268,18 @@
           <div class="text-left"><p class="text-xs font-bold text-slate-800">Vault</p><p class="text-[10px] text-slate-400">Logins & cards</p></div>
         </button>
       </div>
-      <div class="grid grid-cols-1 gap-3">
-        <!-- Reminders & Alerts (js/reminders.js) - automated repeating interval
-             notifications with custom messages, running in browser and on Android
-             native via AlarmManager even when the app is closed. -->
-        <button onclick="navigate('reminders'); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-indigo-50 flex items-center gap-3 transition">
+      <div class="grid grid-cols-2 gap-3">
+        <button onclick="quickNewReminder(); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
           <div class="w-9 h-9 rounded-lg bg-indigo-500/10 text-indigo-600 flex items-center justify-center"><i class="fa-solid fa-bell text-sm"></i></div>
-          <div class="text-left"><p class="text-xs font-bold text-slate-800">Reminders</p><p class="text-[10px] text-slate-400">Interval notifications & alerts</p></div>
+          <div class="text-left"><p class="text-xs font-bold text-slate-800">Reminder</p><p class="text-[10px] text-slate-400">Set timed alerts</p></div>
         </button>
       </div>
     </div>
   </div>
 
   <!-- Common Generic Form Modal -->
-  <div id="formModal" class="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm hidden flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="closeFormModal()">
-    <div id="formModalContent" class="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 shadow-2xl max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+  <div id="formModal" class="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm hidden flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div id="formModalContent" class="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 shadow-2xl max-h-[90vh] overflow-y-auto">
       <!-- Injected form fields dynamically -->
     </div>
   </div>
@@ -350,6 +351,20 @@
     <div id="splitwiseContent" class="flex-1 overflow-y-auto p-4 space-y-3 max-w-md mx-auto w-full"></div>
   </div>
 
+  <!-- Reminders Overlay (opens like Splitwise: full page with back button and subheader, not a popup) -->
+  <div id="remindersOverlay" class="fixed left-0 right-0 z-20 bg-slate-50 hidden flex flex-col overflow-hidden">
+    <div id="remindersSubHeader" class="flex sticky top-0 bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 py-3 items-center justify-between gap-2">
+      <div class="flex items-center gap-2 min-w-0">
+        <button id="remindersBackBtn" onclick="closeRemindersOverlay()" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 transition" aria-label="Back">
+          <i class="fa-solid fa-arrow-left"></i>
+        </button>
+        <h2 id="remindersOverlayTitle" class="text-sm font-bold text-slate-800 truncate">Reminders</h2>
+      </div>
+      <div id="remindersOverlayHeaderActions" class="flex items-center gap-1.5"></div>
+    </div>
+    <div id="remindersOverlayContent" class="flex-1 overflow-y-auto p-4 space-y-3 max-w-md mx-auto w-full"></div>
+  </div>
+
   <script src="./js/config.js"></script>
   <script src="./js/ui-dialogs.js"></script>
   <script src="./js/data-model.js"></script>
@@ -363,6 +378,7 @@
   <script src="./js/loans.js"></script>
   <script src="./js/timezone-data.js"></script>
   <script src="./js/world-clock.js"></script>
+  <script src="./js/reminders.js"></script>
   <script src="./js/pdf-writer.js"></script>
   <script src="./js/pdf-report-data.js"></script>
   <script src="./js/pdf-report.js"></script>
@@ -378,7 +394,6 @@
   <script src="./js/vault/vaultSync.js"></script>
   <script src="./js/vault/patternLock.js"></script>
   <script src="./js/vault/vaultUI.js"></script>
-  <script src="./js/reminders.js"></script>
 
   <script>
     // --- Application State ---
@@ -404,6 +419,13 @@
       const splitwiseOverlay = document.getElementById('splitwiseOverlay');
       if (splitwiseOverlay && !splitwiseOverlay.classList.contains('hidden')) {
         closeSplitwise();
+      }
+
+      const remindersOverlay = document.getElementById('remindersOverlay');
+      if (remindersOverlay && !remindersOverlay.classList.contains('hidden')) {
+        if (tab !== 'reminders') {
+          closeRemindersOverlay();
+        }
       }
 
       // World Clock's live-updating cards run on a setInterval (see
@@ -1760,18 +1782,28 @@
               <i class="fa-solid fa-triangle-exclamation mr-1"></i> Not configured yet - set <code class="font-mono">GOOGLE_OAUTH_CLIENT_ID</code> in <code class="font-mono">js/config.js</code> to enable Drive backup.
             </p>
           ` : isConnected
-            ? `<button onclick="disconnectDrive()" class="w-full py-2.5 border border-rose-200 rounded-xl text-xs font-semibold text-rose-600 flex items-center justify-center gap-2 hover:bg-rose-50 transition">
-                <i class="fa-solid fa-link-slash"></i> Disconnect Google Drive
-               </button>`
-            : `<button onclick="authenticateGoogleDrive()" class="w-full py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-700 flex items-center justify-center gap-2 hover:bg-slate-50 hover:shadow-sm transition">
-                <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
-                  <path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12c0-6.627,5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/>
-                  <path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/>
-                  <path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z"/>
-                  <path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.571c0.001-0.001,0.002-0.001,0.003-0.002l6.19,5.238C36.971,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"/>
-                </svg>
-                Sign in with Google
-               </button>`
+            ? `<div class="space-y-2">
+                <button onclick="disconnectDrive()" class="w-full py-2.5 border border-rose-200 rounded-xl text-xs font-semibold text-rose-600 flex items-center justify-center gap-2 hover:bg-rose-50 transition">
+                  <i class="fa-solid fa-link-slash"></i> Disconnect Google Drive
+                </button>
+                <button onclick="linkToAndroidApp()" class="w-full py-2 bg-blue-50 text-blue-600 rounded-xl text-xs font-semibold hover:bg-blue-100 transition flex items-center justify-center gap-1.5" title="Transfer Drive login to Android app">
+                  <i class="fa-brands fa-android text-sm"></i> Sync to Life Tracker Android App
+                </button>
+               </div>`
+            : `<div class="space-y-2">
+                <button onclick="authenticateGoogleDrive()" class="w-full py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-700 flex items-center justify-center gap-2 hover:bg-slate-50 hover:shadow-sm transition">
+                  <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
+                    <path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12c0-6.627,5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/>
+                    <path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/>
+                    <path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z"/>
+                    <path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.571c0.001-0.001,0.002-0.001,0.003-0.002l6.19,5.238C36.971,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"/>
+                  </svg>
+                  Sign in with Google
+                </button>
+                <div class="text-center">
+                  <button type="button" onclick="promptManualTokenPaste()" class="text-[10px] text-slate-400 hover:text-slate-600 underline">Paste access token manually</button>
+                </div>
+               </div>`
           }
 
           <div class="w-full h-px bg-slate-100 my-2"></div>

@@ -1,6 +1,6 @@
 // Bump this whenever urlsToCache changes so returning users actually pick
 // up the new app shell instead of serving a stale cached copy forever.
-const CACHE_NAME = 'life-tracker-v76';
+const CACHE_NAME = 'life-tracker-v77';
 const urlsToCache = [
   './',
   './index.html',
@@ -25,13 +25,13 @@ const urlsToCache = [
   './js/loans.js',
   './js/timezone-data.js',
   './js/world-clock.js',
+  './js/reminders.js',
   './js/vault/crypto.js',
   './js/vault/vaultStore.js',
   './js/vault/vaultService.js',
   './js/vault/vaultSync.js',
   './js/vault/patternLock.js',
-  './js/vault/vaultUI.js',
-  './js/reminders.js'
+  './js/vault/vaultUI.js'
 ];
 
 // Install Service Worker and cache files
@@ -66,18 +66,23 @@ self.addEventListener('fetch', event => {
   );
 });
 
-// Handle notification tap / click to focus or launch app
+// Notification click handler: focuses open tab and notifies it to open the reminder
 self.addEventListener('notificationclick', event => {
   event.notification.close();
+  const reminderId = event.notification.data ? event.notification.data.reminderId : null;
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
       for (const client of clientList) {
         if (client.url && 'focus' in client) {
-          return client.focus();
+          client.focus();
+          if (reminderId) {
+            client.postMessage({ type: 'OPEN_REMINDER', reminderId });
+          }
+          return;
         }
       }
-      if (self.clients.openWindow) {
-        return self.clients.openWindow('./');
+      if (clients.openWindow) {
+        return clients.openWindow('./');
       }
     })
   );

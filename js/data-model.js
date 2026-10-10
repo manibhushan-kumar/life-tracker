@@ -203,8 +203,11 @@ function getDefaultAppData() {
     // "did this change" button-refresh plumbing to maintain. Full
     // OVERWRITE on restore, same as familyMembers/tags/vehicles/fuelLogs.
     loans: [],
-    // Repeating notifications list
-    reminders: []
+    // Reminders - lightweight timed alerts the user can set from the Quick
+    // Add (+) sheet.
+    reminders: [],
+    // Custom uploaded notification sounds for reminders ({ id, name, data, size, createdAt })
+    reminderSounds: []
   };
 }
 
@@ -280,6 +283,16 @@ function mergeIntoAppData(parsedData) {
     appData.loans = parsedData.loans;
   }
 
+  // Reminders: same wholesale-overwrite treatment as loans above.
+  if (Array.isArray(parsedData.reminders)) {
+    appData.reminders = parsedData.reminders;
+  }
+
+  // Custom reminder sounds: same wholesale-overwrite treatment as reminders.
+  if (Array.isArray(parsedData.reminderSounds)) {
+    appData.reminderSounds = parsedData.reminderSounds;
+  }
+
   // Recurring Daily Items - fully generic and user-configurable, so a
   // straight overwrite when present is all that's needed here.
   if (Array.isArray(parsedData.recurringItems)) {
@@ -329,15 +342,6 @@ function mergeIntoAppData(parsedData) {
   // there's only ever one value here, nothing to merge on top of.
   if (typeof parsedData.userName === 'string') {
     appData.userName = parsedData.userName;
-  }
-
-  // Reminders list: overwrite on restore
-  if (Array.isArray(parsedData.reminders)) {
-    appData.reminders = parsedData.reminders;
-    try {
-      localStorage.setItem('lifeTracker_reminders_list', JSON.stringify(parsedData.reminders));
-      if (typeof applyAllReminderSchedules === 'function') applyAllReminderSchedules();
-    } catch (e) {}
   }
 }
 
