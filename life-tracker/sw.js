@@ -1,6 +1,6 @@
 // Bump this whenever urlsToCache changes so returning users actually pick
 // up the new app shell instead of serving a stale cached copy forever.
-const CACHE_NAME = 'life-tracker-v76';
+const CACHE_NAME = 'life-tracker-v57';
 const urlsToCache = [
   './',
   './index.html',
@@ -15,23 +15,12 @@ const urlsToCache = [
   './js/storage.js',
   './js/drive-sync.js',
   './js/compare.js',
-  './js/share-image.js',
   './js/splitwise.js',
-  './js/groups.js',
   './js/pdf-report-data.js',
   './js/pdf-report.js',
   './js/pdf-writer.js',
   './js/pdf-download.js',
-  './js/loans.js',
-  './js/timezone-data.js',
-  './js/world-clock.js',
-  './js/vault/crypto.js',
-  './js/vault/vaultStore.js',
-  './js/vault/vaultService.js',
-  './js/vault/vaultSync.js',
-  './js/vault/patternLock.js',
-  './js/vault/vaultUI.js',
-  './js/reminders.js'
+  './js/loans.js'
 ];
 
 // Install Service Worker and cache files
@@ -63,22 +52,5 @@ self.addEventListener('fetch', event => {
         // Return cached version or fetch from network
         return response || fetch(event.request);
       })
-  );
-});
-
-// Handle notification tap / click to focus or launch app
-self.addEventListener('notificationclick', event => {
-  event.notification.close();
-  event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
-      for (const client of clientList) {
-        if (client.url && 'focus' in client) {
-          return client.focus();
-        }
-      }
-      if (self.clients.openWindow) {
-        return self.clients.openWindow('./');
-      }
-    })
   );
 });

@@ -179,10 +179,6 @@
       </button>
     </div>
     <nav class="p-2 space-y-1">
-      <button onclick="navigate('reminders'); closeSideNav()" id="nav-reminders" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:bg-slate-50 transition text-left">
-        <i class="fa-solid fa-bell text-base w-5"></i>
-        <span class="text-xs font-semibold">Reminders & Alerts</span>
-      </button>
       <button onclick="navigate('settings'); closeSideNav()" id="nav-settings" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:bg-slate-50 transition text-left">
         <i class="fa-solid fa-gear text-base w-5"></i>
         <span class="text-xs font-semibold">Settings</span>
@@ -216,29 +212,6 @@
         </button>
       </div>
       <div class="grid grid-cols-2 gap-3">
-        <!-- General-purpose Groups (js/groups.js) - a reusable contact list,
-             NOT a Splitwise group. quickNewGroup() just navigates to the
-             Groups page - it deliberately does NOT auto-open the create
-             form, so there's exactly one place that ever opens it (the
-             page's own "+ New Group" button), not two subtly different
-             entry points to keep in sync. These groups can then be pulled
-             from inside Splitwise's Add Person flow ("From a Group" tab),
-             and are built to plug into any future feature the same way,
-             not just Splitwise. -->
-        <button onclick="quickNewGroup(); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
-          <div class="w-9 h-9 rounded-lg bg-violet-500/10 text-violet-600 flex items-center justify-center"><i class="fa-solid fa-user-group text-sm"></i></div>
-          <div class="text-left"><p class="text-xs font-bold text-slate-800">New Group</p><p class="text-[10px] text-slate-400">Reusable people lists</p></div>
-        </button>
-        <!-- World Clock (js/world-clock.js) lives here rather than the side
-             drawer - it's a lookup/utility screen you jump to occasionally,
-             same shelf as Fuel Log/Tag Reports/New Group below, not a
-             constantly-visible nav item like Settings. -->
-        <button onclick="navigate('worldClock'); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
-          <div class="w-9 h-9 rounded-lg bg-cyan-500/10 text-cyan-600 flex items-center justify-center"><i class="fa-solid fa-earth-americas text-sm"></i></div>
-          <div class="text-left"><p class="text-xs font-bold text-slate-800">World Clock</p><p class="text-[10px] text-slate-400">Time zones by country</p></div>
-        </button>
-      </div>
-      <div class="grid grid-cols-2 gap-3">
         <button onclick="navigate('fuel'); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
           <div class="w-9 h-9 rounded-lg bg-sky-500/10 text-sky-600 flex items-center justify-center"><i class="fa-solid fa-gas-pump text-sm"></i></div>
           <div class="text-left"><p class="text-xs font-bold text-slate-800">Fuel Log</p><p class="text-[10px] text-slate-400">Fill-ups & mileage</p></div>
@@ -249,36 +222,17 @@
         </button>
       </div>
       <div class="grid grid-cols-2 gap-3">
-        <button onclick="navigate('pdfReport'); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
+        <button onclick="navigate('pdfReport'); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition col-span-2">
           <div class="w-9 h-9 rounded-lg bg-fuchsia-500/10 text-fuchsia-600 flex items-center justify-center"><i class="fa-solid fa-file-pdf text-sm"></i></div>
           <div class="text-left"><p class="text-xs font-bold text-slate-800">Generate PDF</p><p class="text-[10px] text-slate-400">Report + charts</p></div>
-        </button>
-        <!-- Credentials & Cards Vault (js/vault/) - lock-gated, so it lives
-             here as a deliberate "jump to it" entry like World Clock/New
-             Group above, rather than a persistent side-nav item next to
-             Settings - navigate('vault') renders the locked/create screen
-             first regardless of entry point, so there's nothing unsafe
-             about reaching it from the Quick Add sheet. -->
-        <button onclick="navigate('vault'); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50 flex items-center gap-3 transition">
-          <div class="w-9 h-9 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center"><i class="fa-solid fa-shield-halved text-sm"></i></div>
-          <div class="text-left"><p class="text-xs font-bold text-slate-800">Vault</p><p class="text-[10px] text-slate-400">Logins & cards</p></div>
-        </button>
-      </div>
-      <div class="grid grid-cols-1 gap-3">
-        <!-- Reminders & Alerts (js/reminders.js) - automated repeating interval
-             notifications with custom messages, running in browser and on Android
-             native via AlarmManager even when the app is closed. -->
-        <button onclick="navigate('reminders'); closeQuickAddModal()" class="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-indigo-50 flex items-center gap-3 transition">
-          <div class="w-9 h-9 rounded-lg bg-indigo-500/10 text-indigo-600 flex items-center justify-center"><i class="fa-solid fa-bell text-sm"></i></div>
-          <div class="text-left"><p class="text-xs font-bold text-slate-800">Reminders</p><p class="text-[10px] text-slate-400">Interval notifications & alerts</p></div>
         </button>
       </div>
     </div>
   </div>
 
   <!-- Common Generic Form Modal -->
-  <div id="formModal" class="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm hidden flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="closeFormModal()">
-    <div id="formModalContent" class="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 shadow-2xl max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+  <div id="formModal" class="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm hidden flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div id="formModalContent" class="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 shadow-2xl max-h-[90vh] overflow-y-auto">
       <!-- Injected form fields dynamically -->
     </div>
   </div>
@@ -357,28 +311,12 @@
   <script src="./js/storage.js"></script>
   <script src="./js/drive-sync.js"></script>
   <script src="./js/compare.js"></script>
-  <script src="./js/share-image.js"></script>
   <script src="./js/splitwise.js"></script>
-  <script src="./js/groups.js"></script>
   <script src="./js/loans.js"></script>
-  <script src="./js/timezone-data.js"></script>
-  <script src="./js/world-clock.js"></script>
   <script src="./js/pdf-writer.js"></script>
   <script src="./js/pdf-report-data.js"></script>
   <script src="./js/pdf-report.js"></script>
   <script src="./js/pdf-download.js"></script>
-  <!-- Credentials & Cards Vault - crypto.js has zero dependencies and must
-       load first; vaultStore.js (IDB) needs js/idb.js already loaded above;
-       vaultService.js needs both; vaultSync.js needs js/drive-sync.js's
-       low-level helpers (already loaded above) plus vaultService/vaultStore;
-       vaultUI.js needs all of the above. -->
-  <script src="./js/vault/crypto.js"></script>
-  <script src="./js/vault/vaultStore.js"></script>
-  <script src="./js/vault/vaultService.js"></script>
-  <script src="./js/vault/vaultSync.js"></script>
-  <script src="./js/vault/patternLock.js"></script>
-  <script src="./js/vault/vaultUI.js"></script>
-  <script src="./js/reminders.js"></script>
 
   <script>
     // --- Application State ---
@@ -406,16 +344,6 @@
         closeSplitwise();
       }
 
-      // World Clock's live-updating cards run on a setInterval (see
-      // js/world-clock.js) - has to be torn down BEFORE switching away from
-      // it, same "stop it before leaving" spirit as the Splitwise overlay
-      // close above, otherwise it'd keep ticking against a container that's
-      // no longer showing its cards.
-      if (typeof _wcStopTicker === 'function') _wcStopTicker();
-
-      // The Vault (js/vault/) locks itself the instant you navigate away from it.
-      if (tab !== 'vault' && typeof vaultLock === 'function') vaultLock();
-
       currentTab = tab;
       localStorage.setItem(LAST_TAB_STORAGE_KEY, tab);
       setAppHeaderCrumb(TAB_DISPLAY_NAMES[tab]);
@@ -439,10 +367,6 @@
       else if (tab === 'fuel') renderFuel(container);
       else if (tab === 'pdfReport') renderPdfReportPage(container);
       else if (tab === 'loans') renderLoansPage(container);
-      else if (tab === 'groups') renderGroupsPage(container);
-      else if (tab === 'worldClock') renderWorldClockPage(container);
-      else if (tab === 'vault') renderVaultPage(container);
-      else if (tab === 'reminders') renderRemindersPage(container);
     }
 
     // --- Home Screen View ---
@@ -849,11 +773,12 @@
             <label class="text-[11px] font-semibold text-slate-400">Date</label>
             <input type="date" required id="expDate" value="${getTodayStr()}" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
           </div>
-          ${activeFamilyMembers().length > 0 ? `
+          ${appData.familyMembers.length > 0 ? `
             <div>
               <label class="text-[11px] font-semibold text-slate-400">Paid By (Optional)</label>
               <select id="expPaidBy" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
-                ${paidByOptionsHtml(null)}
+                <option value="">-- Not specified --</option>
+                ${appData.familyMembers.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
               </select>
             </div>
           ` : ''}
@@ -1064,11 +989,12 @@
               <p class="text-[9px] text-slate-400 mt-1">Defaults to ${item.dueDate} + ${item.recurrence.toLowerCase()} - change it if the real next due date is different, or leave it as-is.</p>
             </div>
           ` : '<p class="text-[10px] text-slate-400">This is a one-time item - it will be marked completed after logging.</p>'}
-          ${activeFamilyMembers().length > 0 ? `
+          ${appData.familyMembers.length > 0 ? `
             <div>
               <label class="text-[11px] font-semibold text-slate-400">Paid By (Optional)</label>
               <select id="dueItemPaidBy" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
-                ${paidByOptionsHtml(null)}
+                <option value="">-- Not specified --</option>
+                ${appData.familyMembers.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
               </select>
             </div>
           ` : '<p class="text-[10px] text-slate-400">Add family members in Settings to track who paid this.</p>'}
@@ -1360,11 +1286,12 @@
             </div>
           </div>
           <p class="text-[11px] text-slate-400">Liters filled: <span id="fuelLitersPreview" class="font-bold text-slate-700">${existing ? existing.liters : '0'}</span> L (auto-calculated)</p>
-          ${(activeFamilyMembers().length > 0 || (existing && existing.paidBy)) ? `
+          ${appData.familyMembers.length > 0 ? `
             <div>
               <label class="text-[11px] font-semibold text-slate-400">Paid By (Optional)</label>
               <select id="fuelPaidBy" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white">
-                ${paidByOptionsHtml(existing ? existing.paidBy : null)}
+                <option value="">-- Not specified --</option>
+                ${appData.familyMembers.map(m => `<option value="${m.id}" ${existing && existing.paidBy === m.id ? 'selected' : ''}>${m.name}</option>`).join('')}
               </select>
             </div>
           ` : ''}
@@ -1571,13 +1498,13 @@
           <p class="text-[10px] text-slate-400 -mt-2">Optional "Paid By" tag you can attach to an expense or a due-item payment - handy for tracking who actually paid what. Deleting someone only hides them from new entries - past expenses keep showing their name.</p>
 
           <div class="flex flex-wrap gap-2">
-            ${activeFamilyMembers().map(m => `
+            ${appData.familyMembers.map(m => `
               <span class="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
                 ${m.name}
                 <button onclick="deleteFamilyMember('${m.id}')" class="w-4 h-4 rounded-full bg-slate-200 hover:bg-rose-500 hover:text-white text-slate-500 flex items-center justify-center text-[9px] transition"><i class="fa-solid fa-xmark"></i></button>
               </span>
             `).join('')}
-            ${activeFamilyMembers().length === 0 ? '<p class="text-[11px] text-slate-400">No family members added yet.</p>' : ''}
+            ${appData.familyMembers.length === 0 ? '<p class="text-[11px] text-slate-400">No family members added yet.</p>' : ''}
           </div>
 
           <div class="flex gap-2 pt-1">
@@ -1712,36 +1639,20 @@
             </div>
           </div>
 
-          ${(() => {
-            const entries = Object.entries(appData.budgets.monthly || {}).sort((a, b) => b[0].localeCompare(a[0]));
-            const editableEntries = entries.filter(([month]) => isBudgetMonthEditable(month));
-            const lockedEntries = entries.filter(([month]) => !isBudgetMonthEditable(month));
-            const chip = (month, amount, locked) => locked ? `
-                <span title="Past months are locked and can't be changed." class="flex items-center gap-1.5 pl-3 pr-2.5 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-[11px] font-semibold text-slate-400">
-                  <i class="fa-solid fa-lock text-[9px]"></i> ${month}: ₹${Number(amount).toLocaleString()}
-                </span>
-              ` : `
+          ${Object.keys(appData.budgets.monthly || {}).length > 0 ? `
+            <div class="flex flex-wrap gap-2 pt-1">
+              ${Object.entries(appData.budgets.monthly).sort((a, b) => b[0].localeCompare(a[0])).map(([month, amount]) => isBudgetMonthEditable(month) ? `
                 <span class="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
                   ${month}: ₹${Number(amount).toLocaleString()}
                   <button onclick="deleteMonthlyBudgetOverride('${month}')" class="w-4 h-4 rounded-full bg-slate-200 hover:bg-rose-500 hover:text-white text-slate-500 flex items-center justify-center text-[9px] transition"><i class="fa-solid fa-xmark"></i></button>
                 </span>
-              `;
-            return `
-              ${editableEntries.length > 0 ? `
-                <div class="flex flex-wrap gap-2 pt-1">
-                  ${editableEntries.map(([month, amount]) => chip(month, amount, false)).join('')}
-                </div>
-              ` : ''}
-              ${lockedEntries.length > 0 ? `
-                <details class="pt-1">
-                  <summary class="text-[10px] font-semibold text-slate-400 cursor-pointer select-none">Past months (${lockedEntries.length}) - click to expand</summary>
-                  <div class="flex flex-wrap gap-2 pt-2">
-                    ${lockedEntries.map(([month, amount]) => chip(month, amount, true)).join('')}
-                  </div>
-                </details>
-              ` : ''}
-            `;
-          })()}
+              ` : `
+                <span title="Past months are locked and can't be changed." class="flex items-center gap-1.5 pl-3 pr-2.5 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-[11px] font-semibold text-slate-400">
+                  <i class="fa-solid fa-lock text-[9px]"></i> ${month}: ₹${Number(amount).toLocaleString()}
+                </span>
+              `).join('')}
+            </div>
+          ` : ''}
         </div>
 
         <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-4">
@@ -1935,42 +1846,10 @@
       const input = document.getElementById('newFamilyMemberName');
       const name = input.value.trim();
       if (!name) return;
-      if (activeFamilyMembers().some(m => m.name.toLowerCase() === name.toLowerCase())) {
+      if (appData.familyMembers.some(m => m.name.toLowerCase() === name.toLowerCase())) {
         await showAlert('That family member already exists.');
         return;
       }
-
-      // A SOFT-deleted member with this exact name (see the familyMembers
-      // shape comment in js/data-model.js) is very likely the same person
-      // being re-added after being removed earlier - offer to restore them
-      // under their ORIGINAL id instead of silently creating a second,
-      // unrelated record that happens to share a name. Restoring re-attaches
-      // their whole past "Paid By" history in one move (every display site
-      // already resolves by id); a same-named-but-different-id duplicate
-      // would instead split that history across two indistinguishable "Mom"
-      // entries with no way to tell them apart later.
-      const retiredMatch = appData.familyMembers.find(m => m.deleted && m.name.toLowerCase() === name.toLowerCase());
-      if (retiredMatch) {
-        const choice = await _renderDialog({
-          title: 'Restore this person?',
-          message: `"${name}" was removed earlier. Restore them to bring back their past "Paid By" history - or use a different name if this is actually someone else.`,
-          tone: 'info',
-          buttons: [
-            { label: 'Use a different name', style: 'secondary', value: 'rename' },
-            { label: 'Restore', style: 'primary', value: 'restore' }
-          ]
-        });
-        if (choice === 'restore') {
-          retiredMatch.deleted = false;
-          saveState();
-          input.value = '';
-          renderSettings(document.getElementById('mainContainer'));
-        }
-        // 'rename' (or the dialog otherwise closing) adds nothing - leave
-        // the typed name in place so the user can edit it to something else.
-        return;
-      }
-
       appData.familyMembers.push({ id: 'member_' + Date.now(), name });
       saveState();
       renderSettings(document.getElementById('mainContainer'));
@@ -1980,25 +1859,13 @@
       const member = appData.familyMembers.find(m => m.id === id);
       if (!member) return;
 
-      // Counts BOTH places paidBy can live - expenses (incl. ones created
-      // from a logged due-item payment) and fuel logs - see the familyMembers
-      // shape comment in js/data-model.js for why a still-referenced member
-      // gets soft- rather than hard-deleted below.
-      const inUseCount = appData.expenses.filter(e => e.paidBy === id).length
-        + (appData.fuelLogs || []).filter(f => f.paidBy === id).length;
+      const inUseCount = appData.expenses.filter(e => e.paidBy === id).length;
+      const msg = inUseCount > 0
+        ? `"${member.name}" is tagged as "Paid By" on ${inUseCount} existing expense(s). Those will keep showing "${member.name}" — you just won't be able to pick them for new entries. Delete anyway?`
+        : `Delete family member "${member.name}"?`;
+      if (!(await showConfirm(msg))) return;
 
-      if (inUseCount === 0) {
-        if (!(await showConfirm(`Delete family member "${member.name}"?`))) return;
-        appData.familyMembers = appData.familyMembers.filter(m => m.id !== id);
-      } else {
-        const msg = `"${member.name}" is tagged as "Paid By" on ${inUseCount} existing expense(s)/fuel log(s). Those will keep showing "${member.name}" — you just won't be able to pick them for new entries. Delete anyway?`;
-        if (!(await showConfirm(msg))) return;
-        // Soft-delete: keep the record (activeFamilyMembers() already hides
-        // it from every dropdown) instead of removing it outright, so
-        // getFamilyMemberName keeps resolving the real name forever instead
-        // of every past reference degrading to "Former member".
-        member.deleted = true;
-      }
+      appData.familyMembers = appData.familyMembers.filter(m => m.id !== id);
       saveState();
       renderSettings(document.getElementById('mainContainer'));
     }

@@ -14,12 +14,6 @@
 //                                  wholesale every backup/restore - no need
 //                                  for the chunking/dirty-tracking machinery
 //                                  built for the (unbounded) expenses list.
-//     groups.json              <- General-purpose reusable contact Groups
-//                                  (js/groups.js - name + member list only,
-//                                  no expenses/balances). Same wholesale
-//                                  overwrite treatment as splitwise.json,
-//                                  just a separate file/store since it's a
-//                                  distinct, Splitwise-independent concept.
 //     expenses_manifest.json   <- index of every month chunk: {fileId, count,
 //                                  updatedAt}. One small file means restore
 //                                  never has to list-and-guess; it just reads
@@ -60,7 +54,6 @@ const G_ROOT_FOLDER_CACHE_KEY = 'life_tracker_gfolder_cache';
 
 const SETTINGS_FILE_NAME = 'settings.json';
 const SPLITWISE_FILE_NAME = 'splitwise.json';
-const GROUPS_FILE_NAME = 'groups.json';
 const MANIFEST_FILE_NAME = 'expenses_manifest.json';
 const EXPENSES_FOLDER_NAME = 'expenses';
 const LEGACY_BACKUP_FILE_NAME = 'life_tracker_data.json';
@@ -599,18 +592,6 @@ async function performBackupWrite({ rootId, expensesFolderId, manifest, manifest
   };
   const splitwiseFileId = await upsertJsonFile(rootId, SPLITWISE_FILE_NAME, splitwisePayload, syncMeta.splitwiseFileId);
 
-  // Same wholesale-replace reasoning as Splitwise groups above, just for
-  // the general-purpose Groups feature (js/groups.js) - its own separate
-  // store/file, not folded into splitwise.json, since a Group has no
-  // expenses/balances of its own and is meant to be reusable by future
-  // features beyond just Splitwise.
-  driveSyncProgress('Syncing Groups...');
-  const groupsPayload = {
-    groups: await IDB.getAll('contactGroups'),
-    savedAt: new Date().toISOString()
-  };
-  const groupsFileId = await upsertJsonFile(rootId, GROUPS_FILE_NAME, groupsPayload, syncMeta.groupsFileId);
-
   // manifestFileId/manifest were already resolved by the caller.
   if (dirtyMonths.length > 0) {
     manifest = manifest || { chunks: {} };
@@ -645,13 +626,10 @@ async function performBackupWrite({ rootId, expensesFolderId, manifest, manifest
     settingsFileId,
     manifestFileId,
     splitwiseFileId,
-    groupsFileId,
     lastSyncedSettingsFingerprint: _settingsSyncFingerprint(),
     lastSyncedSplitwiseFingerprint: JSON.stringify(splitwisePayload.groups),
-    lastSyncedGroupsFingerprint: JSON.stringify(groupsPayload.groups),
     knownRemoteSettingsSavedAt: settingsPayload.savedAt,
-    knownRemoteSplitwiseSavedAt: splitwisePayload.savedAt,
-    knownRemoteGroupsSavedAt: groupsPayload.savedAt
+    knownRemoteSplitwiseSavedAt: splitwisePayload.savedAt
   });
 
   return dirtyMonths.length > 0 ? `Synced ${dirtyMonths.length} month(s) + settings.` : 'Settings synced. Expenses already up to date.';
@@ -702,18 +680,16 @@ async function backupToGoogleDrive() {
     // device last looked at whatever it's about to overwrite. Cheap: these
     // are the same small settings.json/splitwise.json files anyway.
     driveSyncProgress('Checking for conflicts...');
-    const [remoteSettingsFile, remoteSplitwiseFile, remoteGroupsFile] = await Promise.all([
+    const [remoteSettingsFile, remoteSplitwiseFile] = await Promise.all([
       findFileByIdOrName(syncMeta.settingsFileId, SETTINGS_FILE_NAME, rootId),
-      findFileByIdOrName(syncMeta.splitwiseFileId, SPLITWISE_FILE_NAME, rootId),
-      findFileByIdOrName(syncMeta.groupsFileId, GROUPS_FILE_NAME, rootId)
+      findFileByIdOrName(syncMeta.splitwiseFileId, SPLITWISE_FILE_NAME, rootId)
     ]);
-    const [remoteSettingsData, remoteSplitwiseData, remoteGroupsData] = await Promise.all([
+    const [remoteSettingsData, remoteSplitwiseData] = await Promise.all([
       remoteSettingsFile ? fetchJsonFile(remoteSettingsFile.id).catch(() => null) : Promise.resolve(null),
-      remoteSplitwiseFile ? fetchJsonFile(remoteSplitwiseFile.id).catch(() => null) : Promise.resolve(null),
-      remoteGroupsFile ? fetchJsonFile(remoteGroupsFile.id).catch(() => null) : Promise.resolve(null)
+      remoteSplitwiseFile ? fetchJsonFile(remoteSplitwiseFile.id).catch(() => null) : Promise.resolve(null)
     ]);
 
-    const conflicts = findSyncConflicts({ syncMeta, manifest, dirtyMonths, remoteSettingsData, remoteSplitwiseData, remoteGroupsData });
+    const conflicts = findSyncConflicts({ syncMeta, manifest, dirtyMonths, remoteSettingsData, remoteSplitwiseData });
 
     if (conflicts.hasAny) {
       // Hand off to the interactive conflict-choice modal - hide the
@@ -721,7 +697,7 @@ async function backupToGoogleDrive() {
       hideDriveBusyModal();
       openSyncConflictModal({
         conflicts, rootId, expensesFolderId, manifest, manifestFileId, dirtyMonths, syncMeta,
-        remoteSettingsData, remoteSplitwiseData, remoteGroupsData, remoteSettingsFile, remoteSplitwiseFile, remoteGroupsFile
+        remoteSettingsData, remoteSplitwiseData, remoteSettingsFile, remoteSplitwiseFile
       });
       return;
     }
@@ -754,7 +730,6 @@ function openSyncConflictModal(ctx) {
   const pieces = [];
   if (conflicts.settings) pieces.push('Settings');
   if (conflicts.splitwise) pieces.push('Splitwise groups');
-  if (conflicts.groups) pieces.push('Groups');
   if (conflicts.months.length) pieces.push(`Expenses (${conflicts.months.join(', ')})`);
 
   content.innerHTML = `
@@ -820,7 +795,7 @@ async function resolveConflictPull() {
   closeFormModal();
   if (!ctx) return;
 
-  const { conflicts, remoteSettingsData, remoteSplitwiseData, remoteGroupsData, remoteSettingsFile, remoteSplitwiseFile, remoteGroupsFile, manifest } = ctx;
+  const { conflicts, remoteSettingsData, remoteSplitwiseData, remoteSettingsFile, remoteSplitwiseFile, manifest } = ctx;
 
   setDriveActionBusy(['btnBackupDrive', 'globalDriveSyncBtn'], 'Pulling...');
   driveSyncProgress('Pulling Drive\'s latest...');
@@ -830,9 +805,6 @@ async function resolveConflictPull() {
     }
     if (conflicts.splitwise && remoteSplitwiseData) {
       await applyRestoredSplitwiseData(remoteSplitwiseData, remoteSplitwiseFile ? remoteSplitwiseFile.id : null);
-    }
-    if (conflicts.groups && remoteGroupsData) {
-      await applyRestoredGroupsData(remoteGroupsData, remoteGroupsFile ? remoteGroupsFile.id : null);
     }
 
     for (const month of conflicts.months) {
@@ -882,7 +854,7 @@ async function resolveConflictPull() {
 // this, then just hit Backup - it should silently rebuild everything).
 async function deleteAllDriveBackupsExceptSettings() {
   if (!gdriveToken) { driveSyncDone('Authenticate with Google first!', true); return; }
-  if (!(await showConfirm('This permanently deletes your Drive backup - all expense history, Splitwise groups, and Groups stored there - EXCEPT settings.json (categories/recurring items/due items/budgets/family members). Data on THIS device is untouched. This cannot be undone. Continue?'))) return;
+  if (!(await showConfirm('This permanently deletes your Drive backup - all expense history and Splitwise groups stored there - EXCEPT settings.json (categories/recurring items/due items/budgets/family members). Data on THIS device is untouched. This cannot be undone. Continue?'))) return;
 
   setDriveActionBusy('btnBackupDrive', 'Deleting Drive backup...');
   driveSyncProgress('Deleting Drive backup...');
@@ -892,10 +864,9 @@ async function deleteAllDriveBackupsExceptSettings() {
     const rootId = await resolveRootFolderId(folderName);
     const syncMeta = await getSyncMeta();
 
-    const [manifestFile, splitwiseFile, groupsFile, legacyFile, expensesFolder] = await Promise.all([
+    const [manifestFile, splitwiseFile, legacyFile, expensesFolder] = await Promise.all([
       findFileByIdOrName(syncMeta.manifestFileId, MANIFEST_FILE_NAME, rootId),
       findFileByIdOrName(syncMeta.splitwiseFileId, SPLITWISE_FILE_NAME, rootId),
-      findFileByIdOrName(syncMeta.groupsFileId, GROUPS_FILE_NAME, rootId),
       findFileByName(LEGACY_BACKUP_FILE_NAME, rootId),
       findFolder(EXPENSES_FOLDER_NAME, rootId)
     ]);
@@ -903,7 +874,7 @@ async function deleteAllDriveBackupsExceptSettings() {
     // Deleting the "expenses" FOLDER takes every monthly chunk inside it
     // along with it in one call - no need to enumerate them individually.
     await Promise.all(
-      [manifestFile, splitwiseFile, groupsFile, legacyFile, expensesFolder]
+      [manifestFile, splitwiseFile, legacyFile, expensesFolder]
         .filter(Boolean)
         .map(f => deleteDriveFile(f.id))
     );
@@ -914,7 +885,7 @@ async function deleteAllDriveBackupsExceptSettings() {
     // (backupToGoogleDrive's remoteManifestMissing check will rebuild both
     // from scratch the moment it notices the manifest is gone) but there's
     // no reason to leave stale bookkeeping lying around either.
-    await saveSyncMeta({ manifestFileId: null, splitwiseFileId: null, groupsFileId: null, dirtyMonths: [], remoteChunkVersions: {} });
+    await saveSyncMeta({ manifestFileId: null, splitwiseFileId: null, dirtyMonths: [], remoteChunkVersions: {} });
 
     driveSyncDone('Drive backup deleted (settings kept). Next Backup re-uploads everything fresh.', false);
     if (currentTab === 'settings') renderSettings(document.getElementById('mainContainer'));
@@ -984,17 +955,14 @@ function mergeExpensesByIdForConflict(localExpenses, remoteExpenses) {
 // against the manifest's per-month `updatedAt` vs this device's own
 // remoteChunkVersions record - but only for months this device is actually
 // dirty on (a month neither side is touching can't conflict).
-function findSyncConflicts({ syncMeta, manifest, dirtyMonths, remoteSettingsData, remoteSplitwiseData, remoteGroupsData }) {
-  const conflicts = { settings: false, splitwise: false, groups: false, months: [] };
+function findSyncConflicts({ syncMeta, manifest, dirtyMonths, remoteSettingsData, remoteSplitwiseData }) {
+  const conflicts = { settings: false, splitwise: false, months: [] };
 
   if (remoteSettingsData && remoteSettingsData.savedAt !== (syncMeta.knownRemoteSettingsSavedAt || null)) {
     conflicts.settings = true;
   }
   if (remoteSplitwiseData && remoteSplitwiseData.savedAt !== (syncMeta.knownRemoteSplitwiseSavedAt || null)) {
     conflicts.splitwise = true;
-  }
-  if (remoteGroupsData && remoteGroupsData.savedAt !== (syncMeta.knownRemoteGroupsSavedAt || null)) {
-    conflicts.groups = true;
   }
 
   const remoteVersions = syncMeta.remoteChunkVersions || {};
@@ -1006,7 +974,7 @@ function findSyncConflicts({ syncMeta, manifest, dirtyMonths, remoteSettingsData
     }
   });
 
-  conflicts.hasAny = conflicts.settings || conflicts.splitwise || conflicts.groups || conflicts.months.length > 0;
+  conflicts.hasAny = conflicts.settings || conflicts.splitwise || conflicts.months.length > 0;
   return conflicts;
 }
 
@@ -1049,32 +1017,6 @@ async function applyRestoredSplitwiseData(splitwiseData, splitwiseFileId) {
   }
 }
 
-// Same wholesale-replace treatment as applyRestoredSplitwiseData() above,
-// just for the general-purpose Groups feature (js/groups.js) and its own
-// 'contactGroups' store/groups.json file.
-async function applyRestoredGroupsData(groupsData, groupsFileId) {
-  if (!groupsData || !Array.isArray(groupsData.groups)) return;
-
-  await IDB.replaceAll('contactGroups', groupsData.groups);
-
-  const freshGroups = await IDB.getAll('contactGroups');
-  await saveSyncMeta({
-    groupsFileId,
-    lastSyncedGroupsFingerprint: JSON.stringify(freshGroups),
-    knownRemoteGroupsSavedAt: groupsData.savedAt || null
-  });
-
-  // If the Groups page happens to be open right now, refresh it in place
-  // instead of leaving stale pre-restore data on screen until the user
-  // navigates away and back (renderGroupsPage() itself always re-fetches
-  // fresh from IndexedDB anyway, so this is only needed for "already open").
-  if (typeof currentTab !== 'undefined' && currentTab === 'groups') {
-    contactGroups = freshGroups;
-    contactGroups.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-    renderGroupsPage(document.getElementById('mainContainer'));
-  }
-}
-
 // Wrapper around mergeIntoAppData() specifically for the Drive-restore path.
 // mergeIntoAppData() itself stays Drive-agnostic (data-model.js has no
 // business knowing about sync bookkeeping) - this is the one place that
@@ -1101,9 +1043,10 @@ async function restoreFromGoogleDrive() {
     const rootId = await resolveRootFolderId(folderName);
     const syncMeta = await getSyncMeta();
 
-    // Splitwise groups aren't year-scoped like expenses (wholesale-synced) -
-    // so this happens right here, unconditionally, BEFORE any of the expense
-    // year-picker branching below. It used to be deferred into _pendingRestore and only applied once the user picked a
+    // Splitwise groups aren't year-scoped like expenses (max 5 groups,
+    // wholesale-synced) - so this happens right here, unconditionally,
+    // BEFORE any of the expense year-picker branching below. It used to be
+    // deferred into _pendingRestore and only applied once the user picked a
     // year and clicked "Restore" inside that modal - which meant it never
     // ran at all if there was nothing new expense-wise to restore, or if
     // the user hadn't gotten around to completing that flow yet. Splitting
@@ -1121,17 +1064,6 @@ async function restoreFromGoogleDrive() {
     if (splitwiseData) {
       driveSyncProgress('Syncing Splitwise groups...');
       await applyRestoredSplitwiseData(splitwiseData, splitwiseFile.id);
-    }
-
-    // Same unconditional, up-front treatment for the general-purpose Groups
-    // feature (js/groups.js) - not year-scoped, wholesale-synced, so it
-    // always pulls immediately too, independent of the expense year-picker
-    // flow below.
-    const groupsFile = await findFileByIdOrName(syncMeta.groupsFileId, GROUPS_FILE_NAME, rootId);
-    const groupsData = groupsFile ? await fetchJsonFile(groupsFile.id).catch(() => null) : null;
-    if (groupsData) {
-      driveSyncProgress('Syncing Groups...');
-      await applyRestoredGroupsData(groupsData, groupsFile.id);
     }
 
     const manifestFile = await findFileByIdOrName(syncMeta.manifestFileId, MANIFEST_FILE_NAME, rootId);
@@ -1235,7 +1167,7 @@ function openYearPickerModal(years, opts) {
 
     <p class="text-[10px] text-amber-600 mb-2"><i class="fa-solid fa-triangle-exclamation mr-1"></i>${currentYear} is handled differently from other years: since Home/Expenses live off it daily, restoring it fully <strong>replaces</strong> your local ${currentYear} data with Drive's version (anything not yet backed up will be lost). Other years just merge in on top - nothing else on-device gets touched.</p>
 
-    <p class="text-[10px] text-slate-400 mb-3">Categories, recurring items, due items, Splitwise groups, and Groups always sync in full - they're tiny.</p>
+    <p class="text-[10px] text-slate-400 mb-3">Categories, recurring items, due items, and Splitwise groups always sync in full - they're tiny.</p>
 
     <div class="grid grid-cols-2 gap-2">
       <button onclick="closeFormModal(); _pendingRestore = null;" class="py-2.5 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">Cancel</button>

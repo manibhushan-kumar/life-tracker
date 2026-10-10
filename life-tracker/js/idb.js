@@ -7,7 +7,7 @@
 // IndexedDB work" (single responsibility, nothing fancier than that).
 const IDB = (() => {
   const DB_NAME = 'life_tracker_db';
-  const DB_VERSION = 3;
+  const DB_VERSION = 2;
   let dbPromise = null;
 
   function openDB() {
@@ -43,16 +43,6 @@ const IDB = (() => {
           // via its own dedicated splitwise.json file (see drive-sync.js),
           // wholesale on every backup/restore just like settings.json.
           db.createObjectStore('splitGroups', { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains('contactGroups')) {
-          // General-purpose reusable contact groups (js/groups.js) -
-          // deliberately a SEPARATE store/concept from splitGroups above.
-          // A Splitwise group has expenses/balances of its own; a Group here
-          // is just a name + a list of people, meant to be pulled from by
-          // Splitwise (and any future feature) rather than being tied to
-          // one. Syncs to Drive wholesale via its own groups.json file, same
-          // pattern as splitGroups/splitwise.json.
-          db.createObjectStore('contactGroups', { keyPath: 'id' });
         }
       };
 

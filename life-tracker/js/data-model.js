@@ -56,11 +56,7 @@ const TAB_DISPLAY_NAMES = {
   reports: 'Tag Reports',
   fuel: 'Fuel Log',
   pdfReport: 'Generate PDF',
-  loans: 'Loans',
-  groups: 'Groups',
-  worldClock: 'World Clock',
-  vault: 'Vault',
-  reminders: 'Reminders'
+  loans: 'Loans'
 };
 
 // Sets the " / PageName" breadcrumb suffix after the clickable "Life
@@ -135,13 +131,7 @@ function getDefaultAppData() {
     // see getFamilyMemberName() below. Purely a label list ({id, name}), no
     // relation to Splitwise's per-group members (js/splitwise.js) - that's a
     // separate, unrelated concept (splitting a shared bill vs just noting
-    // who paid for something out of one household's own money). A member
-    // still referenced by at least one expense/fuel log gets `deleted: true`
-    // instead of being removed outright when "deleted" in Settings - see
-    // deleteFamilyMember() in index.html and activeFamilyMembers()/
-    // paidByOptionsHtml() below for why: removing the record outright would
-    // make every past expense that already pointed at it permanently fall
-    // back to "Former member", silently losing real history.
+    // who paid for something out of one household's own money).
     familyMembers: [],
     // Single-select "project/trip" labels ({id, name}) an expense can be
     // tagged with (see Reports view in index.html, which is the whole
@@ -202,9 +192,7 @@ function getDefaultAppData() {
     // machinery - no separate store, no separate Drive file, no separate
     // "did this change" button-refresh plumbing to maintain. Full
     // OVERWRITE on restore, same as familyMembers/tags/vehicles/fuelLogs.
-    loans: [],
-    // Repeating notifications list
-    reminders: []
+    loans: []
   };
 }
 
@@ -330,15 +318,6 @@ function mergeIntoAppData(parsedData) {
   if (typeof parsedData.userName === 'string') {
     appData.userName = parsedData.userName;
   }
-
-  // Reminders list: overwrite on restore
-  if (Array.isArray(parsedData.reminders)) {
-    appData.reminders = parsedData.reminders;
-    try {
-      localStorage.setItem('lifeTracker_reminders_list', JSON.stringify(parsedData.reminders));
-      if (typeof applyAllReminderSchedules === 'function') applyAllReminderSchedules();
-    } catch (e) {}
-  }
 }
 
 // Effective budget (in rupees) for a given "YYYY-MM" month: an explicit
@@ -433,40 +412,6 @@ function getFamilyMemberName(memberId) {
   if (!memberId) return null;
   const member = (appData.familyMembers || []).find(m => m.id === memberId);
   return member ? member.name : 'Former member';
-}
-
-// Members still pickable for a NEW "Paid By" tag - excludes soft-deleted
-// ones (see the familyMembers shape comment in getDefaultAppData above),
-// so a removed person disappears from every add/edit form's dropdown while
-// getFamilyMemberName above keeps resolving their name for anything that
-// already pointed at them. The one and only place that filter lives, so
-// every dropdown (Add Expense, due-item payment, Fuel Log, Settings' own
-// management list) stays in sync automatically.
-function activeFamilyMembers() {
-  return (appData.familyMembers || []).filter(m => !m.deleted);
-}
-
-// Builds the <option> tags for a "Paid By" <select>, always from
-// activeFamilyMembers() so a removed member never shows up as a choice for
-// something NEW. `selectedId` is for the one case that's trickier than it
-// looks - EDITING an existing record (currently only Fuel Log entries) that
-// was already tagged with a member who has since been removed: that id
-// won't be in the active list, so without this it would render with NO
-// option selected, and saving the form unchanged would silently overwrite
-// the real paidBy with "nothing". Appending the retired member as one extra,
-// clearly-labeled option (only when one is actually needed) keeps the
-// existing value intact until the user deliberately changes it.
-function paidByOptionsHtml(selectedId) {
-  const active = activeFamilyMembers();
-  let html = '<option value="">-- Not specified --</option>';
-  html += active.map(m => `<option value="${m.id}" ${selectedId === m.id ? 'selected' : ''}>${m.name}</option>`).join('');
-  if (selectedId && !active.some(m => m.id === selectedId)) {
-    const retiredName = getFamilyMemberName(selectedId);
-    if (retiredName && retiredName !== 'Former member') {
-      html += `<option value="${selectedId}" selected>${retiredName} (removed)</option>`;
-    }
-  }
-  return html;
 }
 
 // Display name for a tag id, with the same graceful "Former tag" fallback
