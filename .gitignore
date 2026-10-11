@@ -1,0 +1,121 @@
+# ==============================================================================
+# Life Tracker - Git Ignore Configuration
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Dependencies & Package Managers
+# ------------------------------------------------------------------------------
+node_modules/
+package-lock.json.backup
+.pnpm-store/
+
+# ------------------------------------------------------------------------------
+# Web Build Outputs & Caches
+# ------------------------------------------------------------------------------
+dist/
+build/
+.cache/
+.parcel-cache/
+
+# ------------------------------------------------------------------------------
+# Android Build Outputs & Caches
+# ------------------------------------------------------------------------------
+.gradle/
+android/.gradle/
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/build/
+android/.kotlin/
+android/.cxx/
+android/.externalNativeBuild/
+android/captures/
+android/.navigation/
+
+# Android build binaries & packages
+*.apk
+*.aab
+*.idsig
+*.aar
+*.ap_
+*.dex
+*.class
+*.hprof
+
+# Gradle wrapper binary jar (auto-downloaded via ./manage.sh setup)
+android/gradle/wrapper/gradle-wrapper.jar
+gradle/wrapper/gradle-wrapper.jar
+
+# Machine-specific SDK & local properties (auto-configured on setup)
+local.properties
+android/local.properties
+
+# Generated Capacitor Android assets & configs (auto-regenerated on npm run cap:sync / setup)
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/capacitor-cordova-android-plugins/
+
+# ------------------------------------------------------------------------------
+# Security, Keystores & Environment Secrets
+# ------------------------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+*.jks
+*.keystore
+*.p12
+*.key
+*.pepk
+# Google Services (Firebase / Private APIs)
+google-services.json
+GoogleService-Info.plist
+
+# ------------------------------------------------------------------------------
+# IDEs & Code Editors
+# ------------------------------------------------------------------------------
+.vscode/
+.idea/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# ------------------------------------------------------------------------------
+# Operating System & Temporary Files
+# ------------------------------------------------------------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+[Dd]esktop.ini
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+
+# ------------------------------------------------------------------------------
+# Logs, Backups & Scratch Files
+# ------------------------------------------------------------------------------
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.trash_nm_*
+*.tmp
+*.swp
+*.swo
+scratch/
