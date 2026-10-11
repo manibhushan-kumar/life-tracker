@@ -1,6 +1,6 @@
 // Bump this whenever urlsToCache changes so returning users actually pick
 // up the new app shell instead of serving a stale cached copy forever.
-const CACHE_NAME = 'life-tracker-v78';
+const CACHE_NAME = 'life-tracker-v80';
 const urlsToCache = [
   './',
   './index.html',
@@ -34,7 +34,9 @@ const urlsToCache = [
   './js/vault/vaultUI.js',
   './js/games/puzzle-samples.js',
   './js/games/catalogue.js',
-  './js/games/sliding-puzzle.js'
+  './js/games/sliding-puzzle.js',
+  './js/games/bomb-defusal.js',
+  './js/games/memory-match.js'
 ];
 
 // Install Service Worker and cache files

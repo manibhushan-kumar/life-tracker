@@ -3,10 +3,26 @@
 // Designed so future games (like Ludo, Memory Match, Tic-Tac-Toe) can be added
 // simply by registering their definition without rewriting navigation or core logic.
 
-let gamesSubView = 'catalogue'; // 'catalogue' | 'sliding_puzzle' | 'sliding_puzzle_play'
+let gamesSubView = 'catalogue'; // 'catalogue' | 'sliding_puzzle' | 'sliding_puzzle_play' | 'bomb_defusal' | 'memory_match'
 let activeGameFilter = 'all'; // 'all' | 'available' | 'coming_soon'
 
 const GAME_CATALOGUE = [
+  {
+    id: 'bomb-defusal',
+    title: 'Arcade Bomb Defusal',
+    description: 'Catch and defuse falling bombs before they hit the ground! Chain rapid defusals for mega combos and set record high scores in this retro arcade thriller.',
+    icon: 'fa-bomb',
+    iconColor: 'text-rose-500',
+    iconBg: 'bg-rose-500/10',
+    bgGradient: 'from-rose-500/15 via-orange-500/10 to-amber-500/15',
+    badgeText: 'Playable Now',
+    badgeColor: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    category: 'Arcade Action',
+    status: 'available', // 'available' | 'coming_soon'
+    ageRange: 'All Ages',
+    tags: ['Retro Arcade', 'Combos & Reflexes', 'High Score'],
+    onLaunch: () => openBombDefusalGame()
+  },
   {
     id: 'sliding-puzzle',
     title: 'Sliding Puzzle',
@@ -26,18 +42,18 @@ const GAME_CATALOGUE = [
   {
     id: 'memory-match',
     title: 'Memory Match',
-    description: 'Flip cute cards and match delightful pairs of animals, fruits, and cheerful shapes.',
+    description: 'Flip cute cards and match delightful pairs of animals, fruits, space explorers, vehicles, and sweet treats!',
     icon: 'fa-clone',
     iconColor: 'text-amber-500',
     iconBg: 'bg-amber-500/10',
-    bgGradient: 'from-amber-500/10 via-orange-500/5 to-yellow-500/10',
-    badgeText: 'Coming Soon',
-    badgeColor: 'bg-slate-100 text-slate-500 border-slate-200',
+    bgGradient: 'from-amber-500/15 via-orange-500/10 to-yellow-500/15',
+    badgeText: 'Playable Now',
+    badgeColor: 'bg-emerald-100 text-emerald-700 border-emerald-200',
     category: 'Memory Game',
-    status: 'coming_soon',
+    status: 'available', // 'available' | 'coming_soon'
     ageRange: 'Ages 3+',
-    tags: ['Memory', 'Cute Animals', 'Quick Match'],
-    upcomingFeatures: 'Animal card decks, sound effects, and gentle timer!'
+    tags: ['Memory', 'Cute Animals', 'Quick Match', 'Child-Friendly'],
+    onLaunch: () => openMemoryMatchGame()
   },
   {
     id: 'tic-tac-toe',
@@ -110,6 +126,16 @@ function renderGamesPage(container) {
     if (typeof renderSlidingPuzzleGameBoard === 'function') {
       renderSlidingPuzzleGameBoard(container);
     }
+  } else if (gamesSubView === 'bomb_defusal') {
+    setAppHeaderCrumb('Games / Bomb Defusal');
+    if (typeof renderBombDefusalGame === 'function') {
+      renderBombDefusalGame(container);
+    }
+  } else if (gamesSubView === 'memory_match') {
+    setAppHeaderCrumb('Games / Memory Match');
+    if (typeof renderMemoryMatchGame === 'function') {
+      renderMemoryMatchGame(container);
+    }
   }
 }
 
@@ -117,6 +143,12 @@ function renderGamesPage(container) {
 function openGamesList() {
   if (typeof _slidingPuzzleCleanupGame === 'function') {
     _slidingPuzzleCleanupGame();
+  }
+  if (typeof cleanupBombDefusalGame === 'function') {
+    cleanupBombDefusalGame();
+  }
+  if (typeof cleanupMemoryMatchGame === 'function') {
+    cleanupMemoryMatchGame();
   }
   gamesSubView = 'catalogue';
   renderGamesPage(document.getElementById('mainContainer'));
@@ -164,6 +196,12 @@ function setGamesFilter(filter) {
 function cleanupGamesModule() {
   if (typeof _slidingPuzzleCleanupGame === 'function') {
     _slidingPuzzleCleanupGame();
+  }
+  if (typeof cleanupBombDefusalGame === 'function') {
+    cleanupBombDefusalGame();
+  }
+  if (typeof cleanupMemoryMatchGame === 'function') {
+    cleanupMemoryMatchGame();
   }
 }
 
