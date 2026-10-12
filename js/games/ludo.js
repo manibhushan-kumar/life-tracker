@@ -917,8 +917,8 @@
         </div>
 
         <div>
-          <label class="text-[10px] font-bold text-slate-400 block mb-1">Your Display Name</label>
-          <input type="text" id="ludoHostName" value="Player 1" placeholder="Enter your name" class="w-full text-xs p-3 rounded-xl border border-slate-200 font-semibold outline-none focus:border-indigo-500 bg-slate-50">
+          <label class="text-[10px] font-bold text-slate-400 block mb-1">Your Display Name <span class="text-rose-500 font-bold">*</span></label>
+          <input type="text" id="ludoHostName" value="" placeholder="Enter your name..." oninput="this.classList.remove('border-rose-400', 'ring-2', 'ring-rose-200')" onkeydown="if(event.key==='Enter'){event.preventDefault();submitCreateRoom();}" class="w-full text-xs p-3 rounded-xl border border-slate-200 font-semibold outline-none focus:border-indigo-500 bg-slate-50 transition">
         </div>
 
         <div>
@@ -952,6 +952,11 @@
       </div>
     `;
     document.body.appendChild(overlay);
+
+    setTimeout(() => {
+      const nameInput = document.getElementById('ludoHostName');
+      if (nameInput) nameInput.focus();
+    }, 100);
   };
 
   window.selectHostColor = function (col, btn) {
@@ -971,7 +976,20 @@
   };
 
   window.submitCreateRoom = async function () {
-    const name = document.getElementById('ludoHostName')?.value.trim() || 'Host';
+    const nameInput = document.getElementById('ludoHostName');
+    const name = nameInput?.value.trim();
+    if (!name) {
+      if (typeof showAlert === 'function') {
+        showAlert('Please enter your name to continue.', { title: 'Name Required', tone: 'warning' });
+      } else if (typeof showToast === 'function') {
+        showToast('Please enter your name to continue.', 'warning');
+      }
+      if (nameInput) {
+        nameInput.focus();
+        nameInput.classList.add('border-rose-400', 'ring-2', 'ring-rose-200');
+      }
+      return;
+    }
     const count = parseInt(document.getElementById('ludoSelectedCount')?.value) || 2;
     const hostColor = document.getElementById('ludoHostChosenColor')?.value || 'red';
     const btn = document.querySelector('#ludoCreateRoomModal button[onclick="submitCreateRoom()"]');
@@ -1029,14 +1047,14 @@
         </div>
 
         <div>
-          <label class="text-[10px] font-bold text-slate-400 block mb-1">Your Name</label>
-          <input type="text" id="ludoJoinPlayerName" value="Player 2" class="w-full text-xs p-3 rounded-xl border border-slate-200 font-semibold outline-none focus:border-indigo-500 bg-slate-50">
+          <label class="text-[10px] font-bold text-slate-400 block mb-1">Your Name <span class="text-rose-500 font-bold">*</span></label>
+          <input type="text" id="ludoJoinPlayerName" value="" placeholder="Enter your name..." oninput="this.classList.remove('border-rose-400', 'ring-2', 'ring-rose-200')" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('ludoJoinCode')?.focus();}" class="w-full text-xs p-3 rounded-xl border border-slate-200 font-semibold outline-none focus:border-indigo-500 bg-slate-50 transition">
         </div>
 
         <div>
           <label class="text-[10px] font-bold text-slate-400 block mb-1">Room Code (e.g. LD-4821)</label>
           <div class="flex gap-1.5">
-            <input type="text" id="ludoJoinCode" placeholder="LD-XXXX" oninput="handleJoinCodeInput(this.value)" class="flex-1 text-sm p-3 rounded-xl border border-slate-200 font-mono font-bold uppercase tracking-wider outline-none focus:border-indigo-500 bg-slate-50">
+            <input type="text" id="ludoJoinCode" placeholder="LD-XXXX" oninput="handleJoinCodeInput(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();submitJoinRoom();}" class="flex-1 text-sm p-3 rounded-xl border border-slate-200 font-mono font-bold uppercase tracking-wider outline-none focus:border-indigo-500 bg-slate-50">
             <button type="button" onclick="checkRoomColors()" class="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold border border-slate-200 transition">
               Check
             </button>
@@ -1085,8 +1103,13 @@
     document.body.appendChild(overlay);
 
     setTimeout(() => {
+      const nameInput = document.getElementById('ludoJoinPlayerName');
       const codeInput = document.getElementById('ludoJoinCode');
-      if (codeInput) codeInput.focus();
+      if (nameInput && !nameInput.value.trim()) {
+        nameInput.focus();
+      } else if (codeInput) {
+        codeInput.focus();
+      }
     }, 100);
   };
 
@@ -1223,14 +1246,32 @@
   };
 
   window.submitJoinRoom = async function () {
-    const name = document.getElementById('ludoJoinPlayerName')?.value.trim() || 'Player';
-    const code = document.getElementById('ludoJoinCode')?.value.trim();
-    const chosenColor = document.getElementById('ludoJoinChosenColor')?.value || 'green';
-    const isSpectator = (document.getElementById('ludoJoinRole')?.value === 'spectator');
+    const nameInput = document.getElementById('ludoJoinPlayerName');
+    const name = nameInput?.value.trim();
+    if (!name) {
+      if (typeof showAlert === 'function') {
+        showAlert('Please enter your name to continue.', { title: 'Name Required', tone: 'warning' });
+      } else if (typeof showToast === 'function') {
+        showToast('Please enter your name to continue.', 'warning');
+      }
+      if (nameInput) {
+        nameInput.focus();
+        nameInput.classList.add('border-rose-400', 'ring-2', 'ring-rose-200');
+      }
+      return;
+    }
 
+    const codeInput = document.getElementById('ludoJoinCode');
+    const code = codeInput?.value.trim();
     if (!code) {
       if (typeof showAlert === 'function') {
         showAlert('Please enter a room code.', { title: 'Code Required', tone: 'warning' });
+      } else if (typeof showToast === 'function') {
+        showToast('Please enter a room code.', 'warning');
+      }
+      if (codeInput) {
+        codeInput.focus();
+        codeInput.classList.add('border-rose-400', 'ring-2', 'ring-rose-200');
       }
       return;
     }
