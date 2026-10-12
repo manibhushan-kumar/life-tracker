@@ -1262,7 +1262,7 @@
     }
 
     const codeInput = document.getElementById('ludoJoinCode');
-    const code = codeInput?.value.trim();
+    let code = codeInput?.value.trim();
     if (!code) {
       if (typeof showAlert === 'function') {
         showAlert('Please enter a room code.', { title: 'Code Required', tone: 'warning' });
@@ -1275,6 +1275,19 @@
       }
       return;
     }
+
+    code = code.toUpperCase().replace(/\s+/g, '');
+    if (!code.startsWith('LD-')) {
+      if (code.startsWith('LD') && code.length > 2) {
+        code = 'LD-' + code.substring(2);
+      } else if (code.length === 4) {
+        code = 'LD-' + code;
+      }
+    }
+
+    const role = document.getElementById('ludoJoinRole')?.value || 'player';
+    const isSpectator = role === 'spectator';
+    const chosenColor = document.getElementById('ludoJoinChosenColor')?.value || 'green';
 
     const btn = document.getElementById('ludoJoinSubmitBtn') || document.querySelector('#ludoJoinRoomModal button[onclick="submitJoinRoom()"]');
     let origText = '';
