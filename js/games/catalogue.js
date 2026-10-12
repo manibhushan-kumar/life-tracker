@@ -3,10 +3,32 @@
 // Designed so future games (like Ludo, Memory Match, Tic-Tac-Toe) can be added
 // simply by registering their definition without rewriting navigation or core logic.
 
-let gamesSubView = 'catalogue'; // 'catalogue' | 'sliding_puzzle' | 'sliding_puzzle_play' | 'bomb_defusal' | 'memory_match'
+let gamesSubView = (() => {
+  try {
+    return localStorage.getItem('lifeTracker_gamesSubView') || 'catalogue';
+  } catch (e) {
+    return 'catalogue';
+  }
+})(); // 'catalogue' | 'sliding_puzzle' | 'sliding_puzzle_play' | 'bomb_defusal' | 'memory_match' | 'sudoku' | 'ludo'
 let activeGameFilter = 'all'; // 'all' | 'available' | 'coming_soon'
 
 const GAME_CATALOGUE = [
+  {
+    id: 'sudoku',
+    title: 'Sudoku Master',
+    description: 'Challenging 9x9 number logic puzzle designed for ages 10+ and teens! Use deduction to fill the grid, take pencil notes, track mistakes, and test your brain across 4 difficulty tiers.',
+    icon: 'fa-brain',
+    iconColor: 'text-indigo-600',
+    iconBg: 'bg-indigo-500/10',
+    bgGradient: 'from-indigo-500/15 via-blue-500/10 to-violet-500/15',
+    badgeText: 'Playable Now',
+    badgeColor: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    category: 'Logic & Deduction',
+    status: 'available', // 'available' | 'coming_soon'
+    ageRange: 'Ages 10+',
+    tags: ['Brain Workout', 'Ages 10+', 'Pencil Notes', '4 Difficulties'],
+    onLaunch: () => openSudokuGame()
+  },
   {
     id: 'bomb-defusal',
     title: 'Arcade Bomb Defusal',
@@ -74,18 +96,18 @@ const GAME_CATALOGUE = [
   {
     id: 'ludo',
     title: 'Ludo Express',
-    description: 'Roll the lucky dice, race colorful tokens, and celebrate reaching home safely!',
+    description: 'Classic board game! Roll the dice, race your tokens, play offline against smart System Bots or challenge friends in real-time online multiplayer rooms!',
     icon: 'fa-dice',
     iconColor: 'text-indigo-500',
     iconBg: 'bg-indigo-500/10',
     bgGradient: 'from-indigo-500/10 via-purple-500/5 to-pink-500/10',
-    badgeText: 'Coming Soon',
-    badgeColor: 'bg-slate-100 text-slate-500 border-slate-200',
+    badgeText: 'Playable Now',
+    badgeColor: 'bg-emerald-100 text-emerald-700 border-emerald-200',
     category: 'Board Game',
-    status: 'coming_soon',
-    ageRange: 'Ages 5+',
-    tags: ['Multiplayer', 'Family Fun', 'Dice Roll'],
-    upcomingFeatures: 'Simplified child-friendly board, fun token animations, and family turn-taking!'
+    status: 'available',
+    ageRange: 'All Ages',
+    tags: ['Multiplayer', 'System Bot', '2-4 Players', 'Dice Roll'],
+    onLaunch: () => openLudoGame()
   }
 ];
 
@@ -113,6 +135,13 @@ function renderGamesPage(container) {
   if (!container) container = document.getElementById('mainContainer');
   if (!container) return;
 
+  try {
+    const savedSub = localStorage.getItem('lifeTracker_gamesSubView');
+    if (savedSub && gamesSubView === 'catalogue') {
+      gamesSubView = savedSub;
+    }
+  } catch (e) {}
+
   if (gamesSubView === 'catalogue') {
     setAppHeaderCrumb(TAB_DISPLAY_NAMES.games || 'Games');
     renderGamesList(container);
@@ -136,6 +165,16 @@ function renderGamesPage(container) {
     if (typeof renderMemoryMatchGame === 'function') {
       renderMemoryMatchGame(container);
     }
+  } else if (gamesSubView === 'sudoku') {
+    setAppHeaderCrumb('Games / Sudoku Master');
+    if (typeof renderSudokuGame === 'function') {
+      renderSudokuGame(container);
+    }
+  } else if (gamesSubView === 'ludo') {
+    setAppHeaderCrumb('Games / Ludo Express');
+    if (typeof renderLudoGame === 'function') {
+      renderLudoGame(container);
+    }
   }
 }
 
@@ -150,7 +189,17 @@ function openGamesList() {
   if (typeof cleanupMemoryMatchGame === 'function') {
     cleanupMemoryMatchGame();
   }
+  if (typeof cleanupSudokuGame === 'function') {
+    cleanupSudokuGame();
+  }
+  if (typeof cleanupLudoGame === 'function') {
+    cleanupLudoGame();
+  }
   gamesSubView = 'catalogue';
+  try {
+    localStorage.removeItem('lifeTracker_gamesSubView');
+    localStorage.removeItem('ludo_active_subview');
+  } catch (e) {}
   renderGamesPage(document.getElementById('mainContainer'));
 }
 
@@ -173,7 +222,7 @@ async function showComingSoonInfo(id) {
   const game = getGameById(id);
   if (!game) return;
 
-  const msg = `${game.title} is currently in development!\n\n${game.description}\n\n✨ Planned Highlights:\n${game.upcomingFeatures || 'Engaging child-friendly gameplay coming in the next update!'}`;
+  const msg = `${game.title} is currently in development!\n\n${game.description}\n\n✨ Planned Highlights:\n${game.upcomingFeatures || 'Engaging gameplay coming in the next update!'}`;
 
   if (typeof showAlert === 'function') {
     await showAlert(msg, {
@@ -181,8 +230,6 @@ async function showComingSoonInfo(id) {
       tone: 'info',
       okLabel: 'Can\'t Wait!'
     });
-  } else {
-    alert(msg);
   }
 }
 
@@ -202,6 +249,12 @@ function cleanupGamesModule() {
   }
   if (typeof cleanupMemoryMatchGame === 'function') {
     cleanupMemoryMatchGame();
+  }
+  if (typeof cleanupSudokuGame === 'function') {
+    cleanupSudokuGame();
+  }
+  if (typeof cleanupLudoGame === 'function') {
+    cleanupLudoGame();
   }
 }
 

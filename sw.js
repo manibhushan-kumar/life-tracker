@@ -1,6 +1,6 @@
 // Bump this whenever urlsToCache changes so returning users actually pick
 // up the new app shell instead of serving a stale cached copy forever.
-const CACHE_NAME = 'life-tracker-v80';
+const CACHE_NAME = 'life-tracker-v84';
 const urlsToCache = [
   './',
   './index.html',
@@ -8,6 +8,8 @@ const urlsToCache = [
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
+  './js/firebase-config.js',
+  './js/firebase-service.js',
   './js/config.js',
   './js/ui-dialogs.js',
   './js/data-model.js',
@@ -36,7 +38,10 @@ const urlsToCache = [
   './js/games/catalogue.js',
   './js/games/sliding-puzzle.js',
   './js/games/bomb-defusal.js',
-  './js/games/memory-match.js'
+  './js/games/memory-match.js',
+  './js/games/sudoku.js',
+  './js/games/ludo-service.js',
+  './js/games/ludo.js'
 ];
 
 // Install Service Worker and cache files

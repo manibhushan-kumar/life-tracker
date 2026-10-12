@@ -219,13 +219,15 @@ public class AlarmScheduler {
                     break;
                 case "custom":
                     int interval = Math.max(1, customInterval);
-                    if ("hours".equalsIgnoreCase(customUnit)) {
+                    if ("minutes".equalsIgnoreCase(customUnit) || "minute".equalsIgnoreCase(customUnit)) {
+                        cal.add(Calendar.MINUTE, interval);
+                    } else if ("hours".equalsIgnoreCase(customUnit) || "hour".equalsIgnoreCase(customUnit)) {
                         cal.add(Calendar.HOUR_OF_DAY, interval);
-                    } else if ("days".equalsIgnoreCase(customUnit)) {
+                    } else if ("days".equalsIgnoreCase(customUnit) || "day".equalsIgnoreCase(customUnit)) {
                         cal.add(Calendar.DAY_OF_YEAR, interval);
-                    } else if ("weeks".equalsIgnoreCase(customUnit)) {
+                    } else if ("weeks".equalsIgnoreCase(customUnit) || "week".equalsIgnoreCase(customUnit)) {
                         cal.add(Calendar.WEEK_OF_YEAR, interval);
-                    } else if ("months".equalsIgnoreCase(customUnit)) {
+                    } else if ("months".equalsIgnoreCase(customUnit) || "month".equalsIgnoreCase(customUnit)) {
                         cal.add(Calendar.MONTH, interval);
                     } else {
                         cal.add(Calendar.DAY_OF_YEAR, 1);

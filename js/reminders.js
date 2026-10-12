@@ -886,6 +886,15 @@ function renderRemindersPage(container) {
 // --------------- Group/Reminder List View (Matching Splitwise) ------------
 // Clean rows: NO arrow ">", NO Done button in list. Status shown clearly!
 
+// Filter state for Reminders list (All vs Favorites)
+let _remindersFilter = 'all';
+
+function setRemindersFilter(filter) {
+  _remindersFilter = filter;
+  renderRemindersListView();
+}
+window.setRemindersFilter = setRemindersFilter;
+
 function renderRemindersListView() {
   _saveRemindersUiState('list', null);
   const subHeader = document.getElementById('remindersSubHeader');
@@ -895,8 +904,33 @@ function renderRemindersListView() {
   if (!content) return;
 
   const list = appData.reminders || [];
-  const activeList = list.filter(r => !r.completed).sort((a, b) => a.datetime.localeCompare(b.datetime));
-  const completedList = list.filter(r => r.completed).sort((a, b) => b.datetime.localeCompare(a.datetime));
+  const totalActive = list.filter(r => !r.completed);
+  const totalFavCount = totalActive.filter(r => Boolean(r.favorite || r.favourite)).length;
+
+  let activeList = list.filter(r => !r.completed);
+  if (_remindersFilter === 'favorites') {
+    activeList = activeList.filter(r => Boolean(r.favorite || r.favourite));
+  }
+  activeList.sort((a, b) => {
+    const aFav = Boolean(a.favorite || a.favourite);
+    const bFav = Boolean(b.favorite || b.favourite);
+    if (aFav !== bFav) return aFav ? -1 : 1; // Favorites list at the top!
+    return a.datetime.localeCompare(b.datetime);
+  });
+
+  let completedList = list.filter(r => r.completed);
+  if (_remindersFilter === 'favorites') {
+    completedList = completedList.filter(r => Boolean(r.favorite || r.favourite));
+  }
+  completedList.sort((a, b) => {
+    const aFav = Boolean(a.favorite || a.favourite);
+    const bFav = Boolean(b.favorite || b.favourite);
+    if (aFav !== bFav) return aFav ? -1 : 1; // Favorites list at the top!
+    return b.datetime.localeCompare(a.datetime);
+  });
+
+  const favActive = activeList.filter(r => Boolean(r.favorite || r.favourite));
+  const regularActive = activeList.filter(r => !Boolean(r.favorite || r.favourite));
 
   content.innerHTML = `
     <div class="text-[11px] text-slate-400">
@@ -910,6 +944,19 @@ function renderRemindersListView() {
       </button>
       <button onclick="renderReminderSoundsView('list')" class="py-2.5 px-3 rounded-xl text-xs font-bold transition bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm flex items-center justify-center gap-1.5">
         <i class="fa-solid fa-music text-purple-600 text-xs"></i> Alert Sounds <span class="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full text-[10px] font-bold leading-none">${(appData.reminderSounds || []).length}</span>
+      </button>
+    </div>
+
+    <!-- Prominent Filter Tabs: All vs Favorites -->
+    <div class="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl">
+      <button type="button" onclick="setRemindersFilter('all')" class="flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${_remindersFilter === 'all' ? 'bg-white text-slate-800 shadow-xs' : 'text-slate-500 hover:text-slate-700'}">
+        <span>All Reminders</span>
+        <span class="text-[10px] px-1.5 py-0.2 rounded-full ${_remindersFilter === 'all' ? 'bg-slate-100 text-slate-700' : 'bg-slate-200/60 text-slate-500'} font-semibold">${totalActive.length}</span>
+      </button>
+      <button type="button" onclick="setRemindersFilter('favorites')" class="flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${_remindersFilter === 'favorites' ? 'bg-white text-amber-800 shadow-xs' : 'text-slate-500 hover:text-amber-600'}">
+        <i class="fa-solid fa-star text-amber-500 text-[10px]"></i>
+        <span>Favorites</span>
+        <span class="text-[10px] px-1.5 py-0.2 rounded-full ${_remindersFilter === 'favorites' ? 'bg-amber-100 text-amber-800' : 'bg-slate-200/60 text-slate-500'} font-semibold">${totalFavCount}</span>
       </button>
     </div>
 
@@ -934,16 +981,49 @@ function renderRemindersListView() {
       <button onclick="requestExactAlarmPermission()" class="shrink-0 px-2.5 py-1 text-[11px] font-bold bg-rose-600 text-white rounded-lg hover:bg-rose-700 transition">Allow</button>
     </div>
 
-    <!-- Reminders list matching Splitwise list format -->
-    <div class="space-y-2">
-      ${activeList.length === 0 && completedList.length === 0 ? `
+    <!-- Reminders list -->
+    <div class="space-y-3">
+      ${_remindersFilter === 'favorites' && activeList.length === 0 && completedList.length === 0 ? `
+        <div class="text-center py-8 bg-white rounded-2xl border border-dashed border-amber-200 p-6 space-y-2">
+          <i class="fa-solid fa-star text-2xl text-amber-400"></i>
+          <p class="text-xs font-bold text-slate-700">No favorite reminders yet</p>
+          <p class="text-[11px] text-slate-400 leading-relaxed">Tap the <span class="font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">★ Fav</span> button on any reminder to pin it here at the top.</p>
+        </div>
+      ` : ''}
+
+      ${_remindersFilter === 'all' && activeList.length === 0 && completedList.length === 0 ? `
         <div class="text-center py-10 bg-white rounded-2xl border border-dashed border-slate-200 p-6 space-y-2">
           <i class="fa-solid fa-bell text-2xl text-slate-300"></i>
           <p class="text-xs text-slate-400">No reminders yet.<br>Tap "New Reminder" above to create an alert.</p>
         </div>
       ` : ''}
 
-      ${activeList.map(r => _renderReminderListRow(r)).join('')}
+      ${_remindersFilter === 'all' && favActive.length > 0 ? `
+        <!-- Pinned Favorites Section Header -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between px-1">
+            <span class="text-[10px] font-extrabold uppercase tracking-wider text-amber-700 flex items-center gap-1.5">
+              <i class="fa-solid fa-star text-amber-500 text-[10px]"></i> Pinned Favorites (${favActive.length})
+            </span>
+          </div>
+          ${favActive.map(r => _renderReminderListRow(r)).join('')}
+        </div>
+
+        ${regularActive.length > 0 ? `
+          <div class="space-y-2 pt-1">
+            <div class="flex items-center justify-between px-1">
+              <span class="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Other Reminders (${regularActive.length})</span>
+            </div>
+            ${regularActive.map(r => _renderReminderListRow(r)).join('')}
+          </div>
+        ` : ''}
+      ` : `
+        ${activeList.length > 0 ? `
+          <div class="space-y-2">
+            ${activeList.map(r => _renderReminderListRow(r)).join('')}
+          </div>
+        ` : ''}
+      `}
 
       ${completedList.length > 0 ? `
         <details class="mt-4">
@@ -983,12 +1063,13 @@ function _formatLastSent(isoString) {
   return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${timeStr}`;
 }
 
-// Clean row identical to Splitwise: No arrow ">", No DONE button. Shows status & repeat tags.
+// Clean row identical to Splitwise: Prominent Favorite button, quick pause/resume, status & repeat tags.
 function _renderReminderListRow(r) {
   const dt = new Date(r.datetime);
   const status = getReminderStatus(r);
   const repeatLabel = getReminderRepeatLabel(r);
   const alertInfo = getAlertStyleInfo(r.alertStyle);
+  const isFav = Boolean(r.favorite || r.favourite);
 
   const dateLabel = dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
   const timeLabel = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
@@ -996,19 +1077,47 @@ function _renderReminderListRow(r) {
   const lastSentFormatted = _formatLastSent(r.lastSentAt || (r.notified ? r.datetime : null));
 
   return `
-    <div onclick="openRemindersOverlay('${r.id}')" class="p-3.5 rounded-xl border border-slate-100 bg-white shadow-sm cursor-pointer hover:bg-slate-50 transition">
+    <div onclick="openRemindersOverlay('${r.id}')" class="p-3.5 rounded-xl border ${isFav ? 'border-amber-300 bg-amber-50/30' : 'border-slate-100 bg-white'} shadow-sm cursor-pointer hover:bg-slate-50 transition relative">
       <div class="space-y-1.5">
-        <div class="flex items-center gap-1.5 flex-wrap">
-          <p class="text-xs font-bold text-slate-800 ${r.completed ? 'line-through text-slate-400' : ''}">
-            ${_escapeHtml(r.title)}
-          </p>
-          <span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold ${status.badgeClass}">${status.label}</span>
-          ${(r.alertMode !== 'notification') ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-100 text-[9px] font-bold"><i class="fa-solid fa-bell text-[8px] mr-1 text-rose-500"></i>Phone Alarm</span>` : `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 text-[9px] font-medium"><i class="fa-regular fa-bell text-[8px] mr-1 text-blue-500"></i>Notification</span>`}
-          ${r.repeat && r.repeat !== 'None' ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100 text-[9px] font-medium"><i class="fa-solid fa-repeat text-[8px] mr-1"></i>${repeatLabel}</span>` : ''}
-          ${r.alertStyle === 'sound_only' ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-100 text-[9px] font-medium"><i class="fa-solid fa-volume-high text-[8px] mr-1"></i>Sound Only</span>` : ''}
-          ${r.alertStyle === 'banner_only' ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 text-[9px] font-medium"><i class="fa-solid fa-message text-[8px] mr-1"></i>Banner Only</span>` : ''}
-          ${r.quietHoursEnabled ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100 text-[9px] font-medium"><i class="fa-solid fa-moon text-[8px] mr-1"></i>Quiet: ${_formatTime12h(r.quietStart || '22:00')} - ${_formatTime12h(r.quietEnd || '07:00')}</span>` : ''}
+        <div class="flex items-start justify-between gap-2">
+          <div class="flex items-center gap-1.5 flex-wrap min-w-0 flex-1">
+            ${isFav ? `
+              <span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 text-[9px] font-bold">
+                <i class="fa-solid fa-star text-[8px] mr-1 text-amber-500"></i>Favorite
+              </span>
+            ` : ''}
+            <p class="text-xs font-bold text-slate-800 truncate ${r.completed ? 'line-through text-slate-400' : ''}">
+              ${_escapeHtml(r.title)}
+            </p>
+            <span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold ${status.badgeClass}">${status.label}</span>
+            ${(r.alertMode !== 'notification') ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-100 text-[9px] font-bold"><i class="fa-solid fa-bell text-[8px] mr-1 text-rose-500"></i>Phone Alarm</span>` : `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 text-[9px] font-medium"><i class="fa-regular fa-bell text-[8px] mr-1 text-blue-500"></i>Notification</span>`}
+            ${r.repeat && r.repeat !== 'None' ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100 text-[9px] font-medium"><i class="fa-solid fa-repeat text-[8px] mr-1"></i>${repeatLabel}</span>` : ''}
+            ${r.alertStyle === 'sound_only' ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-100 text-[9px] font-medium"><i class="fa-solid fa-volume-high text-[8px] mr-1"></i>Sound Only</span>` : ''}
+            ${r.alertStyle === 'banner_only' ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 text-[9px] font-medium"><i class="fa-solid fa-message text-[8px] mr-1"></i>Banner Only</span>` : ''}
+            ${r.quietHoursEnabled ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100 text-[9px] font-medium"><i class="fa-solid fa-moon text-[8px] mr-1"></i>Quiet: ${_formatTime12h(r.quietStart || '22:00')} - ${_formatTime12h(r.quietEnd || '07:00')}</span>` : ''}
+          </div>
+
+          <!-- Quick Action Controls: Prominent Fav Button & Pause/Resume -->
+          <div class="flex items-center gap-1.5 shrink-0" onclick="event.stopPropagation()">
+            <button type="button" onclick="toggleReminderFavorite('${r.id}')"
+                    class="h-7 px-2 rounded-lg border ${isFav ? 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100' : 'border-slate-200 bg-slate-50 text-slate-500 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-600'} flex items-center gap-1 text-[10px] font-bold transition shadow-xs"
+                    title="${isFav ? 'Favorited (tap to unpin)' : 'Mark as favorite (pin to top)'}"
+                    aria-label="${isFav ? 'Favorited (tap to unpin)' : 'Mark as favorite (pin to top)'}">
+              <i class="fa-${isFav ? 'solid' : 'regular'} fa-star text-[10px] ${isFav ? 'text-amber-500' : 'text-slate-400'}"></i>
+              <span>${isFav ? 'Fav' : 'Fav'}</span>
+            </button>
+            ${!r.completed ? `
+              <button type="button" onclick="togglePauseReminder('${r.id}')"
+                      class="h-7 px-2 rounded-lg border ${r.paused ? 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'border-slate-200 bg-slate-50 text-slate-500 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-600'} flex items-center gap-1 text-[10px] font-bold transition shadow-xs"
+                      title="${r.paused ? 'Resume reminder' : 'Pause reminder'}"
+                      aria-label="${r.paused ? 'Resume reminder' : 'Pause reminder'}">
+                <i class="fa-solid ${r.paused ? 'fa-play' : 'fa-pause'} text-[9px] ${r.paused ? 'text-emerald-600' : 'text-slate-400'}"></i>
+                <span>${r.paused ? 'Resume' : 'Pause'}</span>
+              </button>
+            ` : ''}
+          </div>
         </div>
+
         <div class="flex items-center justify-between text-[10px] text-slate-400 gap-2 flex-wrap pt-0.5">
           <p class="truncate min-w-0">
             <i class="fa-regular fa-clock text-[9px] mr-1 text-slate-400"></i>${r.completed ? 'Was' : 'Next'}: ${dateLabel} at ${timeLabel}
@@ -1061,6 +1170,7 @@ function renderReminderDetailView(id) {
   const timeFormatted = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   const repeatLabel = getReminderRepeatLabel(rem);
   const alertInfo = getAlertStyleInfo(rem.alertStyle);
+  const isFav = Boolean(rem.favorite || rem.favourite);
 
   content.innerHTML = `
     <!-- Top Action Row: Test Alert button & Edit Pencil in top right matching edit page -->
@@ -1069,6 +1179,10 @@ function renderReminderDetailView(id) {
       <div class="flex items-center gap-1.5">
         <button type="button" onclick="testSpecificReminderAlert('${rem.id}')" class="px-2.5 py-1 text-[10px] font-bold bg-indigo-50 text-indigo-600 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition flex items-center gap-1 shadow-xs">
           <i class="fa-solid fa-play text-[8px]"></i> Test Alert
+        </button>
+        <button type="button" onclick="toggleReminderFavorite('${rem.id}')" class="px-2.5 py-1 text-[10px] font-bold ${isFav ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-slate-100 text-slate-600 border border-slate-200 hover:bg-amber-50 hover:text-amber-700'} rounded-lg transition flex items-center gap-1 shadow-xs" title="${isFav ? 'Remove from favorites' : 'Mark as favorite'}">
+          <i class="fa-solid fa-star ${isFav ? 'text-amber-500' : 'text-slate-400'} text-[9px]"></i>
+          <span>${isFav ? 'Favorited' : 'Favorite'}</span>
         </button>
         <button type="button" onclick="renderReminderFormView('${rem.id}')" class="w-7 h-7 bg-slate-100 text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-200 transition flex items-center justify-center shadow-xs" title="Edit reminder" aria-label="Edit reminder">
           <i class="fa-solid fa-pencil text-[10px]"></i>
@@ -1082,7 +1196,12 @@ function renderReminderDetailView(id) {
         <div class="w-12 h-12 rounded-xl ${rem.completed ? 'bg-slate-100 text-slate-500' : rem.paused ? 'bg-amber-50 text-amber-600' : status.key === 'overdue' ? 'bg-rose-50 text-rose-600' : 'bg-blue-50 text-blue-600'} flex items-center justify-center text-xl shrink-0">
           <i class="fa-solid ${rem.alertStyle === 'sound_only' ? 'fa-volume-high' : 'fa-bell'}"></i>
         </div>
-        <div class="flex items-center gap-1.5">
+        <div class="flex items-center gap-1.5 flex-wrap justify-end">
+          ${isFav ? `
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1">
+              <i class="fa-solid fa-star text-[9px] text-amber-500"></i>Favorite
+            </span>
+          ` : ''}
           <span class="text-[10px] font-bold px-2.5 py-1 rounded-full ${status.badgeClass}">${status.label}</span>
         </div>
       </div>
@@ -1160,6 +1279,23 @@ function renderReminderDetailView(id) {
           <span class="text-[9px] bg-indigo-100 text-indigo-800 font-bold px-2 py-0.5 rounded-full">Alarms Muted</span>
         </div>
       ` : ''}
+
+      <!-- Favorite Status Row -->
+      <div class="p-2.5 rounded-xl ${isFav ? 'bg-amber-50/70 border border-amber-200' : 'bg-slate-50 border border-slate-100'} flex items-center justify-between text-xs">
+        <div class="flex items-center gap-2">
+          <div class="w-6 h-6 rounded-lg ${isFav ? 'bg-amber-100 text-amber-600' : 'bg-slate-200 text-slate-500'} flex items-center justify-center text-[10px]">
+            <i class="fa-solid fa-star"></i>
+          </div>
+          <div>
+            <p class="text-[10px] ${isFav ? 'text-amber-700 font-bold' : 'text-slate-400 font-medium'}">Favorite Status</p>
+            <p class="font-bold ${isFav ? 'text-amber-900' : 'text-slate-700'}">${isFav ? 'Pinned to top of list' : 'Standard priority'}</p>
+          </div>
+        </div>
+        <button type="button" onclick="toggleReminderFavorite('${rem.id}')" class="px-2.5 py-1 ${isFav ? 'bg-white border border-amber-300 text-amber-800 hover:bg-amber-100' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'} rounded-lg text-[10px] font-bold transition flex items-center gap-1 shadow-xs">
+          <i class="fa-${isFav ? 'solid' : 'regular'} fa-star text-[9px] ${isFav ? 'text-amber-500' : 'text-slate-400'}"></i>
+          <span>${isFav ? 'Unpin' : 'Pin to Top'}</span>
+        </button>
+      </div>
 
       <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between text-xs">
         <span class="text-[10px] text-slate-400 font-medium">Last Reminder Sent</span>
@@ -1254,6 +1390,29 @@ async function _cancelNativeAlarmAndNotification(id) {
   } catch (e) {}
 }
 
+async function toggleReminderFavorite(id) {
+  const rem = (appData.reminders || []).find(r => r.id === id);
+  if (!rem) return;
+
+  const isFav = !(rem.favorite || rem.favourite);
+  rem.favorite = isFav;
+  rem.favourite = isFav;
+
+  await saveState();
+
+  let currentView = 'list';
+  try {
+    const s = JSON.parse(localStorage.getItem(REMINDERS_UI_STATE_KEY) || '{}');
+    if (s.view) currentView = s.view;
+  } catch (e) {}
+
+  if (currentView === 'detail') {
+    renderReminderDetailView(id);
+  } else {
+    renderRemindersListView();
+  }
+}
+
 async function togglePauseReminder(id) {
   const rem = (appData.reminders || []).find(r => r.id === id);
   if (!rem) return;
@@ -1268,15 +1427,13 @@ async function togglePauseReminder(id) {
     if (modal) modal.remove();
     await _cancelNativeAlarmAndNotification(id);
   } else {
-    // If enabling and datetime is in past, advance or re-arm
+    // When resumed: next timer should happen after current time + recurrence duration
     const now = new Date();
-    if (new Date(rem.datetime) <= now) {
-      if (rem.repeat && rem.repeat !== 'None') {
-        rem.datetime = _calculateNextReminderDatetime(rem.datetime, rem.repeat, rem.customInterval, rem.customUnit);
-      } else {
-        // Advance to 10 mins from now
-        const nextDt = new Date();
-        nextDt.setMinutes(nextDt.getMinutes() + 10);
+    if (rem.repeat && rem.repeat !== 'None') {
+      rem.datetime = _calculateNextReminderDatetime(now, rem.repeat, rem.customInterval, rem.customUnit);
+    } else {
+      if (new Date(rem.datetime) <= now) {
+        const nextDt = new Date(now.getTime() + 10 * 60000);
         rem.datetime = _toLocalDatetimeString(nextDt);
       }
     }
@@ -1285,8 +1442,22 @@ async function togglePauseReminder(id) {
   }
 
   await saveState();
-  renderReminderDetailView(id);
+
+  let currentView = 'list';
+  try {
+    const s = JSON.parse(localStorage.getItem(REMINDERS_UI_STATE_KEY) || '{}');
+    if (s.view) currentView = s.view;
+  } catch (e) {}
+
+  if (currentView === 'detail') {
+    renderReminderDetailView(id);
+  } else {
+    renderRemindersListView();
+  }
 }
+
+window.toggleReminderFavorite = toggleReminderFavorite;
+window.togglePauseReminder = togglePauseReminder;
 
 async function markReminderCompleted(id) {
   const rem = (appData.reminders || []).find(r => r.id === id);
@@ -1408,6 +1579,7 @@ function renderReminderFormView(editId = null) {
   const quietHoursEnabled = existing ? !!existing.quietHoursEnabled : false;
   const quietStart = existing ? (existing.quietStart || '22:00') : '22:00';
   const quietEnd = existing ? (existing.quietEnd || '07:00') : '07:00';
+  const isFavorite = existing ? Boolean(existing.favorite || existing.favourite) : false;
 
   content.innerHTML = `
     <div class="space-y-4">
@@ -1453,6 +1625,23 @@ function renderReminderFormView(editId = null) {
         <div>
           <label class="text-[11px] font-semibold text-slate-500 block mb-1">Reminder Title *</label>
           <input type="text" required id="reminderTitle" oninput="updateReminderPreview()" value="${existing ? _escapeAttr(existing.title) : ''}" placeholder="e.g. Drink water, Pay credit card bill, Take medicine" class="w-full text-xs p-3 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-slate-50/50 font-medium">
+        </div>
+
+        <!-- Favorite Reminder Toggle -->
+        <div class="p-3 bg-amber-50/60 rounded-xl border border-amber-200/80 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <div class="w-7 h-7 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center text-xs">
+              <i class="fa-solid fa-star"></i>
+            </div>
+            <div>
+              <label for="reminderFavoriteToggle" class="text-xs font-bold text-slate-800 cursor-pointer">Favorite Reminder</label>
+              <p class="text-[10px] text-slate-400">Pin reminder to top of the list</p>
+            </div>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" id="reminderFavoriteToggle" ${isFavorite ? 'checked' : ''} class="sr-only peer">
+            <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500"></div>
+          </label>
         </div>
 
         <div>
@@ -2243,6 +2432,9 @@ async function handleSaveReminderSubmit(e, editId) {
   const quietEndEl = document.getElementById('reminderQuietEnd');
   const quietEnd = quietEndEl ? quietEndEl.value : '07:00';
 
+  const favToggle = document.getElementById('reminderFavoriteToggle');
+  const isFavorite = favToggle ? favToggle.checked : false;
+
   let customInterval = 15;
   let customUnit = 'minutes';
   if (repeat === 'Custom') {
@@ -2262,6 +2454,8 @@ async function handleSaveReminderSubmit(e, editId) {
     if (rem) {
       rem.title = title;
       rem.datetime = datetime;
+      rem.favorite = isFavorite;
+      rem.favourite = isFavorite;
       rem.repeat = repeat;
       rem.customInterval = customInterval;
       rem.customUnit = customUnit;
@@ -2282,6 +2476,8 @@ async function handleSaveReminderSubmit(e, editId) {
       id: 'rem_' + Date.now(),
       title,
       datetime,
+      favorite: isFavorite,
+      favourite: isFavorite,
       repeat,
       customInterval,
       customUnit,
@@ -2358,13 +2554,117 @@ async function _ensureNativePermissions() {
   } catch (e) {}
 }
 
-function startReminderEngine() {
+function _isNativeApp() {
+  return typeof Capacitor !== 'undefined' &&
+         typeof Capacitor.isNativePlatform === 'function' &&
+         Capacitor.isNativePlatform();
+}
+
+async function _syncRemindersWithNative() {
+  if (!_isNativeApp() || !Capacitor.Plugins || !Capacitor.Plugins.AlarmPlugin) {
+    _catchUpPastRecurringReminders();
+    return;
+  }
+  try {
+    const res = await Capacitor.Plugins.AlarmPlugin.getPendingAlarms();
+    const nativeAlarms = (res && Array.isArray(res.alarms)) ? res.alarms : [];
+    let changed = false;
+    const now = new Date();
+
+    (appData.reminders || []).forEach(rem => {
+      if (rem.paused || rem.completed) return;
+      const found = nativeAlarms.find(a => a.id === rem.id);
+      if (found) {
+        if (found.lastTriggeredAt) {
+          rem.lastSentAt = new Date(found.lastTriggeredAt).toISOString();
+        }
+        if (found.completed) {
+          rem.completed = true;
+          rem.notified = true;
+          changed = true;
+        } else if (found.timestamp && rem.repeat && rem.repeat !== 'None') {
+          const nativeDt = new Date(found.timestamp);
+          const nativeDtStr = _toLocalDatetimeString(nativeDt);
+          if (rem.datetime !== nativeDtStr) {
+            rem.datetime = nativeDtStr;
+            rem.notified = false;
+            changed = true;
+          }
+        } else if (!rem.repeat || rem.repeat === 'None') {
+          let dt = new Date(rem.datetime);
+          if (dt <= now || found.lastTriggeredAt) {
+            rem.completed = true;
+            rem.notified = true;
+            changed = true;
+          }
+        }
+      } else {
+        // Not found in native pending alarms:
+        let dt = new Date(rem.datetime);
+        if (dt <= now) {
+          if (rem.repeat && rem.repeat !== 'None') {
+            while (dt <= now) {
+              rem.datetime = _calculateNextReminderDatetime(rem.datetime, rem.repeat, rem.customInterval, rem.customUnit);
+              dt = new Date(rem.datetime);
+            }
+            rem.notified = false;
+            changed = true;
+            _scheduleNativeNotification(rem);
+          } else {
+            rem.completed = true;
+            rem.notified = true;
+            changed = true;
+          }
+        }
+      }
+    });
+
+    if (changed) {
+      await saveState();
+      renderRemindersListView();
+    }
+  } catch (e) {
+    console.warn('Could not sync with native alarms:', e);
+    _catchUpPastRecurringReminders();
+  }
+}
+
+function _catchUpPastRecurringReminders() {
+  if (!appData.reminders || appData.reminders.length === 0) return;
+  const now = new Date();
+  let changed = false;
+  appData.reminders.forEach(rem => {
+    if (rem.paused || rem.completed) return;
+    let dt = new Date(rem.datetime);
+    if (dt <= now) {
+      if (rem.repeat && rem.repeat !== 'None') {
+        while (dt <= now) {
+          rem.datetime = _calculateNextReminderDatetime(rem.datetime, rem.repeat, rem.customInterval, rem.customUnit);
+          dt = new Date(rem.datetime);
+        }
+        rem.notified = false;
+        changed = true;
+      } else {
+        rem.completed = true;
+        rem.notified = true;
+        changed = true;
+      }
+    }
+  });
+  if (changed) {
+    saveState();
+    renderRemindersListView();
+  }
+}
+
+async function startReminderEngine() {
   if (_reminderCheckInterval) return;
   _ensureNativePermissions();
   _ensureNativeNotificationChannel();
   _setupNativeNotificationClickListener();
   _setupNativeAlarmListener();
   _syncAllCustomSoundsToNative();
+  await _syncRemindersWithNative();
   _rescheduleAllActiveReminders();
 
   _reminderCheckInterval = setInterval(_checkAndFireReminders, 5000);
@@ -2374,6 +2674,7 @@ function startReminderEngine() {
 function _checkAndFireReminders() {
   if (!appData.reminders || appData.reminders.length === 0) return;
   const now = new Date();
+  const isNative = _isNativeApp();
   let changed = false;
 
   appData.reminders.forEach(r => {
@@ -2382,24 +2683,37 @@ function _checkAndFireReminders() {
 
     const dt = new Date(r.datetime);
     if (dt <= now) {
-      // Check Quiet Hours / Do Not Disturb
+      if (isNative) {
+        // ON NATIVE ANDROID:
+        // Native AlarmReceiver is the sole authority for firing exact alarms and notification banners.
+        // If a reminder datetime is in the past, Android AlarmManager ALREADY fired it!
+        // We MUST NOT play duplicate audio, speech, or popups when opening/resuming the app.
+        if (r.repeat && r.repeat !== 'None') {
+          while (dt <= now) {
+            r.datetime = _calculateNextReminderDatetime(r.datetime, r.repeat, r.customInterval, r.customUnit);
+            dt = new Date(r.datetime);
+          }
+          r.notified = false;
+        } else {
+          r.completed = true;
+          r.notified = true;
+        }
+        changed = true;
+        return;
+      }
+
+      // Check Quiet Hours / Do Not Disturb (Web browser only)
       const isQuiet = r.quietHoursEnabled && _isTimeInQuietHours(now, r.quietStart, r.quietEnd);
 
       if (isQuiet) {
-        // Between quiet hours timeframe: suppress all alarm sound & disturbance!
         console.log(`[Reminders] Quiet hours active for "${r.title}". Alarm sound suppressed.`);
-
         if (r.repeat && r.repeat !== 'None') {
-          // Recurring: silently advance to next interval without disturbing the user
           r.datetime = _calculateNextReminderDatetime(r.datetime, r.repeat, r.customInterval, r.customUnit);
           r.notified = false;
-          _scheduleNativeNotification(r);
         } else {
-          // One-time: postpone until quiet hours end so user is notified when they wake up
           const endDt = _calculateQuietHoursEndTime(now, r.quietEnd);
           r.datetime = _toLocalDatetimeString(endDt);
           r.notified = false;
-          _scheduleNativeNotification(r);
         }
         changed = true;
         return;
@@ -2407,21 +2721,21 @@ function _checkAndFireReminders() {
 
       r.lastSentAt = now.toISOString();
       const isAlarm = (r.alertMode || 'alarm') !== 'notification';
+      const diffMs = now.getTime() - dt.getTime();
+      // On web browser: only fire in-app sounds if triggered in real-time (within 15 seconds)
+      const isFresh = diffMs < 15000;
 
       if (isAlarm) {
-        // Real Phone Alarm mode:
         r.notified = true;
         changed = true;
-
-        // Show full-screen alarm screen with continuous custom audio loop in foreground / browser!
-        _showInAppAlarmModal(r);
+        if (isFresh) {
+          _showInAppAlarmModal(r);
+        }
       } else {
-        // Standard notification mode:
         const style = r.alertStyle || 'both';
         const isAppOpen = (typeof document !== 'undefined' && document.visibilityState === 'visible');
 
-        if (isAppOpen) {
-          // If speakTitle is enabled: play ONLY speech, NOT notification sound!
+        if (isAppOpen && isFresh) {
           if (r.speakTitle) {
             speakReminderTitle(r.title);
           } else if (style !== 'banner_only') {
@@ -2430,9 +2744,7 @@ function _checkAndFireReminders() {
           if (style !== 'sound_only') {
             _showInAppAlertBanner(r.title, r.note, r.id);
           }
-        } else {
-          // When app is closed / background:
-          // 1. Play speech or sound if 'both' or 'sound_only'
+        } else if (!isAppOpen) {
           if (style === 'both' || style === 'sound_only') {
             if (r.speakTitle) {
               speakReminderTitle(r.title);
@@ -2440,18 +2752,14 @@ function _checkAndFireReminders() {
               playReminderSound(r.sound || 'default');
             }
           }
-
-          // 2. Dispatch banner if 'both' or 'banner_only'
           if (style === 'both' || style === 'banner_only') {
             _fireBrowserNotification(r);
           }
         }
 
-        // 3. Recurrence calculation vs one-time
         if (r.repeat && r.repeat !== 'None') {
           r.datetime = _calculateNextReminderDatetime(r.datetime, r.repeat, r.customInterval, r.customUnit);
           r.notified = false;
-          _scheduleNativeNotification(r);
         } else {
           r.notified = true;
         }
@@ -2474,8 +2782,36 @@ function _checkAndFireReminders() {
 
 // --------------- In-App Alert Banner & Browser Notifications -------------
 
-function _showInAppAlertBanner(title, body, reminderId) {
+let _inAppBannerDismissTimeout = null;
+
+function _showInAppAlertBanner(titleOrOpts, body, reminderId, durationMs = 5000) {
   try {
+    // Support either positional args (title, body, reminderId, durationMs)
+    // or options object: { title, body, message, reminderId, durationMs, icon, badgeText, onClick }
+    let title = 'Reminder';
+    let iconClass = 'fa-solid fa-bell';
+    let badgeText = 'Reminder Alert';
+    let onClickFn = null;
+
+    if (titleOrOpts && typeof titleOrOpts === 'object') {
+      const opts = titleOrOpts;
+      title = opts.title || 'Notification';
+      body = opts.body || opts.message || '';
+      reminderId = opts.reminderId || null;
+      durationMs = typeof opts.durationMs === 'number' ? opts.durationMs : 5000;
+      if (opts.icon) iconClass = opts.icon;
+      if (opts.badgeText) badgeText = opts.badgeText;
+      if (typeof opts.onClick === 'function') onClickFn = opts.onClick;
+    } else {
+      title = titleOrOpts || 'Reminder';
+      durationMs = typeof durationMs === 'number' ? durationMs : 5000;
+    }
+
+    if (_inAppBannerDismissTimeout) {
+      clearTimeout(_inAppBannerDismissTimeout);
+      _inAppBannerDismissTimeout = null;
+    }
+
     const existing = document.getElementById('inAppReminderAlertBanner');
     if (existing) existing.remove();
 
@@ -2485,19 +2821,32 @@ function _showInAppAlertBanner(title, body, reminderId) {
     banner.style.top = 'max(20px, calc(env(safe-area-inset-top, 0px) + 14px))';
     banner.className = 'fixed left-3 right-3 max-w-md mx-auto z-[9999] select-none transition-all duration-300 ease-out -translate-y-8 opacity-0 scale-95 pointer-events-auto';
 
+    function dismissBanner() {
+      if (_inAppBannerDismissTimeout) {
+        clearTimeout(_inAppBannerDismissTimeout);
+        _inAppBannerDismissTimeout = null;
+      }
+      if (banner && banner.parentNode) {
+        banner.classList.remove('translate-y-0', 'opacity-100', 'scale-100');
+        banner.classList.add('-translate-y-8', 'opacity-0', 'scale-95');
+        setTimeout(() => {
+          if (banner && banner.parentNode) banner.remove();
+        }, 250);
+      }
+    }
+
     banner.innerHTML = `
-      <div class="relative overflow-hidden rounded-2xl bg-slate-900/95 text-white p-3.5 shadow-2xl border border-slate-700/80 backdrop-blur-xl flex flex-col gap-2 cursor-pointer active:scale-[0.99] transition"
-           onclick="${reminderId ? `openRemindersOverlay('${reminderId}')` : `openRemindersOverlay('list')`}; document.getElementById('inAppReminderAlertBanner')?.remove();">
+      <div id="inAppBannerCard" class="relative overflow-hidden rounded-2xl bg-slate-900/95 text-white p-3.5 shadow-2xl border border-slate-700/80 backdrop-blur-xl flex flex-col gap-2 cursor-pointer active:scale-[0.99] transition">
         <div class="flex items-center gap-3">
-          <!-- Glowing Icon Badge with animated bell -->
+          <!-- Glowing Icon Badge with animated icon -->
           <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white text-base shrink-0 shadow-lg shadow-blue-500/30">
-            <i class="fa-solid fa-bell animate-bounce text-sm"></i>
+            <i class="${iconClass} animate-bounce text-sm"></i>
           </div>
 
           <!-- Title and Note -->
           <div class="flex-1 min-w-0">
             <div class="flex items-center justify-between gap-1">
-              <span class="text-[9px] font-extrabold uppercase tracking-widest text-blue-400 font-mono">Reminder Alert</span>
+              <span class="text-[9px] font-extrabold uppercase tracking-widest text-blue-400 font-mono">${_escapeHtml(badgeText)}</span>
               <span class="text-[9px] text-slate-400">Just now</span>
             </div>
             <p class="text-xs font-bold text-white mt-0.5 truncate leading-tight">${_escapeHtml(title || 'Reminder')}</p>
@@ -2505,24 +2854,47 @@ function _showInAppAlertBanner(title, body, reminderId) {
           </div>
 
           <!-- Close button -->
-          <button type="button"
-                  onclick="event.stopPropagation(); document.getElementById('inAppReminderAlertBanner')?.remove();"
+          <button type="button" id="inAppBannerCloseBtn"
                   class="w-7 h-7 rounded-full bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center shrink-0 transition"
                   aria-label="Dismiss">
             <i class="fa-solid fa-xmark text-xs"></i>
           </button>
         </div>
 
-        <!-- Animated Progress / Auto-Dismiss Countdown Bar (2.7s) -->
+        <!-- Animated Progress / Auto-Dismiss Countdown Bar (5.0s) -->
         <div class="w-full h-1 bg-slate-800/80 rounded-full overflow-hidden">
-          <div id="inAppBannerProgress" class="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 rounded-full w-full transition-all duration-[2700ms] ease-linear"></div>
+          <div id="inAppBannerProgress" class="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 rounded-full w-full" style="transition: width ${durationMs}ms linear;"></div>
         </div>
       </div>
     `;
 
     document.body.appendChild(banner);
 
-    // Smooth Entrance Animation
+    // Event listeners
+    const cardEl = banner.querySelector('#inAppBannerCard');
+    const closeBtn = banner.querySelector('#inAppBannerCloseBtn');
+
+    if (closeBtn) {
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dismissBanner();
+      });
+    }
+
+    if (cardEl) {
+      cardEl.addEventListener('click', () => {
+        if (onClickFn) {
+          try { onClickFn(); } catch (e) { console.warn(e); }
+        } else if (reminderId) {
+          if (typeof openRemindersOverlay === 'function') openRemindersOverlay(reminderId);
+        } else {
+          if (typeof openRemindersOverlay === 'function') openRemindersOverlay('list');
+        }
+        dismissBanner();
+      });
+    }
+
+    // Smooth Entrance Animation & Countdown Progress Bar
     requestAnimationFrame(() => {
       banner.classList.remove('-translate-y-8', 'opacity-0', 'scale-95');
       banner.classList.add('translate-y-0', 'opacity-100', 'scale-100');
@@ -2535,19 +2907,18 @@ function _showInAppAlertBanner(title, body, reminderId) {
       }
     });
 
-    // Auto-dismiss smoothly in 2.8 seconds (2-3 seconds)
-    setTimeout(() => {
-      if (banner && banner.parentNode) {
-        banner.classList.remove('translate-y-0', 'opacity-100', 'scale-100');
-        banner.classList.add('-translate-y-8', 'opacity-0', 'scale-95');
-        setTimeout(() => {
-          if (banner && banner.parentNode) banner.remove();
-        }, 250);
-      }
-    }, 2800);
+    // Auto-dismiss smoothly after durationMs (default 5000ms = 5 sec)
+    _inAppBannerDismissTimeout = setTimeout(() => {
+      dismissBanner();
+    }, durationMs);
   } catch (e) {
     console.warn('Could not display in-app alert banner:', e);
   }
+}
+
+// Global helper so any feature in the app can display dynamic 5-second notifications
+if (typeof window !== 'undefined') {
+  window.showDynamicInAppNotification = _showInAppAlertBanner;
 }
 
 // Service worker message receiver to open reminder on notification click
@@ -2610,7 +2981,7 @@ function _directWebNotificationFallback(title, body, reminderId) {
       icon: './icons/icon-192.png',
       badge: './icons/icon-192.png',
       tag: reminderId || undefined,
-      requireInteraction: true,
+      requireInteraction: false,
       vibrate: [300, 100, 300]
     });
     notif.onclick = () => {
@@ -2619,6 +2990,10 @@ function _directWebNotificationFallback(title, body, reminderId) {
       else openRemindersOverlay('list');
       notif.close();
     };
+    // Auto-dismiss web notification after 5 seconds
+    setTimeout(() => {
+      try { notif.close(); } catch (e) {}
+    }, 5000);
   } catch (err) {
     console.warn('Direct web notification fallback error:', err);
   }
@@ -2789,18 +3164,22 @@ function _setupNativeAlarmListener() {
           rem.notified = true;
         }
         await saveState();
-        const style = rem.alertStyle || 'both';
-        if (rem.speakTitle) {
-          // If text-to-speech enabled, play ONLY text-to-speech, NOT notification chime!
-          speakReminderTitle(rem.title);
-        } else if (style !== 'banner_only') {
-          playReminderSound(rem.sound || 'default');
-        }
-        if (style !== 'sound_only') {
-          _showInAppAlertBanner(rem.title, rem.note, rem.id);
+        // Native AlarmReceiver has already displayed the native notification banner and played audio
+        // according to alertStyle ('both' / 'sound_only' / 'banner_only').
+        const overlay = document.getElementById('remindersOverlay');
+        if (overlay && !overlay.classList.contains('hidden')) {
+          renderRemindersListView();
         }
       }
     });
+
+    if (Capacitor.Plugins.App) {
+      Capacitor.Plugins.App.addListener('appStateChange', async (state) => {
+        if (state && state.isActive) {
+          await _syncRemindersWithNative();
+        }
+      });
+    }
   } catch (e) {
     console.warn('Failed to register native alarm listeners:', e);
   }

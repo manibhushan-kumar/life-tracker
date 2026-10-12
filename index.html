@@ -369,6 +369,13 @@
     <div id="remindersOverlayContent" class="flex-1 overflow-y-auto p-4 space-y-3 max-w-md mx-auto w-full"></div>
   </div>
 
+  <!-- Firebase SDK (v10 compat: app, auth, realtime database) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+  <script src="./js/firebase-config.js"></script>
+  <script src="./js/firebase-service.js"></script>
+
   <script src="./js/config.js"></script>
   <script src="./js/ui-dialogs.js"></script>
   <script src="./js/data-model.js"></script>
@@ -382,7 +389,7 @@
   <script src="./js/loans.js"></script>
   <script src="./js/timezone-data.js"></script>
   <script src="./js/world-clock.js"></script>
-  <script src="./js/reminders.js"></script>
+  <script src="./js/reminders.js?v=81"></script>
   <script src="./js/pdf-writer.js"></script>
   <script src="./js/pdf-report-data.js"></script>
   <script src="./js/pdf-report.js"></script>
@@ -404,6 +411,9 @@
   <script src="./js/games/sliding-puzzle.js"></script>
   <script src="./js/games/bomb-defusal.js"></script>
   <script src="./js/games/memory-match.js"></script>
+  <script src="./js/games/sudoku.js"></script>
+  <script src="./js/games/ludo-service.js"></script>
+  <script src="./js/games/ludo.js"></script>
 
   <script>
     // --- Application State ---
