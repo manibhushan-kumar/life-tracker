@@ -49,15 +49,24 @@
           setTimeout(() => playTone(300 + Math.random() * 200, 0.04, 'triangle', 0.1), i * 50);
         }
       },
-      hop: () => playTone(600, 0.05, 'sine', 0.12),
+      hop: (pitch = 600) => playTone(pitch, 0.05, 'sine', 0.13),
       capture: () => {
-        playTone(220, 0.1, 'sawtooth', 0.2);
-        setTimeout(() => playTone(440, 0.12, 'square', 0.15), 100);
+        playTone(220, 0.1, 'sawtooth', 0.22);
+        setTimeout(() => playTone(440, 0.14, 'square', 0.18), 90);
       },
       win: () => {
         [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
           setTimeout(() => playTone(f, 0.2, 'triangle', 0.2), i * 120);
         });
+      },
+      bonus: () => {
+        [659.25, 880, 1046.5].forEach((f, i) => {
+          setTimeout(() => playTone(f, 0.1, 'triangle', 0.16), i * 85);
+        });
+      },
+      noMove: () => {
+        playTone(280, 0.12, 'sawtooth', 0.09);
+        setTimeout(() => playTone(220, 0.14, 'sawtooth', 0.09), 110);
       }
     };
   })();
@@ -160,11 +169,19 @@
     blue:   { x: 300, y: 335 }
   };
 
+  // Dedicated finish slots inside the 4 center triangles (pos 56):
+  const FINISH_SLOTS = {
+    red:    [{ x: 254, y: 282 }, { x: 254, y: 318 }, { x: 274, y: 292 }, { x: 274, y: 308 }],
+    green:  [{ x: 282, y: 254 }, { x: 318, y: 254 }, { x: 292, y: 274 }, { x: 308, y: 274 }],
+    yellow: [{ x: 346, y: 282 }, { x: 346, y: 318 }, { x: 326, y: 292 }, { x: 326, y: 308 }],
+    blue:   [{ x: 282, y: 346 }, { x: 318, y: 346 }, { x: 292, y: 326 }, { x: 308, y: 326 }]
+  };
+
   const COLOR_PALETTE = {
-    red:    { primary: '#ef4444', dark: '#b91c1c', light: '#fee2e2', border: '#f87171', name: 'Red' },
-    green:  { primary: '#10b981', dark: '#047857', light: '#d1fae5', border: '#34d399', name: 'Green' },
-    yellow: { primary: '#f59e0b', dark: '#b45309', light: '#fef3c7', border: '#fbbf24', name: 'Yellow' },
-    blue:   { primary: '#3b82f6', dark: '#1d4ed8', light: '#dbeafe', border: '#60a5fa', name: 'Blue' }
+    red:    { primary: '#ef4444', dark: '#b91c1c', light: '#fee2e2', border: '#f87171', name: 'Red', emoji: '🔴', runwayBg: '#fff1f2', runwayBorder: '#fecdd3', runwayArrow: '#e11d48' },
+    green:  { primary: '#10b981', dark: '#047857', light: '#d1fae5', border: '#34d399', name: 'Green', emoji: '🟢', runwayBg: '#f0fdf4', runwayBorder: '#a7f3d0', runwayArrow: '#059669' },
+    yellow: { primary: '#f59e0b', dark: '#b45309', light: '#fef3c7', border: '#fbbf24', name: 'Yellow', emoji: '🟡', runwayBg: '#fffbeb', runwayBorder: '#fde68a', runwayArrow: '#d97706' },
+    blue:   { primary: '#3b82f6', dark: '#1d4ed8', light: '#dbeafe', border: '#60a5fa', name: 'Blue', emoji: '🔵', runwayBg: '#eff6ff', runwayBorder: '#bfdbfe', runwayArrow: '#2563eb' }
   };
 
   function getPlayerInfoByColor(color, session) {
@@ -361,6 +378,37 @@
   })();
   let _botTimer = null;
   let _isDiceRolling = false;
+  let _isAnimatingMove = false;
+  let _animatingToken = null; // { color, tokenIdx, currentStepPos, targetPos }
+  let _noMoveTimer = null;
+  let _lastEventBanner = null; // { text, tone, timeoutId }
+  let _systemPlayerColor = 'red';
+
+  function showLudoBanner(text, tone = 'amber', duration = 2600) {
+    if (_lastEventBanner && _lastEventBanner.timeoutId) {
+      clearTimeout(_lastEventBanner.timeoutId);
+    }
+    const timeoutId = setTimeout(() => {
+      _lastEventBanner = null;
+      const el = document.getElementById('ludoEventBanner');
+      if (el) el.classList.add('hidden');
+    }, duration);
+    _lastEventBanner = { text, tone, timeoutId };
+    const el = document.getElementById('ludoEventBanner');
+    if (el) {
+      el.className = `p-2.5 rounded-2xl text-xs font-black flex items-center justify-center gap-2 shadow-sm animate-fade-in ${
+        tone === 'capture'
+          ? 'bg-rose-500 text-white border-2 border-rose-300'
+          : tone === 'bonus'
+          ? 'bg-amber-500 text-white border-2 border-amber-300'
+          : tone === 'info'
+          ? 'bg-indigo-600 text-white border-2 border-indigo-400'
+          : 'bg-amber-100 text-amber-900 border border-amber-300'
+      }`;
+      el.innerHTML = text;
+      el.classList.remove('hidden');
+    }
+  }
 
   function setLudoSubView(view) {
     _ludoSubView = view;
@@ -388,6 +436,16 @@
       clearTimeout(_botTimer);
       _botTimer = null;
     }
+    if (_noMoveTimer) {
+      clearTimeout(_noMoveTimer);
+      _noMoveTimer = null;
+    }
+    if (_lastEventBanner && _lastEventBanner.timeoutId) {
+      clearTimeout(_lastEventBanner.timeoutId);
+      _lastEventBanner = null;
+    }
+    _isAnimatingMove = false;
+    _animatingToken = null;
     resetLudoZoomify();
     // Set user presence to offline when navigating away from Ludo
     if (window.LudoService) {
@@ -821,6 +879,18 @@
           </div>
 
           <div class="pt-1">
+            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Your Token Color</label>
+            <div class="grid grid-cols-4 gap-1.5 mb-2.5">
+              ${['red', 'green', 'yellow', 'blue'].map(c => `
+                <button type="button" onclick="selectSystemColor('${c}')"
+                        class="ludo-system-color-btn py-1.5 px-1 rounded-xl border flex flex-col items-center gap-0.5 transition ${c === _systemPlayerColor ? 'border-2 border-indigo-600 bg-indigo-50 font-black text-indigo-900 shadow-xs' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 font-bold'}"
+                        data-color="${c}">
+                  <span class="w-3.5 h-3.5 rounded-full shadow-xs" style="background-color: ${COLOR_PALETTE[c].primary}"></span>
+                  <span class="text-[9px] capitalize">${c}</span>
+                </button>
+              `).join('')}
+            </div>
+
             <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Select Number of Players</label>
             <div class="grid grid-cols-3 gap-2">
               <button type="button" onclick="startLudoSystemMode(2)" class="py-2.5 px-3 rounded-2xl border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-300 text-slate-800 text-xs font-bold transition flex flex-col items-center gap-0.5 shadow-xs">
@@ -869,14 +939,25 @@
     `;
   }
 
+  window.selectSystemColor = function (col) {
+    _systemPlayerColor = col;
+    document.querySelectorAll('.ludo-system-color-btn').forEach(b => {
+      const isCur = b.getAttribute('data-color') === col;
+      b.className = isCur
+        ? 'ludo-system-color-btn py-1.5 px-1 rounded-xl border-2 border-indigo-600 bg-indigo-50 font-black text-indigo-900 shadow-xs flex flex-col items-center gap-0.5 transition'
+        : 'ludo-system-color-btn py-1.5 px-1 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 font-bold flex flex-col items-center gap-0.5 transition';
+    });
+  };
+
   // --- 2. System Mode Launcher ---
-  window.startLudoSystemMode = async function (numPlayers = 2) {
+  window.startLudoSystemMode = async function (numPlayers = 2, humanColor = null) {
     if (!window.LudoService) return;
+    const chosenCol = humanColor || _systemPlayerColor || 'red';
     const active = window.LudoService.hasActiveSession();
     if (active && active.hasSession) {
       const startNew = () => {
         window.LudoService.abandonActiveSession();
-        window.LudoService.startSystemGame(numPlayers, 'red');
+        window.LudoService.startSystemGame(numPlayers, chosenCol);
         setLudoSubView('board');
         renderLudoGame(document.getElementById('mainContainer'));
       };
@@ -893,7 +974,7 @@
       }
       return;
     }
-    window.LudoService.startSystemGame(numPlayers, 'red');
+    window.LudoService.startSystemGame(numPlayers, chosenCol);
     setLudoSubView('board');
     renderLudoGame(document.getElementById('mainContainer'));
   };
@@ -1522,6 +1603,121 @@
   };
 
   // --- 5. Ludo Board View & Gameplay Logic ---
+  function renderLudoConsoleHud(game, session, turnColor, isMyTurn, diceVal, currentPalette, turnPlayerName, movableIndices, hasMovableTokens) {
+    const isHumanTurn = !session.isSpectator && isMyTurn;
+    const canRoll = isHumanTurn && !game.diceRolled && !_isDiceRolling && !_isAnimatingMove;
+    const tokens = (game.tokens && game.tokens[turnColor]) || [-1, -1, -1, -1];
+
+    let actionContent = '';
+
+    if (!game.diceRolled) {
+      if (isHumanTurn) {
+        actionContent = `
+          <div class="space-y-1">
+            <span class="text-xs font-black text-amber-600 flex items-center gap-1.5 animate-pulse">
+              <i class="fa-solid fa-hand-pointer text-xs"></i>
+              <span>Your Turn • Tap Dice to Roll!</span>
+            </span>
+            <p class="text-[10px] text-slate-500 font-medium leading-tight">Roll a 6 to release tokens from base, or advance active coins on track.</p>
+          </div>
+        `;
+      } else {
+        actionContent = `
+          <div class="space-y-1">
+            <span class="text-xs font-extrabold text-slate-600 flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-full animate-ping bg-indigo-500"></span>
+              <span>Waiting for ${turnPlayerName} to roll...</span>
+            </span>
+            <p class="text-[10px] text-slate-400 font-medium leading-tight">Watch live match moves as tokens hop across the track.</p>
+          </div>
+        `;
+      }
+    } else {
+      // Dice is rolled
+      if (hasMovableTokens) {
+        if (isHumanTurn) {
+          actionContent = `
+            <div class="space-y-1">
+              <span class="text-xs font-black text-slate-700 flex items-center gap-1.5">
+                <i class="fa-solid fa-hand-pointer text-amber-500 text-xs"></i>
+                <span>Tap your coin to move</span>
+              </span>
+              <p class="text-[10px] text-slate-400 font-medium leading-tight">Select any of your active coins on the board.</p>
+            </div>
+          `;
+        } else {
+          actionContent = `
+            <div class="space-y-1">
+              <span class="text-xs font-black text-slate-700 flex items-center gap-1.5">
+                <span>${turnPlayerName} rolled ${diceVal}! Moving token...</span>
+              </span>
+              <p class="text-[10px] text-slate-400 font-medium">Watching turn execution...</p>
+            </div>
+          `;
+        }
+      } else {
+        // Rolled but no moves available
+        const isAllLocked = tokens.every(p => p === -1);
+        actionContent = `
+          <div class="p-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-bold flex items-center justify-between gap-1.5">
+            <div class="flex items-center gap-1.5 min-w-0 truncate">
+              <i class="fa-solid fa-lock text-amber-600 text-xs shrink-0"></i>
+              <span class="truncate">${isAllLocked ? `Rolled ${diceVal} • Need a 6 to release from base!` : `Rolled ${diceVal} • No legal moves available.`}</span>
+            </div>
+            <span class="text-[9px] font-extrabold text-amber-600 whitespace-nowrap shrink-0">Passing turn...</span>
+          </div>
+        `;
+      }
+    }
+
+    return `
+      <div class="bg-white rounded-3xl p-3 sm:p-3.5 border border-slate-200 shadow-md space-y-2">
+        <div class="flex items-center justify-between gap-3">
+          <!-- Left: 3D Rolling Dice button -->
+          <div class="relative shrink-0">
+            <button type="button" id="ludoDiceBtn" onclick="handleDiceRollClick()"
+                    class="w-16 h-16 sm:w-20 sm:h-20 p-1 rounded-2xl shadow-lg border-2 flex items-center justify-center transition-all duration-200 active:scale-95 relative ${
+                      canRoll
+                        ? 'bg-gradient-to-br from-white via-amber-50 to-amber-100 border-amber-400 ring-4 ring-amber-300 ring-offset-2 cursor-pointer dice-glowing-turn shadow-amber-500/30'
+                        : 'bg-gradient-to-br from-white via-slate-50 to-slate-100 border-slate-200 cursor-default'
+                    }"
+                    title="${canRoll ? 'Tap to Roll Dice!' : ''}">
+              ${getDiceFaceHtml(diceVal, _isDiceRolling)}
+            </button>
+
+            ${canRoll ? `
+              <span class="absolute -bottom-1.5 -right-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[8px] font-black uppercase tracking-wider shadow-sm pointer-events-none animate-pulse">
+                ROLL
+              </span>
+            ` : ''}
+          </div>
+
+          <!-- Center/Right: Turn Badge & Player Info -->
+          <div class="min-w-0 flex-1 space-y-1">
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-1.5 min-w-0">
+                <span class="w-3 h-3 rounded-full shrink-0 shadow-xs" style="background-color: ${currentPalette.primary}"></span>
+                <span class="text-xs font-black uppercase tracking-wider truncate" style="color: ${currentPalette.dark}">
+                  ${turnPlayerName}
+                </span>
+                ${isHumanTurn ? '<span class="text-[8px] bg-emerald-100 text-emerald-800 font-black px-1.5 py-0.2 rounded-full">YOU</span>' : ''}
+              </div>
+
+              ${game.diceRolled && diceVal ? `
+                <span class="text-[10px] font-black px-2 py-0.5 rounded-full ${diceVal === 6 ? 'bg-amber-100 text-amber-800 border border-amber-300 animate-pulse' : 'bg-slate-100 text-slate-700'}">
+                  ${diceVal === 6 ? '⭐ Rolled 6!' : `Rolled ${diceVal}`}
+                </span>
+              ` : ''}
+            </div>
+
+            <!-- Action Content -->
+            ${actionContent}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function renderLudoBoardView(container) {
     const session = window.LudoService ? window.LudoService.getSession() : {};
     const roomData = session.roomData || {};
@@ -1537,10 +1733,18 @@
 
     // Check if player has movable tokens
     const tokens = (game.tokens && game.tokens[turnColor]) || [-1, -1, -1, -1];
-    const hasMovableTokens = game.diceRolled && tokens.some((pos, idx) => canMoveToken(turnColor, idx, diceVal, game));
+    const movableIndices = [];
+    if (game.diceRolled && diceVal) {
+      tokens.forEach((pos, idx) => {
+        if (canMoveToken(turnColor, idx, diceVal, game)) {
+          movableIndices.push(idx);
+        }
+      });
+    }
+    const hasMovableTokens = movableIndices.length > 0;
 
     container.innerHTML = `
-      <div class="${ludoIsZoomed ? 'max-w-5xl' : 'max-w-md'} mx-auto space-y-3 pb-8 select-none animate-fade-in">
+      <div class="${ludoIsZoomed ? 'max-w-5xl' : 'max-w-md'} mx-auto space-y-2.5 pb-8 select-none animate-fade-in">
         <!-- Top App Bar -->
         <div class="flex items-center justify-between gap-2 px-1">
           <div class="flex items-center gap-1.5 min-w-0">
@@ -1568,7 +1772,6 @@
           </div>
 
           <div class="flex items-center gap-1.5 shrink-0">
-
             <!-- Laptop Zoomify Button -->
             <button type="button" onclick="toggleLudoZoomify()"
                     class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border ${ludoIsZoomed ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-200 bg-white text-slate-600'} hover:bg-indigo-100 transition shadow-xs text-xs font-bold shrink-0"
@@ -1584,6 +1787,11 @@
           </div>
         </div>
 
+        <!-- Event Notice Banner -->
+        <div id="ludoEventBanner" class="${_lastEventBanner ? 'p-2.5 rounded-2xl text-xs font-black flex items-center justify-center gap-2 shadow-sm animate-fade-in' : 'hidden'}">
+          ${_lastEventBanner ? _lastEventBanner.text : ''}
+        </div>
+
         ${ludoIsZoomed ? `
         <!-- Zoomify Desktop Fit Side-by-Side Layout -->
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start pt-1">
@@ -1596,75 +1804,9 @@
             </div>
           </div>
 
-          <!-- Right Column: Dice HUD, Token Progress & Spectators (5 cols) -->
+          <!-- Right Column: Console HUD, Token Progress & Spectators (5 cols) -->
           <div class="lg:col-span-5 space-y-3">
-            <!-- Dice Roll & Turn Controls HUD -->
-            <div class="bg-white rounded-3xl p-3.5 sm:p-4 border border-slate-100 shadow-md flex items-center justify-between gap-3.5">
-              <div class="flex items-center gap-3.5 min-w-0">
-                <div class="relative shrink-0">
-                  <button type="button" id="ludoDiceBtn" onclick="handleDiceRollClick()"
-                          class="w-20 h-20 sm:w-24 sm:h-24 p-1 rounded-3xl shadow-xl border-2 flex items-center justify-center transition-all duration-200 active:scale-95 relative ${
-                            !session.isSpectator && !game.diceRolled && isMyTurn
-                              ? 'bg-gradient-to-br from-white via-amber-50 to-amber-100 border-amber-400 ring-4 ring-amber-300 ring-offset-2 cursor-pointer dice-glowing-turn shadow-amber-500/30'
-                              : 'bg-gradient-to-br from-white via-slate-50 to-slate-100 border-slate-200'
-                          }"
-                          title="${session.isSpectator ? 'Spectator Mode (Watch Only)' : (isMyTurn && !game.diceRolled ? 'Tap to Roll Dice!' : '')}">
-                    ${getDiceFaceHtml(diceVal, _isDiceRolling)}
-                  </button>
-
-                  ${!session.isSpectator && !game.diceRolled && isMyTurn ? `
-                    <span class="absolute -bottom-2 -right-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[9px] font-black uppercase tracking-wider shadow-sm pointer-events-none animate-pulse">
-                      ROLL
-                    </span>
-                  ` : ''}
-                </div>
-
-                <div class="min-w-0 space-y-1">
-                  <div class="flex items-center gap-1.5">
-                    <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${currentPalette.primary}"></span>
-                    <span class="text-xs font-black uppercase tracking-wider truncate max-w-[150px]" style="color: ${currentPalette.dark}">
-                      ${turnPlayerName}
-                    </span>
-                    ${isMyTurn && !session.isSpectator ? '<span class="text-[9px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.2 rounded-full">YOU</span>' : ''}
-                    ${session.isSpectator ? '<span class="text-[9px] bg-slate-100 text-slate-700 font-extrabold px-1.5 py-0.2 rounded-full">SPECTATING</span>' : ''}
-                  </div>
-
-                  <p class="text-xs sm:text-sm font-bold text-slate-800 leading-tight">
-                    ${
-                      session.isSpectator
-                        ? (!game.diceRolled
-                            ? `${turnPlayerName} is rolling the dice...`
-                            : (hasMovableTokens ? `${turnPlayerName} rolled ${diceVal}! Picking token...` : `${turnPlayerName} rolled ${diceVal} (no moves).`))
-                        : (!game.diceRolled
-                            ? (isMyTurn ? 'Tap the dice to roll!' : `Waiting for ${turnPlayerName} to roll...`)
-                            : (hasMovableTokens
-                                ? (isMyTurn ? `Rolled ${diceVal}! Pick a glowing token.` : `${turnPlayerName} rolled ${diceVal}! Picking token...`)
-                                : (isMyTurn ? `Rolled ${diceVal}! No moves available.` : `${turnPlayerName} rolled ${diceVal} (no moves).`)))
-                    }
-                  </p>
-
-                  ${
-                    session.isSpectator
-                      ? '<p class="text-[10px] font-bold text-slate-400 flex items-center gap-1"><i class="fa-solid fa-eye text-slate-500"></i> Spectator Mode • Watching live</p>'
-                      : (game.diceRolled && diceVal === 6
-                          ? '<p class="text-[10px] font-black text-amber-600 flex items-center gap-1"><i class="fa-solid fa-star"></i> Rolled 6! You get an extra roll!</p>'
-                          : '')
-                  }
-                </div>
-              </div>
-
-              ${
-                !session.isSpectator && game.diceRolled && isMyTurn && hasMovableTokens
-                  ? `
-                  <div class="shrink-0 flex flex-col items-center gap-1">
-                    <span class="text-[10px] bg-gradient-to-r from-amber-500 to-orange-500 text-white font-black px-3 py-1.5 rounded-2xl shadow-sm animate-pulse uppercase tracking-wider">
-                      Pick Token
-                    </span>
-                  </div>
-                `
-                  : ''
-              }
-            </div>
+            ${renderLudoConsoleHud(game, session, turnColor, isMyTurn, diceVal, currentPalette, turnPlayerName, movableIndices, hasMovableTokens)}
 
             <!-- Token Progress Summary Bar -->
             <div class="grid grid-cols-2 gap-2 text-[10px] font-bold">
@@ -1676,85 +1818,22 @@
           </div>
         </div>
         ` : `
-        <!-- Standard Mobile Stack Layout -->
+        <!-- Compact Mobile Stack Layout -->
         <div class="flex justify-center px-0.5">
-          <div class="w-full max-w-[440px] aspect-square bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 p-2 sm:p-3 rounded-3xl shadow-2xl border-4 border-slate-800 relative select-none">
+          <div class="w-full max-w-[420px] aspect-square bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 p-2 sm:p-2.5 rounded-3xl shadow-xl border-4 border-slate-800 relative select-none">
             <svg viewBox="0 0 600 600" class="w-full h-full rounded-2xl bg-white shadow-2xl overflow-hidden" style="touch-action: manipulation;">
               ${renderSvgBoardContents(game, session)}
             </svg>
           </div>
         </div>
 
-        <!-- Dice Roll & Turn Controls HUD -->
-        <div class="bg-white rounded-3xl p-3.5 sm:p-4 border border-slate-100 shadow-md flex items-center justify-between gap-3.5 max-w-[440px] mx-auto">
-          <div class="flex items-center gap-3.5 min-w-0">
-            <div class="relative shrink-0">
-              <button type="button" id="ludoDiceBtn" onclick="handleDiceRollClick()"
-                      class="w-20 h-20 sm:w-24 sm:h-24 p-1 rounded-3xl shadow-xl border-2 flex items-center justify-center transition-all duration-200 active:scale-95 relative ${
-                        !session.isSpectator && !game.diceRolled && isMyTurn
-                          ? 'bg-gradient-to-br from-white via-amber-50 to-amber-100 border-amber-400 ring-4 ring-amber-300 ring-offset-2 cursor-pointer dice-glowing-turn shadow-amber-500/30'
-                          : 'bg-gradient-to-br from-white via-slate-50 to-slate-100 border-slate-200'
-                      }"
-                      title="${session.isSpectator ? 'Spectator Mode (Watch Only)' : (isMyTurn && !game.diceRolled ? 'Tap to Roll Dice!' : '')}">
-                ${getDiceFaceHtml(diceVal, _isDiceRolling)}
-              </button>
-
-              ${!session.isSpectator && !game.diceRolled && isMyTurn ? `
-                <span class="absolute -bottom-2 -right-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[9px] font-black uppercase tracking-wider shadow-sm pointer-events-none animate-pulse">
-                  ROLL
-                </span>
-              ` : ''}
-            </div>
-
-            <div class="min-w-0 space-y-1">
-              <div class="flex items-center gap-1.5">
-                <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${currentPalette.primary}"></span>
-                <span class="text-xs font-black uppercase tracking-wider truncate max-w-[150px]" style="color: ${currentPalette.dark}">
-                  ${turnPlayerName}
-                </span>
-                ${isMyTurn && !session.isSpectator ? '<span class="text-[9px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.2 rounded-full">YOU</span>' : ''}
-                ${session.isSpectator ? '<span class="text-[9px] bg-slate-100 text-slate-700 font-extrabold px-1.5 py-0.2 rounded-full">SPECTATING</span>' : ''}
-              </div>
-
-              <p class="text-xs sm:text-sm font-bold text-slate-800 leading-tight">
-                ${
-                  session.isSpectator
-                    ? (!game.diceRolled
-                        ? `${turnPlayerName} is rolling the dice...`
-                        : (hasMovableTokens ? `${turnPlayerName} rolled ${diceVal}! Picking token...` : `${turnPlayerName} rolled ${diceVal} (no moves).`))
-                    : (!game.diceRolled
-                        ? (isMyTurn ? 'Tap the dice to roll!' : `Waiting for ${turnPlayerName} to roll...`)
-                        : (hasMovableTokens
-                            ? (isMyTurn ? `Rolled ${diceVal}! Pick a glowing token.` : `${turnPlayerName} rolled ${diceVal}! Picking token...`)
-                            : (isMyTurn ? `Rolled ${diceVal}! No moves available.` : `${turnPlayerName} rolled ${diceVal} (no moves).`)))
-                }
-              </p>
-
-              ${
-                session.isSpectator
-                  ? '<p class="text-[10px] font-bold text-slate-400 flex items-center gap-1"><i class="fa-solid fa-eye text-slate-500"></i> Spectator Mode • Watching live</p>'
-                  : (game.diceRolled && diceVal === 6
-                      ? '<p class="text-[10px] font-black text-amber-600 flex items-center gap-1"><i class="fa-solid fa-star"></i> Rolled 6! You get an extra roll!</p>'
-                      : '')
-              }
-            </div>
-          </div>
-
-          ${
-            !session.isSpectator && game.diceRolled && isMyTurn && hasMovableTokens
-              ? `
-              <div class="shrink-0 flex flex-col items-center gap-1">
-                <span class="text-[10px] bg-gradient-to-r from-amber-500 to-orange-500 text-white font-black px-3 py-1.5 rounded-2xl shadow-sm animate-pulse uppercase tracking-wider">
-                  Pick Token
-                </span>
-              </div>
-            `
-              : ''
-          }
+        <!-- Docked Console HUD -->
+        <div class="max-w-[420px] mx-auto w-full">
+          ${renderLudoConsoleHud(game, session, turnColor, isMyTurn, diceVal, currentPalette, turnPlayerName, movableIndices, hasMovableTokens)}
         </div>
 
-        <!-- Token Progress Summary Bar (Strictly 2 per row: 1 & 2 in row 1, 3 & 4 in row 2) -->
-        <div class="grid grid-cols-2 gap-2 max-w-[440px] mx-auto text-[10px] font-bold">
+        <!-- Token Progress Summary Bar -->
+        <div class="grid grid-cols-2 gap-2 max-w-[420px] mx-auto text-[10px] font-bold">
           ${renderPlayerProgressPills(game, session)}
         </div>
 
@@ -1791,7 +1870,7 @@
     `;
 
     // Bot automation trigger (if it's Bot's turn in system mode)
-    if (session.mode === 'system' && turnColor !== session.myColor && !winner) {
+    if (session.mode === 'system' && turnColor !== session.myColor && !winner && !_isAnimatingMove) {
       triggerBotTurn();
     }
   }
@@ -2071,21 +2150,28 @@
   function renderSvgBoardContents(game, session) {
     let svg = '';
 
-    // 1. Defs: Drop Shadows, Luxury Gradients, and Token Materials
+    // 1. Defs: Drop Shadows, Luxury Gradients, and Animation Keyframes
     svg += `
       <defs>
+        <style>
+          @keyframes yardActiveGlow {
+            0%, 100% { stroke-opacity: 0.55; stroke-width: 3.5; }
+            50% { stroke-opacity: 1; stroke-width: 5; }
+          }
+          .yard-active-glow {
+            animation: yardActiveGlow 1.5s ease-in-out infinite;
+          }
+        </style>
+
         <!-- Drop Shadows -->
         <filter id="boardShadow" x="-20%" y="-20%" width="150%" height="150%">
           <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.22"/>
         </filter>
         <filter id="tokenShadow" x="-30%" y="-30%" width="160%" height="160%">
-          <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#0f172a" flood-opacity="0.45"/>
-        </filter>
-        <filter id="tokenGlow" x="-40%" y="-40%" width="180%" height="180%">
-          <feDropShadow dx="0" dy="0" stdDeviation="5" flood-color="#fbbf24" flood-opacity="0.95"/>
+          <feDropShadow dx="0" dy="3.5" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.48"/>
         </filter>
         <filter id="starGlow" x="-30%" y="-30%" width="160%" height="160%">
-          <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#f59e0b" flood-opacity="0.5"/>
+          <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#f59e0b" flood-opacity="0.6"/>
         </filter>
 
         <!-- Base Quadrant Gradients -->
@@ -2113,7 +2199,7 @@
           <stop offset="100%" stop-color="#b45309"/>
         </linearGradient>
 
-        <!-- 3D Spherical Token Gradients -->
+        <!-- 3D Spherical Token Gradients (Jewel Finish) -->
         <radialGradient id="redTokenGrad" cx="35%" cy="30%" r="70%">
           <stop offset="0%" stop-color="#fca5a5"/>
           <stop offset="55%" stop-color="#ef4444"/>
@@ -2153,10 +2239,10 @@
     `;
 
     // 3. Four Corner Home Yards (6x6 cells = 240x240 px each)
-    svg += renderCornerYardSvg('red', 0, 0);
-    svg += renderCornerYardSvg('green', 360, 0);
-    svg += renderCornerYardSvg('yellow', 360, 360);
-    svg += renderCornerYardSvg('blue', 0, 360);
+    svg += renderCornerYardSvg('red', 0, 0, game, session);
+    svg += renderCornerYardSvg('green', 360, 0, game, session);
+    svg += renderCornerYardSvg('yellow', 360, 360, game, session);
+    svg += renderCornerYardSvg('blue', 0, 360, game, session);
 
     // 4. Center Finish Hub (3x3 cells = rows 6..8, cols 6..8: 240..360 px)
     svg += renderCenterFinishSvg();
@@ -2170,38 +2256,39 @@
     return svg;
   }
 
-  function renderCornerYardSvg(color, x, y) {
+  function renderCornerYardSvg(color, x, y, game, session) {
     const pal = COLOR_PALETTE[color];
     const pockets = YARD_POCKETS[color];
     const cardX = x === 0 ? 24 : 384;
     const cardY = y === 0 ? 24 : 384;
-    const centerX = cardX + 96;
-    const centerY = cardY + 96;
+
+    const isCurrentTurn = (game && game.currentTurnColor === color);
 
     let svg = `
       <g id="yard-${color}">
         <!-- Yard Base Border & Gradient -->
         <rect x="${x}" y="${y}" width="240" height="240" rx="18" fill="url(#${color}BaseGrad)" stroke="#0f172a" stroke-width="2"/>
-        
+
+        <!-- Active Turn Radiant Border Aura -->
+        ${isCurrentTurn ? `
+          <rect x="${x + 2}" y="${y + 2}" width="236" height="236" rx="16" fill="none" stroke="#fbbf24" stroke-width="4.5" stroke-dasharray="10 5" class="yard-active-glow"/>
+        ` : ''}
+
         <!-- Inner Recessed White Card with Soft Shadow -->
-        <rect x="${cardX}" y="${cardY}" width="192" height="192" rx="24" fill="#ffffff" stroke="${pal.border}" stroke-width="2.5" filter="url(#boardShadow)"/>
-        
-        <!-- Subtle Watermark Badge in Center -->
-        <circle cx="${centerX}" cy="${centerY}" r="44" fill="${pal.light}" opacity="0.45"/>
-        <text x="${centerX}" y="${centerY + 1}" text-anchor="middle" dominant-baseline="central" font-size="22" fill="${pal.primary}" opacity="0.25" font-weight="900" letter-spacing="2">
-          ${pal.name.toUpperCase()}
-        </text>
+        <rect x="${cardX}" y="${cardY}" width="192" height="192" rx="24" fill="#ffffff" stroke="${isCurrentTurn ? '#fbbf24' : pal.border}" stroke-width="${isCurrentTurn ? '3' : '2.5'}" filter="url(#boardShadow)"/>
     `;
 
     // 4 Token Saucer Pedestals
-    pockets.forEach(p => {
+    pockets.forEach((p, pIdx) => {
       svg += `
         <!-- Outer metallic saucer rim -->
-        <circle cx="${p.x}" cy="${p.y}" r="24" fill="${pal.light}" stroke="${pal.border}" stroke-width="2.5"/>
+        <circle cx="${p.x}" cy="${p.y}" r="23" fill="${pal.light}" stroke="${pal.border}" stroke-width="2.5"/>
         <!-- Inner beveled ring -->
-        <circle cx="${p.x}" cy="${p.y}" r="17" fill="#ffffff" stroke="${pal.primary}" stroke-width="1.5" stroke-dasharray="3 3"/>
-        <!-- Center guide dot -->
-        <circle cx="${p.x}" cy="${p.y}" r="5" fill="${pal.primary}" opacity="0.35"/>
+        <circle cx="${p.x}" cy="${p.y}" r="16.5" fill="#ffffff" stroke="${pal.primary}" stroke-width="1.5" stroke-dasharray="3 3"/>
+        <!-- Center guide pocket number (visible when token leaves base) -->
+        <text x="${p.x}" y="${p.y + 0.5}" text-anchor="middle" dominant-baseline="central" font-size="11" fill="${pal.primary}" opacity="0.35" font-weight="900">
+          ${pIdx + 1}
+        </text>
       `;
     });
 
@@ -2223,9 +2310,9 @@
         <polygon points="240,360 360,360 300,300" fill="url(#blueBaseGrad)" stroke="#ffffff" stroke-width="2.5"/>
 
         <!-- Center Golden Victory Medallion -->
-        <circle cx="300" cy="300" r="22" fill="url(#goldGrad)" stroke="#b45309" stroke-width="2" filter="url(#boardShadow)"/>
-        <circle cx="300" cy="300" r="16" fill="#ffffff" stroke="#f59e0b" stroke-width="1.5"/>
-        <text x="300" y="302" text-anchor="middle" dominant-baseline="central" font-size="15">👑</text>
+        <circle cx="300" cy="300" r="23" fill="url(#goldGrad)" stroke="#b45309" stroke-width="2" filter="url(#boardShadow)"/>
+        <circle cx="300" cy="300" r="17" fill="#ffffff" stroke="#f59e0b" stroke-width="1.5"/>
+        <text x="300" y="302" text-anchor="middle" dominant-baseline="central" font-size="16">👑</text>
       </g>
     `;
   }
@@ -2238,61 +2325,90 @@
       const x = tile.c * 40;
       const y = tile.r * 40;
       let fill = '#ffffff';
-      let stroke = '#334155';
+      let stroke = '#cbd5e1';
       let content = '';
 
       if (idx === 0) {
-        fill = 'url(#redBaseGrad)';
+        // Red Gateway Launchpad
+        fill = '#fee2e2';
+        stroke = '#ef4444';
         content = `
-          <text x="${x + 20}" y="${y + 16}" text-anchor="middle" dominant-baseline="central" font-size="14" fill="#ffffff" font-weight="900">★</text>
-          <text x="${x + 20}" y="${y + 28}" text-anchor="middle" dominant-baseline="central" font-size="11" fill="#ffffff" font-weight="900">▶</text>
+          <circle cx="${x + 20}" cy="${y + 20}" r="15" fill="#ffffff" stroke="#ef4444" stroke-width="1.6"/>
+          <text x="${x + 20}" y="${y + 14}" text-anchor="middle" dominant-baseline="central" font-size="12" fill="#ef4444" font-weight="900">★</text>
+          <text x="${x + 20}" y="${y + 25}" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#ef4444" font-weight="900">START</text>
         `;
       } else if (idx === 13) {
-        fill = 'url(#greenBaseGrad)';
+        // Green Gateway Launchpad
+        fill = '#d1fae5';
+        stroke = '#10b981';
         content = `
-          <text x="${x + 20}" y="${y + 16}" text-anchor="middle" dominant-baseline="central" font-size="14" fill="#ffffff" font-weight="900">★</text>
-          <text x="${x + 20}" y="${y + 28}" text-anchor="middle" dominant-baseline="central" font-size="11" fill="#ffffff" font-weight="900">▼</text>
+          <circle cx="${x + 20}" cy="${y + 20}" r="15" fill="#ffffff" stroke="#10b981" stroke-width="1.6"/>
+          <text x="${x + 20}" y="${y + 14}" text-anchor="middle" dominant-baseline="central" font-size="12" fill="#10b981" font-weight="900">★</text>
+          <text x="${x + 20}" y="${y + 25}" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#10b981" font-weight="900">START</text>
         `;
       } else if (idx === 26) {
-        fill = 'url(#yellowBaseGrad)';
-        content = `
-          <text x="${x + 20}" y="${y + 16}" text-anchor="middle" dominant-baseline="central" font-size="14" fill="#ffffff" font-weight="900">★</text>
-          <text x="${x + 20}" y="${y + 28}" text-anchor="middle" dominant-baseline="central" font-size="11" fill="#ffffff" font-weight="900">◀</text>
-        `;
-      } else if (idx === 39) {
-        fill = 'url(#blueBaseGrad)';
-        content = `
-          <text x="${x + 20}" y="${y + 16}" text-anchor="middle" dominant-baseline="central" font-size="14" fill="#ffffff" font-weight="900">★</text>
-          <text x="${x + 20}" y="${y + 28}" text-anchor="middle" dominant-baseline="central" font-size="11" fill="#ffffff" font-weight="900">▲</text>
-        `;
-      } else if (SAFE_TILES.includes(idx)) {
-        fill = '#f8fafc';
+        // Yellow Gateway Launchpad
+        fill = '#fef3c7';
         stroke = '#f59e0b';
         content = `
-          <circle cx="${x + 20}" cy="${y + 20}" r="14" fill="#fef3c7" stroke="#fbbf24" stroke-width="1.2"/>
-          <text x="${x + 20}" y="${y + 21}" text-anchor="middle" dominant-baseline="central" font-size="16" fill="#b45309" font-weight="900" filter="url(#starGlow)">★</text>
+          <circle cx="${x + 20}" cy="${y + 20}" r="15" fill="#ffffff" stroke="#f59e0b" stroke-width="1.6"/>
+          <text x="${x + 20}" y="${y + 14}" text-anchor="middle" dominant-baseline="central" font-size="12" fill="#f59e0b" font-weight="900">★</text>
+          <text x="${x + 20}" y="${y + 25}" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#f59e0b" font-weight="900">START</text>
         `;
+      } else if (idx === 39) {
+        // Blue Gateway Launchpad
+        fill = '#dbeafe';
+        stroke = '#3b82f6';
+        content = `
+          <circle cx="${x + 20}" cy="${y + 20}" r="15" fill="#ffffff" stroke="#3b82f6" stroke-width="1.6"/>
+          <text x="${x + 20}" y="${y + 14}" text-anchor="middle" dominant-baseline="central" font-size="12" fill="#3b82f6" font-weight="900">★</text>
+          <text x="${x + 20}" y="${y + 25}" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#3b82f6" font-weight="900">START</text>
+        `;
+      } else if (SAFE_TILES.includes(idx)) {
+        // Golden Star Shield Safe Squares
+        fill = '#fefce8';
+        stroke = '#f59e0b';
+        content = `
+          <circle cx="${x + 20}" cy="${y + 20}" r="14.5" fill="#fef3c7" stroke="#fbbf24" stroke-width="1.4"/>
+          <text x="${x + 20}" y="${y + 16}" text-anchor="middle" dominant-baseline="central" font-size="15" fill="#b45309" font-weight="900" filter="url(#starGlow)">★</text>
+          <text x="${x + 20}" y="${y + 28}" text-anchor="middle" dominant-baseline="central" font-size="6.5" fill="#b45309" font-weight="900" letter-spacing="0.5">SAFE</text>
+        `;
+      } else {
+        // Normal circuit square - add subtle directional clockwise flow chevrons along track corners
+        if (idx === 3 || idx === 4) {
+          content = `<text x="${x + 20}" y="${y + 20}" text-anchor="middle" dominant-baseline="central" font-size="10" fill="#94a3b8" font-weight="bold">›</text>`;
+        } else if (idx === 7 || idx === 8) {
+          content = `<text x="${x + 20}" y="${y + 20}" text-anchor="middle" dominant-baseline="central" font-size="10" fill="#94a3b8" font-weight="bold">^</text>`;
+        } else if (idx === 15 || idx === 16) {
+          content = `<text x="${x + 20}" y="${y + 20}" text-anchor="middle" dominant-baseline="central" font-size="10" fill="#94a3b8" font-weight="bold">v</text>`;
+        } else if (idx === 29 || idx === 30) {
+          content = `<text x="${x + 20}" y="${y + 20}" text-anchor="middle" dominant-baseline="central" font-size="10" fill="#94a3b8" font-weight="bold">‹</text>`;
+        }
       }
 
       svg += `
-        <rect x="${x}" y="${y}" width="40" height="40" fill="${fill}" stroke="${stroke}" stroke-width="1.3" rx="3.5"/>
+        <rect x="${x}" y="${y}" width="40" height="40" fill="${fill}" stroke="${stroke}" stroke-width="1.4" rx="4"/>
         ${content}
       `;
     });
 
-    // 2. Draw 4 Home Runways (5 blocks each = 20 blocks total)
+    // 2. Draw 4 Home Runways (High Contrast Luminous Pastel styling - Guarantees 100% token visibility!)
     const arrowMap = { red: '▶', green: '▼', yellow: '◀', blue: '▲' };
 
     ['red', 'green', 'yellow', 'blue'].forEach(col => {
+      const pal = COLOR_PALETTE[col];
       const runway = RUNWAYS[col];
       const arrow = arrowMap[col];
       runway.forEach((tile, rIdx) => {
         const x = tile.c * 40;
         const y = tile.r * 40;
         svg += `
-          <rect x="${x}" y="${y}" width="40" height="40" fill="url(#${col}BaseGrad)" stroke="#ffffff" stroke-width="1.4" rx="3.5"/>
-          <text x="${x + 20}" y="${y + 16}" text-anchor="middle" dominant-baseline="central" font-size="13" fill="#ffffff" font-weight="900">${arrow}</text>
-          <text x="${x + 20}" y="${y + 28}" text-anchor="middle" dominant-baseline="central" font-size="10" fill="#ffffff" opacity="0.75" font-weight="bold">${rIdx + 1}</text>
+          <!-- Soft luminous pastel tile background (High Contrast!) -->
+          <rect x="${x}" y="${y}" width="40" height="40" fill="${pal.runwayBg}" stroke="${pal.runwayBorder}" stroke-width="1.5" rx="4"/>
+          <!-- Jewel directional arrow -->
+          <text x="${x + 20}" y="${y + 15}" text-anchor="middle" dominant-baseline="central" font-size="13" fill="${pal.runwayArrow}" font-weight="900">${arrow}</text>
+          <!-- Runway step indicator -->
+          <text x="${x + 20}" y="${y + 27}" text-anchor="middle" dominant-baseline="central" font-size="9" fill="${pal.runwayArrow}" opacity="0.8" font-weight="900">${rIdx + 1}</text>
         `;
       });
     });
@@ -2307,35 +2423,50 @@
     const turnColor = game.currentTurnColor || 'red';
     const isHumanTurn = !session.isSpectator && (turnColor === session.myColor);
 
-    // Group tokens by cell coordinates to offset overlapping tokens nicely
+    // Group tokens by cell coordinates
     const cellGroups = {};
 
     activeColors.forEach(col => {
       const tokens = (game.tokens && game.tokens[col]) || [-1, -1, -1, -1];
       tokens.forEach((pos, idx) => {
-        const coords = getTokenCenter(col, idx, pos);
+        let effectivePos = pos;
+        if (_animatingToken && _animatingToken.color === col && _animatingToken.tokenIdx === idx) {
+          effectivePos = _animatingToken.currentStepPos;
+        }
+
+        const coords = getTokenCenter(col, idx, effectivePos);
         const key = `${Math.round(coords.x)}_${Math.round(coords.y)}`;
         if (!cellGroups[key]) cellGroups[key] = [];
-        cellGroups[key].push({ color: col, tokenIdx: idx, pos: pos, coords: coords });
+        cellGroups[key].push({
+          color: col,
+          tokenIdx: idx,
+          pos: effectivePos,
+          realPos: pos,
+          coords: coords,
+          isFinished: effectivePos === 56
+        });
       });
     });
 
-    // Render tokens with slight offsets if multiple tokens occupy the same cell
+    // Render tokens with distinct offsets when overlapping
     Object.values(cellGroups).forEach(group => {
       const count = group.length;
       group.forEach((item, gIdx) => {
         let offsetX = 0;
         let offsetY = 0;
-        let radius = 16;
+        let radius = 16.5;
 
-        if (count > 1) {
-          radius = 12;
-          const offsets = [
-            { x: -7, y: -7 },
-            { x: 7, y: 7 },
-            { x: 7, y: -7 },
-            { x: -7, y: 7 }
-          ];
+        if (count === 2) {
+          radius = 13.5;
+          offsetX = gIdx === 0 ? -8 : 8;
+        } else if (count === 3) {
+          radius = 11.5;
+          const offsets = [{ x: -8, y: -7 }, { x: 8, y: -7 }, { x: 0, y: 8 }];
+          offsetX = offsets[gIdx].x;
+          offsetY = offsets[gIdx].y;
+        } else if (count >= 4) {
+          radius = 10.5;
+          const offsets = [{ x: -7, y: -7 }, { x: 7, y: -7 }, { x: -7, y: 7 }, { x: 7, y: 7 }];
           offsetX = offsets[gIdx % 4].x;
           offsetY = offsets[gIdx % 4].y;
         }
@@ -2343,40 +2474,36 @@
         const cx = item.coords.x + offsetX;
         const cy = item.coords.y + offsetY;
         const pal = COLOR_PALETTE[item.color];
-        const isMovable = game.diceRolled && (item.color === turnColor) && isHumanTurn && canMoveToken(item.color, item.tokenIdx, game.diceValue, game);
+        const isMovable = !_isAnimatingMove && game.diceRolled && (item.color === turnColor) && isHumanTurn && canMoveToken(item.color, item.tokenIdx, game.diceValue, game);
 
         svg += `
           <g onclick="handleTokenClick('${item.color}', ${item.tokenIdx})"
              class="${isMovable ? 'cursor-pointer' : ''}" style="user-select: none;">
-            <!-- Generous transparent hit area for mobile touch screens -->
-            <circle cx="${cx}" cy="${cy}" r="${radius + 12}" fill="transparent"/>
+            <!-- Generous touch target for mobile devices -->
+            <circle cx="${cx}" cy="${cy}" r="${radius + 14}" fill="transparent"/>
 
-            <!-- Movable Pulsing Ring Indicator -->
+            <!-- Movable Token Accent Ring -->
             ${
               isMovable
-                ? `
-              <circle cx="${cx}" cy="${cy}" r="${radius + 7}" fill="none" stroke="#fbbf24" stroke-width="3.5" stroke-dasharray="5 3" filter="url(#tokenGlow)">
-                <animateTransform attributeName="transform" type="rotate" from="0 ${cx} ${cy}" to="360 ${cx} ${cy}" dur="3s" repeatCount="indefinite"/>
-              </circle>
-              <circle cx="${cx}" cy="${cy}" r="${radius + 5}" fill="none" stroke="#f59e0b" stroke-width="2">
-                <animate attributeName="r" values="${radius + 4};${radius + 9};${radius + 4}" dur="1s" repeatCount="indefinite"/>
-                <animate attributeName="opacity" values="0.7;1;0.7" dur="1s" repeatCount="indefinite"/>
-              </circle>
-            `
+                ? `<circle cx="${cx}" cy="${cy}" r="${radius + 2.5}" fill="none" stroke="#fbbf24" stroke-width="2" opacity="0.85"/>`
                 : ''
             }
 
-            <!-- 3D Glossy Token Body -->
-            <circle cx="${cx}" cy="${cy}" r="${radius}" fill="url(#${item.color}TokenGrad)" stroke="#ffffff" stroke-width="2.8" filter="url(#tokenShadow)"/>
-            <circle cx="${cx}" cy="${cy}" r="${radius - 3.5}" fill="${pal.dark}" opacity="0.3"/>
-            
-            <!-- Specular Highlight Crescent Reflection -->
-            <ellipse cx="${cx - radius * 0.28}" cy="${cy - radius * 0.32}" rx="${radius * 0.38}" ry="${radius * 0.22}" fill="#ffffff" opacity="0.7" transform="rotate(-25 ${cx} ${cy})"/>
+            <!-- 3D Luxury Casino Chip Body (Dark rim guarantees separation on ANY background) -->
+            <circle cx="${cx}" cy="${cy + 1.5}" r="${radius}" fill="#0f172a" opacity="0.35" filter="url(#tokenShadow)"/>
+            <circle cx="${cx}" cy="${cy}" r="${radius + 1.2}" fill="#0f172a"/>
+            <circle cx="${cx}" cy="${cy}" r="${radius}" fill="#ffffff"/>
+            <circle cx="${cx}" cy="${cy}" r="${radius - 1.8}" fill="url(#${item.color}TokenGrad)"/>
+            <circle cx="${cx}" cy="${cy}" r="${radius - 4}" fill="${pal.dark}" opacity="0.25"/>
+            <!-- Specular Crescent Reflection -->
+            <ellipse cx="${cx - radius * 0.28}" cy="${cy - radius * 0.32}" rx="${radius * 0.38}" ry="${radius * 0.22}" fill="#ffffff" opacity="0.75" transform="rotate(-25 ${cx} ${cy})"/>
 
-            <!-- Token Identifier Number -->
-            <text x="${cx}" y="${cy + 1}" text-anchor="middle" dominant-baseline="central" font-size="${radius > 13 ? '11' : '9'}" fill="#ffffff" font-weight="900" filter="url(#boardShadow)">
-              ${item.tokenIdx + 1}
-            </text>
+            <!-- Center Token Number or Crown if Finished -->
+            ${
+              item.isFinished
+                ? `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="central" font-size="${radius > 13 ? '13' : '10'}">👑</text>`
+                : `<text x="${cx}" y="${cy + 1}" text-anchor="middle" dominant-baseline="central" font-size="${radius > 13 ? '11' : '9'}" fill="#ffffff" font-weight="900" filter="url(#boardShadow)">${item.tokenIdx + 1}</text>`
+            }
           </g>
         `;
       });
@@ -2403,7 +2530,10 @@
       const tile = RUNWAYS[color][step];
       return { x: tile.c * 40 + 20, y: tile.r * 40 + 20 };
     }
-    // Reached Home Finish Goal (56)
+    // Reached Home Finish Goal (56) - Individual crown slots!
+    if (FINISH_SLOTS && FINISH_SLOTS[color] && FINISH_SLOTS[color][tokenIdx]) {
+      return FINISH_SLOTS[color][tokenIdx];
+    }
     return GOAL_COORDS[color];
   }
 
@@ -2424,7 +2554,7 @@
   window.handleDiceRollClick = async function () {
     const session = window.LudoService ? window.LudoService.getSession() : {};
     const game = (session.roomData && session.roomData.game) || {};
-    if (game.diceRolled || _isDiceRolling || session.isSpectator) return;
+    if (game.diceRolled || _isDiceRolling || session.isSpectator || _isAnimatingMove) return;
 
     if (session.mode === 'online' && game.currentTurnColor !== session.myColor) {
       return;
@@ -2469,6 +2599,8 @@
   };
 
   window.handleTokenClick = function (color, tokenIdx) {
+    if (_isAnimatingMove) return;
+
     const session = window.LudoService ? window.LudoService.getSession() : {};
     const game = (session.roomData && session.roomData.game) || {};
     if (!game.diceRolled || game.currentTurnColor !== color || session.isSpectator) return;
@@ -2484,41 +2616,72 @@
     moveToken(color, tokenIdx, game.diceValue);
   };
 
-  function moveToken(color, tokenIdx, rollVal) {
+  async function moveToken(color, tokenIdx, rollVal) {
+    if (_isAnimatingMove) return;
+
     const session = window.LudoService ? window.LudoService.getSession() : {};
     const game = (session.roomData && session.roomData.game) || {};
-    const tokens = game.tokens[color];
+    const tokens = game.tokens && game.tokens[color];
+    if (!tokens) return;
     const currentPos = tokens[tokenIdx];
 
-    Sound.hop();
-
-    let newPos = currentPos;
+    let targetPos = currentPos;
     if (currentPos === -1) {
       if (rollVal === 6) {
-        newPos = 0; // Enter track at player's start square
+        targetPos = 0; // Enter track at player's start square
       } else {
         return;
       }
     } else {
       if (currentPos + rollVal <= 56) {
-        newPos = currentPos + rollVal;
+        targetPos = currentPos + rollVal;
       } else {
         return;
       }
     }
 
-    tokens[tokenIdx] = newPos;
+    _isAnimatingMove = true;
 
-    // Check for capturing opponent token on main track
+    // Build the step-by-step path
+    const path = [];
+    if (currentPos === -1) {
+      path.push(0);
+    } else {
+      for (let s = currentPos + 1; s <= targetPos; s++) {
+        path.push(s);
+      }
+    }
+
+    // Step-by-step hop loop along the board path
+    for (let i = 0; i < path.length; i++) {
+      const stepPos = path[i];
+      tokens[tokenIdx] = stepPos;
+      _animatingToken = { color, tokenIdx, currentStepPos: stepPos, targetPos };
+
+      Sound.hop(500 + i * 26);
+
+      const container = document.getElementById('mainContainer');
+      if (container && _ludoSubView === 'board') {
+        renderLudoBoardView(container);
+      }
+
+      await new Promise(r => setTimeout(r, 110));
+    }
+
+    _animatingToken = null;
+
+    // Check for capturing opponent token on main track (0..50)
     let capturedOpponent = false;
-    if (newPos >= 0 && newPos <= 50) {
-      capturedOpponent = checkCapture(color, newPos);
+    if (targetPos >= 0 && targetPos <= 50) {
+      capturedOpponent = checkCapture(color, targetPos);
     }
 
     // Check if player won (all 4 tokens reached 56)
     if (tokens.every(p => p >= 56)) {
+      _isAnimatingMove = false;
       game.winner = color;
       Sound.win();
+      showLudoBanner(`🏆 VICTORY! ${getPlayerInfoByColor(color, session).name} Wins!`, 'bonus', 5000);
       window.LudoService.updateGameState(game);
       const container = document.getElementById('mainContainer');
       if (container && _ludoSubView === 'board') {
@@ -2530,15 +2693,25 @@
     // Next turn unless player rolled 6 or captured opponent (grants bonus roll!)
     const grantBonusRoll = (rollVal === 6 || capturedOpponent);
 
+    if (capturedOpponent) {
+      showLudoBanner('💥 CAPTURED! Opponent coin knocked back to base! (+Bonus Roll)', 'capture', 3000);
+      await new Promise(r => setTimeout(r, 650));
+    } else if (rollVal === 6) {
+      showLudoBanner('⭐ ROLLED A 6! Bonus roll awarded! Roll again.', 'bonus', 2500);
+    }
+
     if (grantBonusRoll) {
+      Sound.bonus();
       game.diceRolled = false;
       game.diceValue = null;
+      _isAnimatingMove = false;
       window.LudoService.updateGameState(game);
       const container = document.getElementById('mainContainer');
       if (container && _ludoSubView === 'board') {
         renderLudoBoardView(container);
       }
     } else {
+      _isAnimatingMove = false;
       advanceTurn();
     }
   }
@@ -2582,13 +2755,25 @@
     const hasAnyMove = tokens.some((pos, idx) => canMoveToken(turnColor, idx, rollVal, game));
 
     if (!hasAnyMove) {
-      setTimeout(() => {
+      Sound.noMove();
+      if (tokens.every(p => p === -1)) {
+        showLudoBanner(`🎲 Rolled ${rollVal} • Need a 6 to release token from base!`, 'info', 1800);
+      } else {
+        showLudoBanner(`🎲 Rolled ${rollVal} • No legal moves available!`, 'info', 1800);
+      }
+
+      if (_noMoveTimer) clearTimeout(_noMoveTimer);
+      _noMoveTimer = setTimeout(() => {
         advanceTurn();
-      }, 900);
+      }, 1400);
     }
   }
 
   function advanceTurn() {
+    if (_noMoveTimer) {
+      clearTimeout(_noMoveTimer);
+      _noMoveTimer = null;
+    }
     const session = window.LudoService ? window.LudoService.getSession() : {};
     const game = (session.roomData && session.roomData.game) || {};
     const colors = getActiveGameColors(game, session);
@@ -2613,7 +2798,7 @@
     _botTimer = setTimeout(async () => {
       const session = window.LudoService ? window.LudoService.getSession() : {};
       const game = (session.roomData && session.roomData.game) || {};
-      if (game.currentTurnColor === session.myColor || game.winner) return;
+      if (game.currentTurnColor === session.myColor || game.winner || _isAnimatingMove) return;
 
       // 1. Bot visual rolling animation
       Sound.roll();
@@ -2639,7 +2824,7 @@
       }
 
       // 3. Bot selects best token after brief realistic hesitation
-      _botTimer = setTimeout(() => {
+      _botTimer = setTimeout(async () => {
         const botColor = game.currentTurnColor;
         const tokens = (game.tokens && game.tokens[botColor]) || [];
 
@@ -2652,7 +2837,11 @@
         });
 
         if (validIndices.length === 0) {
-          advanceTurn();
+          Sound.noMove();
+          showLudoBanner(`${getPlayerInfoByColor(botColor, session).name} rolled ${val} (needs 6) • Passing turn...`, 'info', 1400);
+          _botTimer = setTimeout(() => {
+            advanceTurn();
+          }, 1200);
           return;
         }
 
@@ -2702,7 +2891,8 @@
           }
         });
 
-        moveToken(botColor, bestIdx, val);
+        // Bot executes move with step-by-step hop animation!
+        await moveToken(botColor, bestIdx, val);
       }, 700);
     }, 800);
   }
