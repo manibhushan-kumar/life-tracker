@@ -584,7 +584,7 @@
     if (!s.roomData || !s.roomData.game || s.isSpectator) return;
 
     const game = s.roomData.game;
-    if (game.diceRolled) return; // already rolled for this turn
+    if (game.diceRolled) return game.diceValue || (Math.floor(Math.random() * 6) + 1); // already rolled for this turn
 
     // Validate turn
     if (s.mode === 'online') {

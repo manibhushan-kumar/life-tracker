@@ -377,12 +377,28 @@
     }
   })();
   let _botTimer = null;
+  let _isBotTurnRunning = false;
   let _isDiceRolling = false;
   let _isAnimatingMove = false;
   let _animatingToken = null; // { color, tokenIdx, currentStepPos, targetPos }
   let _noMoveTimer = null;
-  let _lastEventBanner = null; // { text, tone, timeoutId }
+  let _lastEventBanner = null;
   let _systemPlayerColor = 'red';
+  let _captureNotice = null;
+  let _captureNoticeTimer = null;
+
+  function setLudoCapturedNotice(color) {
+    if (_captureNoticeTimer) clearTimeout(_captureNoticeTimer);
+    _captureNotice = { color, text: '💥 +1 ROLL' };
+    _captureNoticeTimer = setTimeout(() => {
+      _captureNotice = null;
+      _captureNoticeTimer = null;
+      const container = document.getElementById('mainContainer');
+      if (container && _ludoSubView === 'board') {
+        renderLudoBoardView(container);
+      }
+    }, 2400);
+  }
 
   function showLudoBanner(text, tone = 'amber', duration = 2600) {
     if (_lastEventBanner && _lastEventBanner.timeoutId) {
@@ -432,6 +448,7 @@
   };
 
   window.cleanupLudoGame = function () {
+    _isBotTurnRunning = false;
     if (_botTimer) {
       clearTimeout(_botTimer);
       _botTimer = null;
@@ -444,6 +461,11 @@
       clearTimeout(_lastEventBanner.timeoutId);
       _lastEventBanner = null;
     }
+    if (_captureNoticeTimer) {
+      clearTimeout(_captureNoticeTimer);
+      _captureNoticeTimer = null;
+    }
+    _captureNotice = null;
     _isAnimatingMove = false;
     _animatingToken = null;
     resetLudoZoomify();
@@ -500,6 +522,7 @@
 
     if (!confirmed) return;
 
+    _isBotTurnRunning = false;
     if (_botTimer) {
       clearTimeout(_botTimer);
       _botTimer = null;
@@ -552,6 +575,7 @@
     }
 
     const doAbandon = () => {
+      _isBotTurnRunning = false;
       if (_botTimer) {
         clearTimeout(_botTimer);
         _botTimer = null;
@@ -585,6 +609,7 @@
   };
 
   window.pauseLudoToHub = function () {
+    _isBotTurnRunning = false;
     if (_botTimer) {
       clearTimeout(_botTimer);
       _botTimer = null;
@@ -1591,6 +1616,7 @@
   }
 
   window.leaveLudoRoom = function () {
+    _isBotTurnRunning = false;
     if (_botTimer) {
       clearTimeout(_botTimer);
       _botTimer = null;
@@ -1657,16 +1683,27 @@
         }
       } else {
         // Rolled but no moves available
-        const isAllLocked = tokens.every(p => p === -1);
-        actionContent = `
-          <div class="p-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-bold flex items-center justify-between gap-1.5">
-            <div class="flex items-center gap-1.5 min-w-0 truncate">
-              <i class="fa-solid fa-lock text-amber-600 text-xs shrink-0"></i>
-              <span class="truncate">${isAllLocked ? `Rolled ${diceVal} • Need a 6 to release from base!` : `Rolled ${diceVal} • No legal moves available.`}</span>
+        if (!isHumanTurn) {
+          actionContent = `
+            <div class="space-y-1">
+              <span class="text-xs font-black text-slate-700 flex items-center gap-1.5">
+                <span>${turnPlayerName} rolled ${diceVal || ''}</span>
+              </span>
+              <p class="text-[10px] text-slate-400 font-medium leading-tight">No moves available • Passing turn...</p>
             </div>
-            <span class="text-[9px] font-extrabold text-amber-600 whitespace-nowrap shrink-0">Passing turn...</span>
-          </div>
-        `;
+          `;
+        } else {
+          const isAllLocked = tokens.every(p => p === -1);
+          actionContent = `
+            <div class="p-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-bold flex items-center justify-between gap-1.5">
+              <div class="flex items-center gap-1.5 min-w-0 truncate">
+                <i class="fa-solid fa-lock text-amber-600 text-xs shrink-0"></i>
+                <span class="truncate">${isAllLocked ? `Rolled ${diceVal} • Need a 6 to release from base!` : `Rolled ${diceVal} • No legal moves available.`}</span>
+              </div>
+              <span class="text-[9px] font-extrabold text-amber-600 whitespace-nowrap shrink-0">Passing turn...</span>
+            </div>
+          `;
+        }
       }
     }
 
@@ -1684,6 +1721,12 @@
                     title="${canRoll ? 'Tap to Roll Dice!' : ''}">
               ${getDiceFaceHtml(diceVal, _isDiceRolling)}
             </button>
+
+            ${_captureNotice ? `
+              <span class="absolute -top-2 left-1/2 -translate-x-1/2 whitespace-nowrap px-1.5 py-0.5 rounded-full bg-gradient-to-r from-rose-500 to-amber-500 text-white text-[8px] font-black uppercase tracking-wider shadow-md pointer-events-none z-10 animate-fade-in border border-white/60">
+                ${_captureNotice.text || '💥 +1 ROLL'}
+              </span>
+            ` : ''}
 
             ${canRoll ? `
               <span class="absolute -bottom-1.5 -right-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[8px] font-black uppercase tracking-wider shadow-sm pointer-events-none animate-pulse">
@@ -1870,7 +1913,7 @@
     `;
 
     // Bot automation trigger (if it's Bot's turn in system mode)
-    if (session.mode === 'system' && turnColor !== session.myColor && !winner && !_isAnimatingMove) {
+    if (session.mode === 'system' && turnColor !== session.myColor && !winner && !_isAnimatingMove && !_isBotTurnRunning) {
       triggerBotTurn();
     }
   }
@@ -2581,6 +2624,11 @@
 
       const val = await window.LudoService.rollDice();
       _isDiceRolling = false;
+      if (_captureNotice) {
+        if (_captureNoticeTimer) clearTimeout(_captureNoticeTimer);
+        _captureNoticeTimer = null;
+        _captureNotice = null;
+      }
 
       // Force instant UI re-render with the rolled value
       const container = document.getElementById('mainContainer');
@@ -2599,7 +2647,7 @@
   };
 
   window.handleTokenClick = function (color, tokenIdx) {
-    if (_isAnimatingMove) return;
+    if (_isAnimatingMove || _isBotTurnRunning) return;
 
     const session = window.LudoService ? window.LudoService.getSession() : {};
     const game = (session.roomData && session.roomData.game) || {};
@@ -2679,6 +2727,7 @@
     // Check if player won (all 4 tokens reached 56)
     if (tokens.every(p => p >= 56)) {
       _isAnimatingMove = false;
+      _isBotTurnRunning = false;
       game.winner = color;
       Sound.win();
       showLudoBanner(`🏆 VICTORY! ${getPlayerInfoByColor(color, session).name} Wins!`, 'bonus', 5000);
@@ -2694,10 +2743,8 @@
     const grantBonusRoll = (rollVal === 6 || capturedOpponent);
 
     if (capturedOpponent) {
-      showLudoBanner('💥 CAPTURED! Opponent coin knocked back to base! (+Bonus Roll)', 'capture', 3000);
+      setLudoCapturedNotice(color);
       await new Promise(r => setTimeout(r, 650));
-    } else if (rollVal === 6) {
-      showLudoBanner('⭐ ROLLED A 6! Bonus roll awarded! Roll again.', 'bonus', 2500);
     }
 
     if (grantBonusRoll) {
@@ -2705,6 +2752,7 @@
       game.diceRolled = false;
       game.diceValue = null;
       _isAnimatingMove = false;
+      _isBotTurnRunning = false;
       window.LudoService.updateGameState(game);
       const container = document.getElementById('mainContainer');
       if (container && _ludoSubView === 'board') {
@@ -2712,6 +2760,7 @@
       }
     } else {
       _isAnimatingMove = false;
+      _isBotTurnRunning = false;
       advanceTurn();
     }
   }
@@ -2774,6 +2823,7 @@
       clearTimeout(_noMoveTimer);
       _noMoveTimer = null;
     }
+    _isBotTurnRunning = false;
     const session = window.LudoService ? window.LudoService.getSession() : {};
     const game = (session.roomData && session.roomData.game) || {};
     const colors = getActiveGameColors(game, session);
@@ -2794,107 +2844,154 @@
 
   // --- 8. AI Bot Automation Engine ---
   function triggerBotTurn() {
-    if (_botTimer) clearTimeout(_botTimer);
+    if (_isBotTurnRunning) return;
+    const session = window.LudoService ? window.LudoService.getSession() : {};
+    const game = (session.roomData && session.roomData.game) || {};
+    if (session.mode !== 'system' || game.currentTurnColor === session.myColor || game.winner || _isAnimatingMove) {
+      return;
+    }
+
+    _isBotTurnRunning = true;
+    if (_botTimer) {
+      clearTimeout(_botTimer);
+      _botTimer = null;
+    }
+
     _botTimer = setTimeout(async () => {
-      const session = window.LudoService ? window.LudoService.getSession() : {};
-      const game = (session.roomData && session.roomData.game) || {};
-      if (game.currentTurnColor === session.myColor || game.winner || _isAnimatingMove) return;
+      try {
+        const curSession = window.LudoService ? window.LudoService.getSession() : {};
+        const curGame = (curSession.roomData && curSession.roomData.game) || {};
+        const botColor = curGame.currentTurnColor;
 
-      // 1. Bot visual rolling animation
-      Sound.roll();
-      const diceBtn = document.getElementById('ludoDiceBtn');
-      let rollInterval = null;
-      if (diceBtn) {
-        rollInterval = setInterval(() => {
-          const rFace = Math.floor(Math.random() * 6) + 1;
-          diceBtn.innerHTML = getDiceFaceHtml(rFace, true);
-        }, 50);
-      }
-
-      await new Promise(r => setTimeout(r, 400));
-      if (rollInterval) clearInterval(rollInterval);
-
-      // 2. Bot rolls dice
-      const val = await window.LudoService.rollDice();
-
-      // Immediately render so human sees Bot's rolled dice!
-      const container = document.getElementById('mainContainer');
-      if (container && _ludoSubView === 'board') {
-        renderLudoBoardView(container);
-      }
-
-      // 3. Bot selects best token after brief realistic hesitation
-      _botTimer = setTimeout(async () => {
-        const botColor = game.currentTurnColor;
-        const tokens = (game.tokens && game.tokens[botColor]) || [];
-
-        // Collect all legal moves
-        const validIndices = [];
-        tokens.forEach((pos, idx) => {
-          if (canMoveToken(botColor, idx, val, game)) {
-            validIndices.push(idx);
-          }
-        });
-
-        if (validIndices.length === 0) {
-          Sound.noMove();
-          showLudoBanner(`${getPlayerInfoByColor(botColor, session).name} rolled ${val} (needs 6) • Passing turn...`, 'info', 1400);
-          _botTimer = setTimeout(() => {
-            advanceTurn();
-          }, 1200);
+        if (curSession.mode !== 'system' || botColor === curSession.myColor || curGame.winner || _isAnimatingMove) {
+          _isBotTurnRunning = false;
           return;
         }
 
-        // Strategic Bot evaluation
-        let bestIdx = validIndices[0];
-        let bestScore = -100;
+        // 1. Bot visual rolling animation
+        Sound.roll();
+        const diceBtn = document.getElementById('ludoDiceBtn');
+        let rollInterval = null;
+        if (diceBtn) {
+          rollInterval = setInterval(() => {
+            const rFace = Math.floor(Math.random() * 6) + 1;
+            diceBtn.innerHTML = getDiceFaceHtml(rFace, true);
+          }, 50);
+        }
 
-        validIndices.forEach(idx => {
-          const pos = tokens[idx];
-          let score = 0;
+        await new Promise(r => setTimeout(r, 400));
+        if (rollInterval) clearInterval(rollInterval);
 
-          // Priority 1: Reach finish goal (+1000)
-          if (pos + val === 56) score += 1000;
+        // 2. Bot rolls dice (guaranteed valid integer 1..6)
+        if (_captureNotice) {
+          if (_captureNoticeTimer) clearTimeout(_captureNoticeTimer);
+          _captureNoticeTimer = null;
+          _captureNotice = null;
+        }
+        let val = await window.LudoService.rollDice();
+        const latestSession = window.LudoService ? window.LudoService.getSession() : {};
+        const latestGame = (latestSession.roomData && latestSession.roomData.game) || {};
+        if (!val && latestGame.diceValue) {
+          val = latestGame.diceValue;
+        }
+        if (!val) {
+          val = Math.floor(Math.random() * 6) + 1;
+          latestGame.diceValue = val;
+          latestGame.diceRolled = true;
+          window.LudoService.updateGameState(latestGame);
+        }
 
-          // Priority 2: Capture opponent token (+500)
-          if (pos >= 0 && pos + val <= 50) {
-            const nextCircuit = (START_OFFSETS[botColor] + pos + val) % 52;
-            if (!SAFE_TILES.includes(nextCircuit)) {
-              window.LudoService.PLAYER_COLORS.forEach(c => {
-                if (c !== botColor) {
-                  (game.tokens[c] || []).forEach(oppPos => {
-                    if (oppPos >= 0 && oppPos <= 50) {
-                      const oppCircuit = (START_OFFSETS[c] + oppPos) % 52;
-                      if (oppCircuit === nextCircuit) score += 500;
+        // Immediately render so human sees Bot's rolled dice!
+        const container = document.getElementById('mainContainer');
+        if (container && _ludoSubView === 'board') {
+          renderLudoBoardView(container);
+        }
+
+        // 3. Bot selects best token after brief realistic hesitation
+        _botTimer = setTimeout(async () => {
+          try {
+            const activeSession = window.LudoService ? window.LudoService.getSession() : {};
+            const activeGame = (activeSession.roomData && activeSession.roomData.game) || {};
+            const tokens = (activeGame.tokens && activeGame.tokens[botColor]) || [];
+
+            // Collect all legal moves
+            const validIndices = [];
+            tokens.forEach((pos, idx) => {
+              if (canMoveToken(botColor, idx, val, activeGame)) {
+                validIndices.push(idx);
+              }
+            });
+
+            if (validIndices.length === 0) {
+              Sound.noMove();
+              // No banner message shown per user instruction ("no need to see message")
+              _botTimer = setTimeout(() => {
+                _isBotTurnRunning = false;
+                advanceTurn();
+              }, 700);
+              return;
+            }
+
+            // Strategic Bot evaluation
+            let bestIdx = validIndices[0];
+            let bestScore = -100;
+
+            validIndices.forEach(idx => {
+              const pos = tokens[idx];
+              let score = 0;
+
+              // Priority 1: Reach finish goal (+1000)
+              if (pos + val === 56) score += 1000;
+
+              // Priority 2: Capture opponent token (+500)
+              if (pos >= 0 && pos + val <= 50) {
+                const nextCircuit = (START_OFFSETS[botColor] + pos + val) % 52;
+                if (!SAFE_TILES.includes(nextCircuit)) {
+                  window.LudoService.PLAYER_COLORS.forEach(c => {
+                    if (c !== botColor) {
+                      (activeGame.tokens[c] || []).forEach(oppPos => {
+                        if (oppPos >= 0 && oppPos <= 50) {
+                          const oppCircuit = (START_OFFSETS[c] + oppPos) % 52;
+                          if (oppCircuit === nextCircuit) score += 500;
+                        }
+                      });
                     }
                   });
                 }
-              });
-            }
+              }
+
+              // Priority 3: Emerge from base yard (+300)
+              if (pos === -1 && val === 6) score += 300;
+
+              // Priority 4: Land on safe star tile (+150)
+              if (pos >= 0 && pos + val <= 50) {
+                const nextCircuit = (START_OFFSETS[botColor] + pos + val) % 52;
+                if (SAFE_TILES.includes(nextCircuit)) score += 150;
+              }
+
+              // Priority 5: Advance token furthest along
+              score += pos;
+
+              if (score > bestScore) {
+                bestScore = score;
+                bestIdx = idx;
+              }
+            });
+
+            // Bot executes move with step-by-step hop animation!
+            await moveToken(botColor, bestIdx, val);
+          } catch (err) {
+            console.error('[Ludo] Bot move execution error:', err);
+            _isBotTurnRunning = false;
+            advanceTurn();
           }
-
-          // Priority 3: Emerge from base yard (+300)
-          if (pos === -1 && val === 6) score += 300;
-
-          // Priority 4: Land on safe star tile (+150)
-          if (pos >= 0 && pos + val <= 50) {
-            const nextCircuit = (START_OFFSETS[botColor] + pos + val) % 52;
-            if (SAFE_TILES.includes(nextCircuit)) score += 150;
-          }
-
-          // Priority 5: Advance token furthest along
-          score += pos;
-
-          if (score > bestScore) {
-            bestScore = score;
-            bestIdx = idx;
-          }
-        });
-
-        // Bot executes move with step-by-step hop animation!
-        await moveToken(botColor, bestIdx, val);
-      }, 700);
-    }, 800);
+        }, 500);
+      } catch (err) {
+        console.error('[Ludo] Bot turn error:', err);
+        _isBotTurnRunning = false;
+        advanceTurn();
+      }
+    }, 600);
   }
 
   // Diagnostics modal removed per user instruction
@@ -2909,6 +3006,7 @@
 
       // Check if current user was kicked/removed from room by the host
       if (session && session.wasKicked) {
+        _isBotTurnRunning = false;
         if (_botTimer) {
           clearTimeout(_botTimer);
           _botTimer = null;
@@ -2929,6 +3027,7 @@
       // Check if online room was closed or deleted by the host
       if (session && session.mode === 'online' && (!session.roomData || (session.roomData.meta && session.roomData.meta.status === 'deleted'))) {
         if (_ludoSubView === 'waiting' || _ludoSubView === 'board') {
+          _isBotTurnRunning = false;
           if (_botTimer) {
             clearTimeout(_botTimer);
             _botTimer = null;
