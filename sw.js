@@ -56,8 +56,14 @@ self.addEventListener('install', event => {
   );
 });
 
-// Drop any caches from a previous version so old app-shell files (including
-// ones that no longer exist, like a stale js/ bundle) don't linger forever.
+// Listen for message to skip waiting
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
+// Drop any caches from a previous version so old app-shell files don't linger forever.
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys =>
@@ -66,14 +72,39 @@ self.addEventListener('activate', event => {
   );
 });
 
-// Serve cached content when offline
+// Serve network content when online, fallback to cache when offline
 self.addEventListener('fetch', event => {
+  if (event.request.method !== 'GET') return;
+  const url = new URL(event.request.url);
+  if (!url.protocol.startsWith('http')) return;
+
+  // For HTML navigation requests (e.g. index.html) - Network First, Cache Fallback
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request)
+        .then(response => {
+          if (response && response.status === 200) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request).then(cached => cached || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  // For JS, CSS, and other assets: Try network first, fallback to cache
   event.respondWith(
-    caches.match(event.request)
+    fetch(event.request)
       .then(response => {
-        // Return cached version or fetch from network
-        return response || fetch(event.request);
+        if (response && response.status === 200) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
+        }
+        return response;
       })
+      .catch(() => caches.match(event.request))
   );
 });
 

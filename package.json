@@ -4,7 +4,7 @@
   "description": "Life Tracker - Track expenses, splits, recurring bills, and reminders",
   "private": true,
   "scripts": {
-    "build": "rm -rf dist && mkdir -p dist && cp -r index.html manifest.json sw.js privacy.html oauth-native.html icons js life-tracker-logo.png dist/",
+    "build": "rm -rf dist && mkdir -p dist && cp -r index.html manifest.json sw.js privacy.html oauth-native.html icons js life-tracker-logo.png dist/ && node -e \"const fs=require('fs'); let c=fs.readFileSync('dist/sw.js','utf8'); c=c.replace(/CACHE_NAME = '.*?'/, 'CACHE_NAME = \\'life-tracker-v' + Date.now() + '\\''); fs.writeFileSync('dist/sw.js', c);\"",
     "clean": "./manage.sh clean",
     "setup": "./manage.sh setup",
     "cap:sync": "npm run build && npx cap sync android",

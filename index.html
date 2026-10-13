@@ -1893,6 +1893,48 @@
           </button>
         </div>
 
+        <!-- App Cache & Update Management -->
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3 mt-4">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <i class="fa-solid fa-arrows-rotate text-blue-500"></i>
+              <h3 class="font-bold text-slate-800 text-sm">App Cache &amp; Updates</h3>
+            </div>
+            <span class="text-[10px] font-bold text-slate-400 font-mono">Clean Reload</span>
+          </div>
+          <p class="text-[10px] text-slate-500 leading-relaxed">
+            Fetch and reload the newest code changes without touching your saved alarms, reminders, settings, or expenses. Use this if a newly added feature isn't appearing.
+          </p>
+          <button onclick="refreshAppAssets()" class="w-full py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition active:scale-98 shadow-xs">
+            <i class="fa-solid fa-rotate text-xs"></i>
+            <span>Refresh App Cache &amp; Reload</span>
+          </button>
+        </div>
+
+        <!-- Local Backup & Restore (JSON) -->
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3 mt-4">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <i class="fa-solid fa-file-shield text-indigo-500"></i>
+              <h3 class="font-bold text-slate-800 text-sm">Local Backup &amp; Restore (JSON)</h3>
+            </div>
+            <span class="text-[10px] font-bold text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">Safe Offline</span>
+          </div>
+          <p class="text-[10px] text-slate-500 leading-relaxed">
+            Export a full JSON backup of all alarms, reminders, settings, budgets, loans, and expenses to your device. Restore anytime with 1 click to preserve your configuration.
+          </p>
+          <div class="grid grid-cols-2 gap-2">
+            <button onclick="exportLocalBackup()" class="py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs">
+              <i class="fa-solid fa-download text-xs"></i>
+              <span>Export Backup</span>
+            </button>
+            <button onclick="triggerImportLocalBackup()" class="py-2.5 bg-white hover:bg-slate-50 border border-indigo-200 text-indigo-700 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs">
+              <i class="fa-solid fa-upload text-xs"></i>
+              <span>Restore Backup</span>
+            </button>
+          </div>
+        </div>
+
         <p class="text-center text-[10px] text-slate-400 mt-4 pb-2">
           <a href="./privacy.html" class="font-semibold text-slate-500 hover:text-blue-600 underline underline-offset-2">Privacy Policy</a>
         </p>
@@ -1906,6 +1948,126 @@
       // without this, every render defaults btnBackupDrive back to enabled
       // even when there's nothing local to upload.
       updateDriveUploadButtonState();
+    }
+
+    async function refreshAppAssets() {
+      try {
+        if ('serviceWorker' in navigator) {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          for (const reg of registrations) {
+            await reg.unregister();
+          }
+        }
+        if ('caches' in window) {
+          const keys = await caches.keys();
+          for (const key of keys) {
+            await caches.delete(key);
+          }
+        }
+      } catch (e) {
+        console.warn('Cache refresh error:', e);
+      }
+      if (typeof showAlert === 'function') {
+        await showAlert('App cache cleared. Reloading with the freshest assets...', { title: 'Cache Refreshed', tone: 'success' });
+      }
+      window.location.reload(true);
+    }
+
+    async function exportLocalBackup() {
+      try {
+        const backupObj = {
+          version: '1.0',
+          exportedAt: new Date().toISOString(),
+          userName: appData.userName || '',
+          categories: appData.categories || {},
+          recurringItems: appData.recurringItems || [],
+          budgets: appData.budgets || {},
+          familyMembers: appData.familyMembers || [],
+          tags: appData.tags || [],
+          vehicles: appData.vehicles || [],
+          fuelLogs: appData.fuelLogs || [],
+          loans: appData.loans || [],
+          reminders: appData.reminders || [],
+          reminderSounds: appData.reminderSounds || [],
+          expenses: appData.expenses || [],
+          splitGroups: (typeof splitGroups !== 'undefined') ? splitGroups : []
+        };
+        const json = JSON.stringify(backupObj, null, 2);
+        const file = new Blob([json], { type: 'application/json' });
+        const filename = `life-tracker-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        if (typeof _shareOrDownloadBlob === 'function') {
+          _shareOrDownloadBlob(file, filename, 'application/json', 'Life Tracker Backup');
+        } else {
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(file);
+          a.download = filename;
+          a.click();
+        }
+        if (typeof showAlert === 'function') {
+          await showAlert('Backup exported successfully! Keep this file to restore alarms and settings anytime.', { title: 'Backup Exported', tone: 'success' });
+        }
+      } catch (err) {
+        if (typeof showAlert === 'function') {
+          await showAlert('Failed to export backup: ' + err.message, { title: 'Export Failed', tone: 'danger' });
+        }
+      }
+    }
+
+    async function triggerImportLocalBackup() {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json,application/json';
+      input.onchange = async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        try {
+          const text = await file.text();
+          const data = JSON.parse(text);
+          if (!data || typeof data !== 'object') {
+            throw new Error('Invalid backup file format');
+          }
+          const confirmed = typeof showConfirm === 'function'
+            ? await showConfirm('Restore settings, alarms, reminders, and data from this backup file? Existing records will be updated.', { title: 'Restore Backup?', confirmLabel: 'Restore' })
+            : window.confirm('Restore settings and data from this backup file?');
+          if (!confirmed) return;
+
+          if (data.userName !== undefined) appData.userName = data.userName;
+          if (data.categories) appData.categories = data.categories;
+          if (data.recurringItems) appData.recurringItems = data.recurringItems;
+          if (data.budgets) appData.budgets = data.budgets;
+          if (data.familyMembers) appData.familyMembers = data.familyMembers;
+          if (data.tags) appData.tags = data.tags;
+          if (data.vehicles) appData.vehicles = data.vehicles;
+          if (data.fuelLogs) appData.fuelLogs = data.fuelLogs;
+          if (data.loans) appData.loans = data.loans;
+          if (Array.isArray(data.reminders)) appData.reminders = data.reminders;
+          if (Array.isArray(data.reminderSounds)) appData.reminderSounds = data.reminderSounds;
+          if (Array.isArray(data.expenses)) appData.expenses = data.expenses;
+
+          saveState();
+          if (typeof IDB !== 'undefined' && typeof IDB.replaceAll === 'function') {
+            await Promise.all([
+              IDB.replaceAll('expenses', appData.expenses || []),
+              IDB.replaceAll('reminders', appData.reminders || []),
+              IDB.put('meta', { key: 'settings', ...appData })
+            ]);
+          }
+
+          if (typeof scheduleAllReminders === 'function') {
+            scheduleAllReminders();
+          }
+
+          if (typeof showAlert === 'function') {
+            await showAlert('All settings, alarms, reminders, and data restored successfully!', { title: 'Restore Complete', tone: 'success' });
+          }
+          renderSettings(document.getElementById('mainContainer'));
+        } catch (err) {
+          if (typeof showAlert === 'function') {
+            await showAlert('Failed to import backup: ' + err.message, { title: 'Import Failed', tone: 'danger' });
+          }
+        }
+      };
+      input.click();
     }
 
     function saveUserName() {
@@ -2317,10 +2479,47 @@
     // Initialize
     window.addEventListener('DOMContentLoaded', initStorage);
 
-    // Register service worker for offline support
-    if ('serviceWorker' in navigator) {
+    // Service Worker & Cache Management
+    // Detect if running inside native Capacitor (Android APK) vs Web Browser / PWA
+    const isNativeCapacitor = (typeof Capacitor !== 'undefined' && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform()) ||
+      window.location.protocol === 'capacitor:' ||
+      (window.location.hostname === 'localhost' && typeof Capacitor !== 'undefined');
+
+    if (isNativeCapacitor) {
+      // In Capacitor native Android, assets are bundled directly inside the APK's assets/public folder.
+      // Running a Service Worker inside the Android WebView intercepts local APK files and serves stale
+      // cached copies from previous installs.
+      // We automatically unregister any previously registered Service Workers and delete lingering Cache Storage
+      // so APK reinstall/updates load fresh code immediately, without ever wiping alarms or settings!
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(registrations => {
+          for (const reg of registrations) {
+            reg.unregister();
+          }
+        }).catch(err => console.warn('SW cleanup error:', err));
+      }
+      if ('caches' in window) {
+        caches.keys().then(keys => {
+          for (const key of keys) {
+            caches.delete(key);
+          }
+        }).catch(err => console.warn('Caches cleanup error:', err));
+      }
+    } else if ('serviceWorker' in navigator) {
+      // Web Browser / PWA: Register service worker with auto-update
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').catch(err => {
+        navigator.serviceWorker.register('./sw.js').then(reg => {
+          reg.addEventListener('updatefound', () => {
+            const newWorker = reg.installing;
+            if (newWorker) {
+              newWorker.addEventListener('statechange', () => {
+                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                  newWorker.postMessage({ type: 'SKIP_WAITING' });
+                }
+              });
+            }
+          });
+        }).catch(err => {
           console.error('Service worker registration failed:', err);
         });
       });
