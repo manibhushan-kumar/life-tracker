@@ -2805,16 +2805,10 @@
 
     if (!hasAnyMove) {
       Sound.noMove();
-      if (tokens.every(p => p === -1)) {
-        showLudoBanner(`🎲 Rolled ${rollVal} • Need a 6 to release token from base!`, 'info', 1800);
-      } else {
-        showLudoBanner(`🎲 Rolled ${rollVal} • No legal moves available!`, 'info', 1800);
-      }
-
       if (_noMoveTimer) clearTimeout(_noMoveTimer);
       _noMoveTimer = setTimeout(() => {
         advanceTurn();
-      }, 1400);
+      }, 900);
     }
   }
 
