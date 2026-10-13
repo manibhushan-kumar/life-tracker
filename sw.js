@@ -1,6 +1,6 @@
 // Bump this whenever urlsToCache changes so returning users actually pick
 // up the new app shell instead of serving a stale cached copy forever.
-const CACHE_NAME = 'life-tracker-v84';
+const CACHE_NAME = 'life-tracker-v85';
 const urlsToCache = [
   './',
   './index.html',
@@ -41,7 +41,8 @@ const urlsToCache = [
   './js/games/memory-match.js',
   './js/games/sudoku.js',
   './js/games/ludo-service.js',
-  './js/games/ludo.js'
+  './js/games/ludo.js',
+  './js/games/neon-grid.js'
 ];
 
 // Install Service Worker and cache files

@@ -14,6 +14,22 @@ let activeGameFilter = 'all'; // 'all' | 'available' | 'coming_soon'
 
 const GAME_CATALOGUE = [
   {
+    id: 'neon-grid',
+    title: 'Neon Grid — Logic Puzzle',
+    description: 'Futuristic cyberpunk grid logic puzzle! Activate nodes, trigger laser crossbeams & diagonal rotors, navigate quantum twins & locked barrier cores to solve each board in minimal moves.',
+    icon: 'fa-network-wired',
+    iconColor: 'text-cyan-400',
+    iconBg: 'bg-cyan-500/15',
+    bgGradient: 'from-cyan-500/25 via-purple-500/20 to-pink-500/25',
+    badgeText: 'New • Playable',
+    badgeColor: 'bg-cyan-100 text-cyan-800 border-cyan-300',
+    category: 'Cyber Logic',
+    status: 'available',
+    ageRange: 'All Ages',
+    tags: ['Cyberpunk', '52 Levels', 'Daily Challenge', 'Endless & Timed', 'Undo/Hints'],
+    onLaunch: () => openNeonGridGame()
+  },
+  {
     id: 'sudoku',
     title: 'Sudoku Master',
     description: 'Challenging 9x9 number logic puzzle designed for ages 10+ and teens! Use deduction to fill the grid, take pencil notes, track mistakes, and test your brain across 4 difficulty tiers.',
@@ -175,6 +191,11 @@ function renderGamesPage(container) {
     if (typeof renderLudoGame === 'function') {
       renderLudoGame(container);
     }
+  } else if (gamesSubView === 'neon_grid') {
+    setAppHeaderCrumb('Games / Neon Grid');
+    if (typeof renderNeonGridGame === 'function') {
+      renderNeonGridGame(container);
+    }
   }
 }
 
@@ -194,6 +215,9 @@ function openGamesList() {
   }
   if (typeof cleanupLudoGame === 'function') {
     cleanupLudoGame();
+  }
+  if (typeof cleanupNeonGridGame === 'function') {
+    cleanupNeonGridGame();
   }
   gamesSubView = 'catalogue';
   try {
@@ -255,6 +279,9 @@ function cleanupGamesModule() {
   }
   if (typeof cleanupLudoGame === 'function') {
     cleanupLudoGame();
+  }
+  if (typeof cleanupNeonGridGame === 'function') {
+    cleanupNeonGridGame();
   }
 }
 
