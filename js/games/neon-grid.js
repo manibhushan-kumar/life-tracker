@@ -820,7 +820,15 @@
     timeAttackTimeLeft: 90,
     timeAttackScore: 0,
     timeAttackTimer: null,
+    victoryTimers: [],
   };
+
+  function clearVictoryTimers() {
+    if (state.victoryTimers && state.victoryTimers.length) {
+      state.victoryTimers.forEach(id => clearTimeout(id));
+      state.victoryTimers = [];
+    }
+  }
 
   // --- Storage Helpers ---
   function saveActiveSession() {
@@ -1004,6 +1012,7 @@
 
   function initLevel(levelDef) {
     stopTimer();
+    clearVictoryTimers();
     state.subView = 'game';
     state.currentLevel = levelDef;
     state.currentState = cloneMatrix(levelDef.initialState);
@@ -1139,18 +1148,21 @@
     // Ripple effect on affected cells
     flashAffectedCells(result.affected);
 
+    // Always update HUD and render grid cells immediately so the player sees the move outcome
+    updateHUD();
+    renderGridCells();
+
     // Check Win Condition
     if (isMatrixEqual(state.currentState, lvl.targetState)) {
       onLevelCompleted();
     } else {
       saveActiveSession();
-      updateHUD();
-      renderGridCells();
     }
   }
 
   function undoMove() {
     if (state.history.length === 0 || state.isComplete) return;
+    clearVictoryTimers();
     const last = state.history.pop();
     state.currentState = last.state;
     state.movesTaken = Math.max(0, state.movesTaken - 1);
@@ -1165,6 +1177,7 @@
   function resetLevel() {
     if (state.isComplete) return;
     if (!state.currentLevel) return;
+    clearVictoryTimers();
 
     state.currentState = cloneMatrix(state.currentLevel.initialState);
     state.history = [];
@@ -1213,10 +1226,7 @@
     state.isComplete = true;
     clearActiveSession();
     stopTimer();
-    NeonAudio.playSuccess();
-    if (typeof navigator !== 'undefined' && navigator.vibrate) {
-      try { navigator.vibrate([40, 80, 50]); } catch (e) {}
-    }
+    clearVictoryTimers();
 
     const lvl = state.currentLevel;
     const par = lvl.parMoves;
@@ -1250,13 +1260,31 @@
       showNeonToast('⚡ Time Extended: +15 SECONDS!');
     }
 
-    // Trigger visual confetti / neon fireworks
-    spawnNeonVictoryParticles();
+    // Subtle celebration glow on solved grid so the player sees the final outcome clearly
+    const gridEl = document.getElementById('neonGrid');
+    if (gridEl) {
+      gridEl.classList.add('neon-grid-solved');
+    }
 
-    // Show Victory Modal
-    setTimeout(() => {
-      showVictoryModal(stars, moves, par);
-    }, 450);
+    // Wait for 1 second (1000ms) to show the final outcome, then launch firecrackers
+    const firecrackerTimer = setTimeout(() => {
+      // Audio & tactile celebration
+      NeonAudio.playSuccess();
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        try { navigator.vibrate([40, 80, 50]); } catch (e) {}
+      }
+
+      // Trigger visual firecrackers / neon fireworks
+      spawnNeonVictoryParticles();
+
+      // Show Victory Modal after the firecrackers have burst
+      const modalTimer = setTimeout(() => {
+        showVictoryModal(stars, moves, par);
+      }, 800);
+      state.victoryTimers.push(modalTimer);
+    }, 1000);
+
+    state.victoryTimers.push(firecrackerTimer);
   }
 
   // --- Visual Feedback Animations ---
@@ -1283,49 +1311,87 @@
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    canvas.width = canvas.parentElement?.clientWidth || window.innerWidth;
-    canvas.height = canvas.parentElement?.clientHeight || window.innerHeight;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
 
     const particles = [];
-    const colors = ['#00f3ff', '#b026ff', '#ff007f', '#00ff88', '#ffffff'];
+    const colors = ['#00f3ff', '#b026ff', '#ff007f', '#00ff88', '#ffd700', '#ffffff'];
 
-    for (let i = 0; i < 60; i++) {
-      particles.push({
-        x: canvas.width / 2 + (Math.random() - 0.5) * 80,
-        y: canvas.height / 2 + (Math.random() - 0.5) * 80,
-        vx: (Math.random() - 0.5) * 12,
-        vy: (Math.random() - 0.5) * 12 - 4,
-        size: Math.random() * 5 + 3,
-        color: colors[Math.floor(Math.random() * colors.length)],
-        life: 1.0,
-        decay: 0.015 + Math.random() * 0.015
-      });
+    function createBurst(cx, cy, count, speedMult = 1) {
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = (Math.random() * 8 + 3) * speedMult;
+        particles.push({
+          x: cx,
+          y: cy,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed - 2.5,
+          size: Math.random() * 4.5 + 2.5,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          life: 1.0,
+          decay: 0.012 + Math.random() * 0.014
+        });
+      }
     }
 
+    // Target the center of the grid for firecrackers
+    const gridEl = document.getElementById('neonGrid');
+    let midX = canvas.width / 2;
+    let midY = canvas.height * 0.45;
+    if (gridEl) {
+      const rect = gridEl.getBoundingClientRect();
+      midX = rect.left + rect.width / 2;
+      midY = rect.top + rect.height / 2;
+    }
+
+    // Initial central firecracker blast
+    createBurst(midX, midY, 65, 1.2);
+
+    // Staggered side firecrackers for authentic celebratory show
+    const timer1 = setTimeout(() => {
+      if (document.contains(canvas)) {
+        createBurst(midX - Math.min(100, canvas.width * 0.22), midY - 25, 45, 1.0);
+      }
+    }, 160);
+    const timer2 = setTimeout(() => {
+      if (document.contains(canvas)) {
+        createBurst(midX + Math.min(100, canvas.width * 0.22), midY - 25, 45, 1.0);
+      }
+    }, 320);
+
+    state.victoryTimers.push(timer1, timer2);
+
     function render() {
+      if (!canvas.parentElement || !document.contains(canvas)) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       let alive = false;
-      for (const p of particles) {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
         if (p.life > 0) {
           alive = true;
           p.x += p.vx;
           p.y += p.vy;
-          p.vy += 0.25; // gravity
+          p.vy += 0.22; // gravity
           p.life -= p.decay;
 
           ctx.save();
           ctx.globalAlpha = Math.max(0, p.life);
           ctx.fillStyle = p.color;
           ctx.shadowColor = p.color;
-          ctx.shadowBlur = 12;
+          ctx.shadowBlur = 10;
           ctx.beginPath();
           ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
           ctx.fill();
           ctx.restore();
+        } else {
+          particles.splice(i, 1);
         }
       }
-      if (alive) requestAnimationFrame(render);
-      else ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (alive || particles.length > 0) {
+        requestAnimationFrame(render);
+      } else {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
     }
     requestAnimationFrame(render);
   }
@@ -1427,12 +1493,20 @@
         .animate-shake {
           animation: shakeAnim 0.28s ease-in-out;
         }
+        @keyframes gridSolvedPulse {
+          0% { filter: drop-shadow(0 0 0 rgba(0, 243, 255, 0)); }
+          50% { filter: drop-shadow(0 0 16px rgba(0, 243, 255, 0.45)); }
+          100% { filter: drop-shadow(0 0 8px rgba(0, 243, 255, 0.2)); }
+        }
+        .neon-grid-solved {
+          animation: gridSolvedPulse 1s ease-in-out;
+        }
       </style>
 
       <div class="neon-game-layout relative w-full max-w-md mx-auto flex flex-col justify-between overflow-hidden select-none pb-2 sm:pb-3">
         
         <!-- Victory Particle Canvas -->
-        <canvas id="neonParticleCanvas" class="absolute inset-0 pointer-events-none z-40"></canvas>
+        <canvas id="neonParticleCanvas" class="fixed inset-0 pointer-events-none z-[60]"></canvas>
 
         <!-- Top Header Navigation Bar (Consistent with other games) -->
         <div class="w-full max-w-[400px] sm:max-w-[430px] mx-auto flex items-center justify-between gap-2 shrink-0 mb-1 px-0.5 z-10">
@@ -1823,6 +1897,9 @@
     const container = document.getElementById('mainContainer');
     if (!container) return;
     stopTimer();
+    clearVictoryTimers();
+    const vicModal = document.getElementById('neonVictoryModal');
+    if (vicModal) vicModal.remove();
     state.subView = 'levels';
 
     // Set container styles for comfortable mobile scrolling
@@ -2143,6 +2220,7 @@
     saveStats(stats);
 
     stopTimer();
+    clearVictoryTimers();
     NeonAudio.setAmbient(false);
     state.currentLevel = null;
     state.currentState = null;
@@ -2360,6 +2438,7 @@
 
   window.cleanupNeonGridGame = function () {
     stopTimer();
+    clearVictoryTimers();
     if (state.subView === 'game' && state.currentLevel && !state.isComplete) {
       saveActiveSession();
     }
