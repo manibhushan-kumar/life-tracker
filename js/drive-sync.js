@@ -20,6 +20,9 @@
 //                                  overwrite treatment as splitwise.json,
 //                                  just a separate file/store since it's a
 //                                  distinct, Splitwise-independent concept.
+//     reminders.json           <- Reminders and alarms (js/reminders.js -
+//                                  active, recurring, custom sounds). Wholesale
+//                                  overwrite like splitwise.json/groups.json.
 //     expenses_manifest.json   <- index of every month chunk: {fileId, count,
 //                                  updatedAt}. One small file means restore
 //                                  never has to list-and-guess; it just reads
@@ -61,6 +64,8 @@ const G_ROOT_FOLDER_CACHE_KEY = 'life_tracker_gfolder_cache';
 const SETTINGS_FILE_NAME = 'settings.json';
 const SPLITWISE_FILE_NAME = 'splitwise.json';
 const GROUPS_FILE_NAME = 'groups.json';
+const REMINDERS_FILE_NAME = 'reminders.json';
+const VAULT_FILE_NAME = 'vault.enc';
 const MANIFEST_FILE_NAME = 'expenses_manifest.json';
 const EXPENSES_FOLDER_NAME = 'expenses';
 const LEGACY_BACKUP_FILE_NAME = 'life_tracker_data.json';
@@ -797,6 +802,27 @@ async function performBackupWrite({ rootId, expensesFolderId, manifest, manifest
   };
   const groupsFileId = await upsertJsonFile(rootId, GROUPS_FILE_NAME, groupsPayload, syncMeta.groupsFileId);
 
+  // Reminders and custom notification alert sounds (js/reminders.js) -
+  // like groups.json and splitwise.json, overwritten wholesale every backup
+  // into its own dedicated reminders.json in Drive.
+  driveSyncProgress('Syncing Reminders...');
+  const remindersPayload = {
+    reminders: appData.reminders || (await IDB.getAll('reminders')) || [],
+    reminderSounds: appData.reminderSounds || [],
+    savedAt: new Date().toISOString()
+  };
+  const remindersFileId = await upsertJsonFile(rootId, REMINDERS_FILE_NAME, remindersPayload, syncMeta.remindersFileId);
+
+  // Credentials & Cards Vault (js/vault/vaultStore.js) -
+  // like reminders.json and groups.json, overwritten wholesale if a local vault exists.
+  // Stores { kdf, encryption, ciphertext, updatedAt } - never plaintext or master password.
+  let vaultFileId = syncMeta.vaultFileId;
+  const localVaultBlob = typeof vaultStoreGetBlob === 'function' ? await vaultStoreGetBlob() : (await IDB.get('meta', 'vaultBlob'));
+  if (localVaultBlob) {
+    driveSyncProgress('Syncing Vault...');
+    vaultFileId = await upsertJsonFile(rootId, VAULT_FILE_NAME, localVaultBlob, syncMeta.vaultFileId);
+  }
+
   // manifestFileId/manifest were already resolved by the caller.
   if (dirtyMonths.length > 0) {
     manifest = manifest || { chunks: {} };
@@ -827,20 +853,30 @@ async function performBackupWrite({ rootId, expensesFolderId, manifest, manifest
   // Fingerprint/stamp everything JUST pushed, so the next
   // hasLocalChangesToSync() (storage.js) and findSyncConflicts() (above)
   // both know THESE exact payloads are now in sync with Drive.
-  await saveSyncMeta({
+  const syncMetaUpdate = {
     settingsFileId,
     manifestFileId,
     splitwiseFileId,
     groupsFileId,
+    remindersFileId,
     lastSyncedSettingsFingerprint: _settingsSyncFingerprint(),
     lastSyncedSplitwiseFingerprint: JSON.stringify(splitwisePayload.groups),
     lastSyncedGroupsFingerprint: JSON.stringify(groupsPayload.groups),
+    lastSyncedRemindersFingerprint: _remindersSyncFingerprint(),
     knownRemoteSettingsSavedAt: settingsPayload.savedAt,
     knownRemoteSplitwiseSavedAt: splitwisePayload.savedAt,
-    knownRemoteGroupsSavedAt: groupsPayload.savedAt
-  });
+    knownRemoteGroupsSavedAt: groupsPayload.savedAt,
+    knownRemoteRemindersSavedAt: remindersPayload.savedAt
+  };
+  if (localVaultBlob) {
+    syncMetaUpdate.vaultFileId = vaultFileId;
+    syncMetaUpdate.knownRemoteVaultSavedAt = localVaultBlob.updatedAt;
+    syncMetaUpdate.vaultLocalResetSinceSync = false;
+  }
+  await saveSyncMeta(syncMetaUpdate);
 
-  return dirtyMonths.length > 0 ? `Synced ${dirtyMonths.length} month(s) + settings.` : 'Settings synced. Expenses already up to date.';
+  const extraSynced = ['settings', 'reminders', localVaultBlob ? 'vault' : ''].filter(Boolean).join(', ');
+  return dirtyMonths.length > 0 ? `Synced ${dirtyMonths.length} month(s) + ${extraSynced}.` : `${extraSynced.charAt(0).toUpperCase() + extraSynced.slice(1)} synced. Expenses already up to date.`;
 }
 
 async function backupToGoogleDrive() {
@@ -888,18 +924,33 @@ async function backupToGoogleDrive() {
     // device last looked at whatever it's about to overwrite. Cheap: these
     // are the same small settings.json/splitwise.json files anyway.
     driveSyncProgress('Checking for conflicts...');
-    const [remoteSettingsFile, remoteSplitwiseFile, remoteGroupsFile] = await Promise.all([
+    const [remoteSettingsFile, remoteSplitwiseFile, remoteGroupsFile, remoteRemindersFile, remoteVaultFile] = await Promise.all([
       findFileByIdOrName(syncMeta.settingsFileId, SETTINGS_FILE_NAME, rootId),
       findFileByIdOrName(syncMeta.splitwiseFileId, SPLITWISE_FILE_NAME, rootId),
-      findFileByIdOrName(syncMeta.groupsFileId, GROUPS_FILE_NAME, rootId)
+      findFileByIdOrName(syncMeta.groupsFileId, GROUPS_FILE_NAME, rootId),
+      findFileByIdOrName(syncMeta.remindersFileId, REMINDERS_FILE_NAME, rootId),
+      findFileByIdOrName(syncMeta.vaultFileId, VAULT_FILE_NAME, rootId)
     ]);
-    const [remoteSettingsData, remoteSplitwiseData, remoteGroupsData] = await Promise.all([
+    const [remoteSettingsData, remoteSplitwiseData, remoteGroupsData, remoteRemindersData, remoteVaultData] = await Promise.all([
       remoteSettingsFile ? fetchJsonFile(remoteSettingsFile.id).catch(() => null) : Promise.resolve(null),
       remoteSplitwiseFile ? fetchJsonFile(remoteSplitwiseFile.id).catch(() => null) : Promise.resolve(null),
-      remoteGroupsFile ? fetchJsonFile(remoteGroupsFile.id).catch(() => null) : Promise.resolve(null)
+      remoteGroupsFile ? fetchJsonFile(remoteGroupsFile.id).catch(() => null) : Promise.resolve(null),
+      remoteRemindersFile ? fetchJsonFile(remoteRemindersFile.id).catch(() => null) : Promise.resolve(null),
+      remoteVaultFile ? fetchJsonFile(remoteVaultFile.id).catch(() => null) : Promise.resolve(null)
     ]);
 
-    const conflicts = findSyncConflicts({ syncMeta, manifest, dirtyMonths, remoteSettingsData, remoteSplitwiseData, remoteGroupsData });
+    const localVaultBlob = typeof vaultStoreGetBlob === 'function' ? await vaultStoreGetBlob() : (await IDB.get('meta', 'vaultBlob'));
+    const conflicts = findSyncConflicts({
+      syncMeta,
+      manifest,
+      dirtyMonths,
+      remoteSettingsData,
+      remoteSplitwiseData,
+      remoteGroupsData,
+      remoteRemindersData,
+      remoteVaultData,
+      localVaultBlob
+    });
 
     if (conflicts.hasAny) {
       // Hand off to the interactive conflict-choice modal - hide the
@@ -907,7 +958,8 @@ async function backupToGoogleDrive() {
       hideDriveBusyModal();
       openSyncConflictModal({
         conflicts, rootId, expensesFolderId, manifest, manifestFileId, dirtyMonths, syncMeta,
-        remoteSettingsData, remoteSplitwiseData, remoteGroupsData, remoteSettingsFile, remoteSplitwiseFile, remoteGroupsFile
+        remoteSettingsData, remoteSplitwiseData, remoteGroupsData, remoteRemindersData, remoteVaultData,
+        remoteSettingsFile, remoteSplitwiseFile, remoteGroupsFile, remoteRemindersFile, remoteVaultFile
       });
       return;
     }
@@ -941,6 +993,8 @@ function openSyncConflictModal(ctx) {
   if (conflicts.settings) pieces.push('Settings');
   if (conflicts.splitwise) pieces.push('Splitwise groups');
   if (conflicts.groups) pieces.push('Groups');
+  if (conflicts.reminders) pieces.push('Reminders');
+  if (conflicts.vault) pieces.push('Vault');
   if (conflicts.months.length) pieces.push(`Expenses (${conflicts.months.join(', ')})`);
 
   content.innerHTML = `
@@ -959,7 +1013,7 @@ function openSyncConflictModal(ctx) {
       </button>
     </div>
 
-    <p class="text-[10px] text-slate-400 mt-3">Expenses merge automatically by entry - nothing gets dropped. Settings/Splitwise pull Drive's version wholesale, so redo any pending edit there afterward.</p>
+    <p class="text-[10px] text-slate-400 mt-3">Expenses merge automatically by entry - nothing gets dropped. Settings/Splitwise/Reminders/Vault pull Drive's version wholesale, so redo any pending edit there afterward.</p>
   `;
 }
 
@@ -1006,7 +1060,7 @@ async function resolveConflictPull() {
   closeFormModal();
   if (!ctx) return;
 
-  const { conflicts, remoteSettingsData, remoteSplitwiseData, remoteGroupsData, remoteSettingsFile, remoteSplitwiseFile, remoteGroupsFile, manifest } = ctx;
+  const { conflicts, remoteSettingsData, remoteSplitwiseData, remoteGroupsData, remoteRemindersData, remoteVaultData, remoteSettingsFile, remoteSplitwiseFile, remoteGroupsFile, remoteRemindersFile, remoteVaultFile, manifest } = ctx;
 
   setDriveActionBusy(['btnBackupDrive', 'globalDriveSyncBtn'], 'Pulling...');
   driveSyncProgress('Pulling Drive\'s latest...');
@@ -1019,6 +1073,12 @@ async function resolveConflictPull() {
     }
     if (conflicts.groups && remoteGroupsData) {
       await applyRestoredGroupsData(remoteGroupsData, remoteGroupsFile ? remoteGroupsFile.id : null);
+    }
+    if (conflicts.reminders && remoteRemindersData) {
+      await applyRestoredRemindersData(remoteRemindersData, remoteRemindersFile ? remoteRemindersFile.id : null);
+    }
+    if (conflicts.vault && remoteVaultData) {
+      await applyRestoredVaultData(remoteVaultData, remoteVaultFile ? remoteVaultFile.id : null);
     }
 
     for (const month of conflicts.months) {
@@ -1050,6 +1110,7 @@ async function resolveConflictPull() {
     }
 
     if (currentTab === 'settings') renderSettings(document.getElementById('mainContainer'));
+    else if (currentTab === 'vault' && typeof renderVaultPage === 'function') renderVaultPage(document.getElementById('mainContainer'));
     else if (currentTab === 'home' || currentTab === 'expenses') navigate(currentTab);
   } catch (err) {
     console.error(err);
@@ -1068,7 +1129,7 @@ async function resolveConflictPull() {
 // this, then just hit Backup - it should silently rebuild everything).
 async function deleteAllDriveBackupsExceptSettings() {
   if (!gdriveToken) { driveSyncDone('Authenticate with Google first!', true); return; }
-  if (!(await showConfirm('This permanently deletes your Drive backup - all expense history, Splitwise groups, and Groups stored there - EXCEPT settings.json (categories/recurring items/due items/budgets/family members). Data on THIS device is untouched. This cannot be undone. Continue?'))) return;
+  if (!(await showConfirm('This permanently deletes your Drive backup - all expense history, Splitwise groups, Groups, and Reminders stored there - EXCEPT settings.json (categories/recurring items/due items/budgets/family members). Data on THIS device is untouched. This cannot be undone. Continue?'))) return;
 
   setDriveActionBusy('btnBackupDrive', 'Deleting Drive backup...');
   driveSyncProgress('Deleting Drive backup...');
@@ -1078,10 +1139,11 @@ async function deleteAllDriveBackupsExceptSettings() {
     const rootId = await resolveRootFolderId(folderName);
     const syncMeta = await getSyncMeta();
 
-    const [manifestFile, splitwiseFile, groupsFile, legacyFile, expensesFolder] = await Promise.all([
+    const [manifestFile, splitwiseFile, groupsFile, remindersFile, legacyFile, expensesFolder] = await Promise.all([
       findFileByIdOrName(syncMeta.manifestFileId, MANIFEST_FILE_NAME, rootId),
       findFileByIdOrName(syncMeta.splitwiseFileId, SPLITWISE_FILE_NAME, rootId),
       findFileByIdOrName(syncMeta.groupsFileId, GROUPS_FILE_NAME, rootId),
+      findFileByIdOrName(syncMeta.remindersFileId, REMINDERS_FILE_NAME, rootId),
       findFileByName(LEGACY_BACKUP_FILE_NAME, rootId),
       findFolder(EXPENSES_FOLDER_NAME, rootId)
     ]);
@@ -1089,7 +1151,7 @@ async function deleteAllDriveBackupsExceptSettings() {
     // Deleting the "expenses" FOLDER takes every monthly chunk inside it
     // along with it in one call - no need to enumerate them individually.
     await Promise.all(
-      [manifestFile, splitwiseFile, groupsFile, legacyFile, expensesFolder]
+      [manifestFile, splitwiseFile, groupsFile, remindersFile, legacyFile, expensesFolder]
         .filter(Boolean)
         .map(f => deleteDriveFile(f.id))
     );
@@ -1100,7 +1162,7 @@ async function deleteAllDriveBackupsExceptSettings() {
     // (backupToGoogleDrive's remoteManifestMissing check will rebuild both
     // from scratch the moment it notices the manifest is gone) but there's
     // no reason to leave stale bookkeeping lying around either.
-    await saveSyncMeta({ manifestFileId: null, splitwiseFileId: null, groupsFileId: null, dirtyMonths: [], remoteChunkVersions: {} });
+    await saveSyncMeta({ manifestFileId: null, splitwiseFileId: null, groupsFileId: null, remindersFileId: null, dirtyMonths: [], remoteChunkVersions: {} });
 
     driveSyncDone('Drive backup deleted (settings kept). Next Backup re-uploads everything fresh.', false);
     if (currentTab === 'settings') renderSettings(document.getElementById('mainContainer'));
@@ -1170,8 +1232,8 @@ function mergeExpensesByIdForConflict(localExpenses, remoteExpenses) {
 // against the manifest's per-month `updatedAt` vs this device's own
 // remoteChunkVersions record - but only for months this device is actually
 // dirty on (a month neither side is touching can't conflict).
-function findSyncConflicts({ syncMeta, manifest, dirtyMonths, remoteSettingsData, remoteSplitwiseData, remoteGroupsData }) {
-  const conflicts = { settings: false, splitwise: false, groups: false, months: [] };
+function findSyncConflicts({ syncMeta, manifest, dirtyMonths, remoteSettingsData, remoteSplitwiseData, remoteGroupsData, remoteRemindersData, remoteVaultData, localVaultBlob }) {
+  const conflicts = { settings: false, splitwise: false, groups: false, reminders: false, vault: false, months: [] };
 
   if (remoteSettingsData && remoteSettingsData.savedAt !== (syncMeta.knownRemoteSettingsSavedAt || null)) {
     conflicts.settings = true;
@@ -1181,6 +1243,16 @@ function findSyncConflicts({ syncMeta, manifest, dirtyMonths, remoteSettingsData
   }
   if (remoteGroupsData && remoteGroupsData.savedAt !== (syncMeta.knownRemoteGroupsSavedAt || null)) {
     conflicts.groups = true;
+  }
+  if (remoteRemindersData && remoteRemindersData.savedAt !== (syncMeta.knownRemoteRemindersSavedAt || null)) {
+    conflicts.reminders = true;
+  }
+  if (remoteVaultData && remoteVaultData.updatedAt) {
+    const remoteVaultChanged = remoteVaultData.updatedAt !== (syncMeta.knownRemoteVaultSavedAt || null);
+    const localDiffersFromRemote = !localVaultBlob || localVaultBlob.updatedAt !== remoteVaultData.updatedAt;
+    if ((localVaultBlob && remoteVaultChanged && localDiffersFromRemote) || (syncMeta.vaultLocalResetSinceSync && localDiffersFromRemote)) {
+      conflicts.vault = true;
+    }
   }
 
   const remoteVersions = syncMeta.remoteChunkVersions || {};
@@ -1192,7 +1264,7 @@ function findSyncConflicts({ syncMeta, manifest, dirtyMonths, remoteSettingsData
     }
   });
 
-  conflicts.hasAny = conflicts.settings || conflicts.splitwise || conflicts.groups || conflicts.months.length > 0;
+  conflicts.hasAny = conflicts.settings || conflicts.splitwise || conflicts.groups || conflicts.reminders || conflicts.vault || conflicts.months.length > 0;
   return conflicts;
 }
 
@@ -1261,6 +1333,81 @@ async function applyRestoredGroupsData(groupsData, groupsFileId) {
   }
 }
 
+// Same wholesale-replace treatment as applyRestoredGroupsData() / applyRestoredSplitwiseData(),
+// for Reminders and custom alert sounds (js/reminders.js) and its 'reminders' store/reminders.json file.
+async function applyRestoredRemindersData(remindersData, remindersFileId) {
+  if (!remindersData) return;
+
+  const reminders = Array.isArray(remindersData.reminders)
+    ? remindersData.reminders
+    : (Array.isArray(remindersData) ? remindersData : null);
+
+  if (reminders) {
+    appData.reminders = reminders;
+    await IDB.replaceAll('reminders', appData.reminders);
+  }
+
+  if (Array.isArray(remindersData.reminderSounds)) {
+    appData.reminderSounds = remindersData.reminderSounds;
+  }
+
+  // Update meta settings row so local persistence stays completely in sync
+  const metaSettings = (await IDB.get('meta', 'settings')) || {};
+  metaSettings.reminders = appData.reminders || [];
+  metaSettings.reminderSounds = appData.reminderSounds || [];
+  await IDB.put('meta', { ...metaSettings, key: 'settings' });
+
+  await saveSyncMeta({
+    remindersFileId,
+    lastSyncedRemindersFingerprint: _remindersSyncFingerprint(),
+    lastSyncedSettingsFingerprint: _settingsSyncFingerprint(),
+    knownRemoteRemindersSavedAt: remindersData.savedAt || null
+  });
+
+  if (typeof onRemindersRestored === 'function') {
+    await onRemindersRestored();
+  }
+}
+
+// Wholesale-replace treatment for Credentials & Cards Vault (js/vault/vaultStore.js).
+// Stores the encrypted { kdf, encryption, ciphertext, updatedAt } blob wholesale.
+// Locks the vault if currently unlocked so master password state is reset.
+async function applyRestoredVaultData(vaultData, vaultFileId) {
+  if (!vaultData || !vaultData.ciphertext) return;
+
+  if (typeof vaultStoreSaveBlob === 'function') {
+    await vaultStoreSaveBlob({
+      kdf: vaultData.kdf,
+      encryption: vaultData.encryption,
+      ciphertextB64: vaultData.ciphertext,
+      updatedAt: vaultData.updatedAt
+    });
+  } else {
+    await IDB.put('meta', {
+      key: 'vaultBlob',
+      schemaVersion: 1,
+      kdf: vaultData.kdf,
+      encryption: vaultData.encryption,
+      ciphertext: vaultData.ciphertext,
+      updatedAt: vaultData.updatedAt
+    });
+  }
+
+  if (typeof vaultLockIfUnlocked === 'function') {
+    vaultLockIfUnlocked();
+  }
+
+  await saveSyncMeta({
+    vaultFileId,
+    knownRemoteVaultSavedAt: vaultData.updatedAt,
+    vaultLocalResetSinceSync: false
+  });
+
+  if (typeof currentTab !== 'undefined' && currentTab === 'vault' && typeof renderVaultPage === 'function') {
+    renderVaultPage(document.getElementById('mainContainer'));
+  }
+}
+
 // Wrapper around mergeIntoAppData() specifically for the Drive-restore path.
 // mergeIntoAppData() itself stays Drive-agnostic (data-model.js has no
 // business knowing about sync bookkeeping) - this is the one place that
@@ -1270,9 +1417,20 @@ async function applyRestoredGroupsData(groupsData, groupsFileId) {
 async function applyRestoredSettingsData(settingsData, settingsFileId) {
   if (!settingsData) return;
   mergeIntoAppData(settingsData);
+
+  // If settingsData included reminders and there wasn't a separate reminders.json restored,
+  // ensure IDB and alarms reflect the restored reminders
+  if (Array.isArray(settingsData.reminders)) {
+    await IDB.replaceAll('reminders', appData.reminders || []);
+    if (typeof onRemindersRestored === 'function') {
+      await onRemindersRestored();
+    }
+  }
+
   await saveSyncMeta({
     settingsFileId,
     lastSyncedSettingsFingerprint: _settingsSyncFingerprint(),
+    lastSyncedRemindersFingerprint: _remindersSyncFingerprint(),
     knownRemoteSettingsSavedAt: settingsData.savedAt || null
   });
 }
@@ -1320,6 +1478,24 @@ async function restoreFromGoogleDrive() {
       await applyRestoredGroupsData(groupsData, groupsFile.id);
     }
 
+    // Same unconditional, up-front treatment for Reminders and alarms (js/reminders.js) -
+    // not year-scoped, wholesale-synced, so it always pulls immediately too.
+    const remindersFile = await findFileByIdOrName(syncMeta.remindersFileId, REMINDERS_FILE_NAME, rootId);
+    const remindersData = remindersFile ? await fetchJsonFile(remindersFile.id).catch(() => null) : null;
+    if (remindersData) {
+      driveSyncProgress('Syncing Reminders...');
+      await applyRestoredRemindersData(remindersData, remindersFile.id);
+    }
+
+    // Same unconditional, up-front treatment for Credentials & Cards Vault (js/vault/vaultStore.js) -
+    // not year-scoped, wholesale-synced, so it always pulls immediately too.
+    const vaultFile = await findFileByIdOrName(syncMeta.vaultFileId, VAULT_FILE_NAME, rootId);
+    const vaultData = vaultFile ? await fetchJsonFile(vaultFile.id).catch(() => null) : null;
+    if (vaultData) {
+      driveSyncProgress('Syncing Vault...');
+      await applyRestoredVaultData(vaultData, vaultFile.id);
+    }
+
     const manifestFile = await findFileByIdOrName(syncMeta.manifestFileId, MANIFEST_FILE_NAME, rootId);
 
     if (!manifestFile) {
@@ -1328,28 +1504,51 @@ async function restoreFromGoogleDrive() {
       // cost to also offering a year filter here - just filter client-side
       // after the (already required) full fetch.
       const legacyFile = await findFileByName(LEGACY_BACKUP_FILE_NAME, rootId);
-      if (!legacyFile) {
-        driveSyncDone(`No backup found in folder '${folderName}'.`, false);
+      if (legacyFile) {
+        driveSyncProgress('Downloading legacy backup...');
+        const legacyData = await fetchJsonFile(legacyFile.id);
+        const legacyExpenses = Array.isArray(legacyData.expenses) ? legacyData.expenses : [];
+        const years = Array.from(new Set(legacyExpenses.map(e => yearMonthOf(e.date).slice(0, 4)))).sort().reverse();
+
+        if (years.length === 0) {
+          // Nothing dated at all - nothing to pick a year for, just bring in settings.
+          mergeIntoAppData({ ...legacyData, expenses: undefined });
+          if (Array.isArray(legacyData.reminders)) {
+            await IDB.replaceAll('reminders', appData.reminders || []);
+            if (typeof onRemindersRestored === 'function') await onRemindersRestored();
+          }
+          await saveState({ skipDirtyTracking: true });
+          driveSyncDone('Restored settings & reminders from legacy backup (no expenses found).', false);
+          navigate('home');
+          return;
+        }
+
+        _pendingRestore = { mode: 'legacy', legacyData, legacyExpenses };
+        hideDriveBusyModal(); // hand off to the interactive year-picker - it can't be reached with the busy modal on top
+        openYearPickerModal(years, { legacyUpgradeNotice: true });
         return;
       }
 
-      driveSyncProgress('Downloading legacy backup...');
-      const legacyData = await fetchJsonFile(legacyFile.id);
-      const legacyExpenses = Array.isArray(legacyData.expenses) ? legacyData.expenses : [];
-      const years = Array.from(new Set(legacyExpenses.map(e => yearMonthOf(e.date).slice(0, 4)))).sort().reverse();
-
-      if (years.length === 0) {
-        // Nothing dated at all - nothing to pick a year for, just bring in settings.
-        mergeIntoAppData({ ...legacyData, expenses: undefined });
+      // No manifest and no legacy file - check if settings.json exists!
+      const settingsFile = await findFileByIdOrName(syncMeta.settingsFileId, SETTINGS_FILE_NAME, rootId);
+      const settingsData = settingsFile ? await fetchJsonFile(settingsFile.id).catch(() => null) : null;
+      if (settingsData) {
+        await applyRestoredSettingsData(settingsData, settingsFile.id);
         await saveState({ skipDirtyTracking: true });
-        driveSyncDone('Restored settings from legacy backup (no expenses found).', false);
+        driveSyncDone('Backup restored (settings, reminders & groups). No expenses to sync.', false);
         navigate('home');
         return;
       }
 
-      _pendingRestore = { mode: 'legacy', legacyData, legacyExpenses };
-      hideDriveBusyModal(); // hand off to the interactive year-picker - it can't be reached with the busy modal on top
-      openYearPickerModal(years, { legacyUpgradeNotice: true });
+      // If we restored splitwise, groups, reminders, or vault up front:
+      if (splitwiseData || groupsData || remindersData || vaultData) {
+        await saveState({ skipDirtyTracking: true });
+        driveSyncDone('Restored reminders, groups & vault from Drive (no expenses found).', false);
+        navigate('home');
+        return;
+      }
+
+      driveSyncDone(`No backup found in folder '${folderName}'.`, false);
       return;
     }
 
@@ -1364,7 +1563,7 @@ async function restoreFromGoogleDrive() {
     if (remoteMonths.length === 0) {
       if (settingsData) await applyRestoredSettingsData(settingsData, settingsFile ? settingsFile.id : null);
       await saveState({ skipDirtyTracking: true });
-      driveSyncDone('Backup found, but it has no expense history yet. Settings synced.', false);
+      driveSyncDone('Backup found, but it has no expense history yet. Settings & reminders synced.', false);
       navigate('home');
       return;
     }
@@ -1421,7 +1620,7 @@ function openYearPickerModal(years, opts) {
 
     <p class="text-[10px] text-amber-600 mb-2"><i class="fa-solid fa-triangle-exclamation mr-1"></i>${currentYear} is handled differently from other years: since Home/Expenses live off it daily, restoring it fully <strong>replaces</strong> your local ${currentYear} data with Drive's version (anything not yet backed up will be lost). Other years just merge in on top - nothing else on-device gets touched.</p>
 
-    <p class="text-[10px] text-slate-400 mb-3">Categories, recurring items, due items, Splitwise groups, and Groups always sync in full - they're tiny.</p>
+    <p class="text-[10px] text-slate-400 mb-3">Categories, recurring items, due items, reminders, Splitwise groups, Groups, and Vault always sync in full - they're tiny.</p>
 
     <div class="grid grid-cols-2 gap-2">
       <button onclick="closeFormModal(); _pendingRestore = null;" class="py-2.5 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">Cancel</button>
@@ -1503,6 +1702,10 @@ async function confirmYearRestore() {
       // from clobbering appData.expenses with the ENTIRE unfiltered legacy
       // history, which would defeat the whole point of picking a year.
       mergeIntoAppData({ ...legacyData, expenses: undefined });
+      if (Array.isArray(legacyData.reminders)) {
+        await IDB.replaceAll('reminders', appData.reminders || []);
+        if (typeof onRemindersRestored === 'function') await onRemindersRestored();
+      }
       mergeExpensesForMonths(filteredExpenses, null);
 
       await saveState(); // normal diff -> marks these months dirty so the next backup ships them in the new chunked format

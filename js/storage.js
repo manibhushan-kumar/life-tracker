@@ -68,24 +68,27 @@ async function getSyncMeta() {
     settingsFileId: null,
     splitwiseFileId: null,
     groupsFileId: null,
+    remindersFileId: null,
     lastBackupAt: null,
     lastRestoreAt: null,
-    // Fingerprints of the settings/Splitwise/Groups payloads as of the last
+    // Fingerprints of the settings/Splitwise/Groups/Reminders payloads as of the last
     // successful backup - see hasLocalChangesToSync() below for why these
-    // exist (settings.json/splitwise.json/groups.json are overwritten
+    // exist (settings.json/splitwise.json/groups.json/reminders.json are overwritten
     // wholesale on every backup, so dirty-month tracking alone can't tell
     // us whether THOSE actually changed).
     lastSyncedSettingsFingerprint: null,
     lastSyncedSplitwiseFingerprint: null,
     lastSyncedGroupsFingerprint: null,
+    lastSyncedRemindersFingerprint: null,
     // What this device last actually SAW on Drive (the `savedAt` stamp
-    // inside settings.json/splitwise.json/groups.json) - compared against
+    // inside settings.json/splitwise.json/groups.json/reminders.json) - compared against
     // Drive's CURRENT savedAt right before a backup writes anything, to
     // catch "another device pushed since I last looked" conflicts. See
     // findSyncConflicts() in drive-sync.js.
     knownRemoteSettingsSavedAt: null,
     knownRemoteSplitwiseSavedAt: null,
     knownRemoteGroupsSavedAt: null,
+    knownRemoteRemindersSavedAt: null,
     // Credentials & Cards Vault (js/vault/vaultSync.js) - deliberately NOT
     // folded into the settings/splitwise/groups backup-and-restore pipeline
     // above. The vault syncs itself, independently, via its own buttons on
@@ -155,6 +158,13 @@ function _settingsSyncFingerprint() {
   });
 }
 
+function _remindersSyncFingerprint() {
+  return JSON.stringify({
+    reminders: appData.reminders || [],
+    reminderSounds: appData.reminderSounds || []
+  });
+}
+
 // True if hitting "Upload to Drive" right now would actually change
 // anything remotely. Expenses are covered by dirtyMonths (see
 // _markDirtyMonthsFromDiff above), but settings.json/splitwise.json are
@@ -185,6 +195,16 @@ async function hasLocalChangesToSync() {
   const contactGroupsForSync = await IDB.getAll('contactGroups');
   if (contactGroupsForSync.length > 0 && !meta.groupsFileId) return true;
   if (JSON.stringify(contactGroupsForSync) !== (meta.lastSyncedGroupsFingerprint || null)) return true;
+
+  const remindersForSync = appData.reminders || (await IDB.getAll('reminders')) || [];
+  const reminderSoundsForSync = appData.reminderSounds || [];
+  if ((remindersForSync.length > 0 || reminderSoundsForSync.length > 0) && !meta.remindersFileId) return true;
+  if (_remindersSyncFingerprint() !== (meta.lastSyncedRemindersFingerprint || null)) return true;
+
+  const vaultBlob = await IDB.get('meta', 'vaultBlob');
+  if (meta.vaultLocalResetSinceSync) return true;
+  if (vaultBlob && !meta.vaultFileId) return true;
+  if (vaultBlob && vaultBlob.updatedAt !== (meta.knownRemoteVaultSavedAt || null)) return true;
 
   return false;
 }

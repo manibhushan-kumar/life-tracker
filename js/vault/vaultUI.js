@@ -128,14 +128,9 @@ function _vaultCreateHtml() {
       `}
     </div>
     ${gdriveToken ? `
-      <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm text-center space-y-2">
-        <p class="text-[11px] text-slate-500">Already created a vault on another device?</p>
-        <button type="button" onclick="vaultSyncDownload().then(() => renderVaultPage(document.getElementById('mainContainer')))" class="px-4 py-2 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">
-          <i class="fa-brands fa-google-drive text-amber-500"></i> Pull Vault from Drive
-        </button>
-      </div>
+      <p class="text-[10px] text-slate-400 text-center">Already created a vault on another device? Restore your data anytime from <a href="#" onclick="navigate('settings'); return false;" class="text-blue-500 underline font-semibold">Settings &rarr; Restore Data</a>.</p>
     ` : `
-      <p class="text-[10px] text-slate-400 text-center">Connect Google Drive in Settings to restore a vault from another device.</p>
+      <p class="text-[10px] text-slate-400 text-center">Connect Google Drive in Settings to backup or restore your vault across devices.</p>
     `}
   `;
 }
@@ -251,13 +246,7 @@ function _vaultLockedHtml() {
       </form>
       `}
     </div>
-    ${gdriveToken ? `
-      <div class="mt-4 text-center">
-        <button type="button" onclick="vaultSyncDownload().then(() => renderVaultPage(document.getElementById('mainContainer')))" class="px-4 py-2 text-xs border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition">
-          <i class="fa-brands fa-google-drive text-amber-500"></i> Pull Latest from Drive
-        </button>
-      </div>
-    ` : ''}
+
     <div class="mt-4 text-center">
       <button type="button" onclick="confirmVaultReset()" class="text-[11px] font-semibold text-rose-500 hover:text-rose-600 underline underline-offset-2">
         Forgot your master password?
@@ -348,15 +337,8 @@ function _vaultUnlockedHtml() {
       <div class="space-y-3 mb-4" id="vaultItemsList">${_vaultItemsListHtml()}</div>
 
       <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-2">
-        <h3 class="text-[11px] font-bold text-slate-400 uppercase">Backup &amp; Sync</h3>
-        <div class="grid grid-cols-2 gap-2">
-          <button type="button" ${gdriveToken ? '' : 'disabled'} onclick="vaultSyncUpload()" class="py-2 text-[11px] font-bold rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition disabled:opacity-40 disabled:cursor-not-allowed">
-            <i class="fa-brands fa-google-drive text-amber-500"></i> Sync to Drive
-          </button>
-          <button type="button" ${gdriveToken ? '' : 'disabled'} onclick="vaultSyncDownload().then(() => renderVaultPage(document.getElementById('mainContainer')))" class="py-2 text-[11px] font-bold rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition disabled:opacity-40 disabled:cursor-not-allowed">
-            <i class="fa-brands fa-google-drive text-amber-500"></i> Pull from Drive
-          </button>
-        </div>
+        <h3 class="text-[11px] font-bold text-slate-400 uppercase">Backup &amp; Security</h3>
+        <p class="text-[10px] text-slate-400"><i class="fa-brands fa-google-drive text-amber-500 mr-1"></i>Google Drive syncs automatically via the top upload button and Settings.</p>
         <div class="grid grid-cols-2 gap-2">
           <button type="button" onclick="vaultExportBackup()" class="py-2 text-[11px] font-bold rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
             <i class="fa-solid fa-file-export"></i> Export Backup

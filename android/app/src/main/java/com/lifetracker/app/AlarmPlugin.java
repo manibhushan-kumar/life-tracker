@@ -78,6 +78,7 @@ public class AlarmPlugin extends Plugin {
             String mode = call.getString("mode", "alarm");
             String alertStyle = call.getString("alertStyle", "both");
             Boolean speakTitle = call.getBoolean("speakTitle", false);
+            Integer playCount = call.getInt("playCount", 1);
 
             // Save custom sound audio if provided
             if (soundData != null && !soundData.isEmpty() && soundId != null) {
@@ -96,6 +97,7 @@ public class AlarmPlugin extends Plugin {
             alarm.put("mode", mode);
             alarm.put("alertStyle", alertStyle);
             alarm.put("speakTitle", speakTitle != null && speakTitle);
+            alarm.put("playCount", playCount != null && playCount > 0 ? playCount : 1);
 
             AlarmScheduler.scheduleAlarm(getContext(), alarm);
 
@@ -119,6 +121,7 @@ public class AlarmPlugin extends Plugin {
             }
             AlarmScheduler.cancelAlarm(getContext(), id);
             AlarmService.stopAlarm(getContext());
+            AlarmReceiver.stopNotificationSound();
             JSObject ret = new JSObject();
             ret.put("success", true);
             call.resolve(ret);
@@ -141,6 +144,7 @@ public class AlarmPlugin extends Plugin {
             String id = call.getString("id");
             int minutes = call.getInt("minutes", 5);
             AlarmService.stopAlarm(getContext());
+            AlarmReceiver.stopNotificationSound();
             if (id != null) {
                 AlarmScheduler.snoozeAlarm(getContext(), id, minutes);
             }
@@ -157,6 +161,7 @@ public class AlarmPlugin extends Plugin {
     public void stopAlarm(PluginCall call) {
         try {
             AlarmService.stopAlarm(getContext());
+            AlarmReceiver.stopNotificationSound();
             JSObject ret = new JSObject();
             ret.put("success", true);
             call.resolve(ret);
@@ -302,13 +307,26 @@ public class AlarmPlugin extends Plugin {
         try {
             String text = call.getString("text");
             boolean isAlarm = call.getBoolean("isAlarm", false);
+            int playCount = call.getInt("playCount", 1);
+            if (playCount < 1) playCount = 1;
+
             if (text == null || text.trim().isEmpty()) {
                 JSObject ret = new JSObject();
                 ret.put("success", true);
                 call.resolve(ret);
                 return;
             }
-            TTSManager.speak(getContext(), text, isAlarm, () -> {
+            TTSManager.speakSequence(getContext(), text, playCount, isAlarm, (current, total) -> {
+                JSObject progress = new JSObject();
+                progress.put("current", current);
+                progress.put("total", total);
+                progress.put("isVoice", true);
+                notifyListeners("alertProgress", progress);
+            }, () -> {
+                JSObject done = new JSObject();
+                done.put("finished", true);
+                notifyListeners("alertFinished", done);
+
                 JSObject ret = new JSObject();
                 ret.put("success", true);
                 call.resolve(ret);
@@ -335,13 +353,40 @@ public class AlarmPlugin extends Plugin {
     public void playSound(PluginCall call) {
         try {
             String soundId = call.getString("soundId", "default");
-            AlarmReceiver.playNotificationSoundOnce(getContext(), soundId);
+            int playCount = call.getInt("playCount", 1);
+            if (playCount < 1) playCount = 1;
+
+            AlarmReceiver.playNotificationSound(getContext(), soundId, playCount, (current, total) -> {
+                JSObject progress = new JSObject();
+                progress.put("current", current);
+                progress.put("total", total);
+                progress.put("isVoice", false);
+                notifyListeners("alertProgress", progress);
+            }, () -> {
+                JSObject done = new JSObject();
+                done.put("finished", true);
+                notifyListeners("alertFinished", done);
+
+                JSObject ret = new JSObject();
+                ret.put("success", true);
+                call.resolve(ret);
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "playSound failed", e);
+            call.reject("Failed to play sound: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void stopSound(PluginCall call) {
+        try {
+            AlarmReceiver.stopNotificationSound();
             JSObject ret = new JSObject();
             ret.put("success", true);
             call.resolve(ret);
         } catch (Exception e) {
-            Log.e(TAG, "playSound failed", e);
-            call.reject("Failed to play sound: " + e.getMessage());
+            Log.e(TAG, "stopSound failed", e);
+            call.reject("Failed to stop sound: " + e.getMessage());
         }
     }
 }

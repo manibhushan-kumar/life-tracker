@@ -40,13 +40,14 @@ async function vaultStoreExists() {
 // `kdf`/`encryption` are the small plaintext metadata objects described
 // above (algorithm names, iteration count, base64 salt/iv) - never the
 // password or key itself. `ciphertextB64` is the encrypted vault JSON.
-async function vaultStoreSaveBlob({ kdf, encryption, ciphertextB64, updatedAt }) {
+async function vaultStoreSaveBlob(blob) {
+  const { kdf, encryption, ciphertextB64, ciphertext, updatedAt } = blob || {};
   const row = {
     key: VAULT_META_KEY,
     schemaVersion: VAULT_SCHEMA_VERSION,
     kdf,
     encryption,
-    ciphertext: ciphertextB64,
+    ciphertext: ciphertextB64 || ciphertext,
     updatedAt: updatedAt || new Date().toISOString()
   };
   await IDB.put('meta', row);

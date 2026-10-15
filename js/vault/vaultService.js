@@ -152,6 +152,7 @@ const vaultService = (() => {
       ciphertextB64: ciphertext,
       updatedAt: new Date().toISOString()
     });
+    if (typeof updateDriveUploadButtonState === 'function') updateDriveUploadButtonState();
   }
 
   // Creates a brand-new, empty vault. Throws if one already exists locally -
@@ -167,6 +168,7 @@ const vaultService = (() => {
     _vaultData = { items: [] };
     await _persist(kdf);
     vaultStartAutoLockWatchers();
+    if (typeof updateDriveUploadButtonState === 'function') updateDriveUploadButtonState();
   }
 
   // Throws a plain Error with `.code === 'WRONG_PASSWORD'` on a bad
@@ -282,6 +284,7 @@ const vaultService = (() => {
     vaultLock();
     await vaultStoreDeleteBlob();
     await saveSyncMeta({ vaultLocalResetSinceSync: true });
+    if (typeof updateDriveUploadButtonState === 'function') updateDriveUploadButtonState();
   }
 
   return {

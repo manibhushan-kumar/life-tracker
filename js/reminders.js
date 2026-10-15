@@ -152,32 +152,49 @@ function playMarimbaSound() {
 
 // Unified reminder sound player
 // Plays preset sounds, custom uploaded sounds, or defaults to 2-tone chime if unselected or missing
-function playReminderSound(soundId) {
+function playReminderSound(soundId, onEnded) {
+  let activeAudio = null;
+
   // If running on native Android, play sound via native MediaPlayer for crisp loud audio!
   if (typeof Capacitor !== 'undefined' && Capacitor.Plugins && Capacitor.Plugins.AlarmPlugin && typeof Capacitor.Plugins.AlarmPlugin.playSound === 'function') {
     try {
       Capacitor.Plugins.AlarmPlugin.playSound({ soundId: soundId || 'default' });
-      return;
+      if (typeof onEnded === 'function') {
+        setTimeout(onEnded, 600);
+      }
+      return { audio: null };
     } catch (e) {
       console.warn('Native playSound error, fallback to web audio:', e);
     }
   }
 
+  const triggerEnded = (durationMs = 600) => {
+    if (typeof onEnded === 'function') {
+      setTimeout(() => {
+        onEnded();
+      }, durationMs);
+    }
+  };
+
   if (!soundId || soundId === 'default') {
     playNotificationChime();
-    return;
+    triggerEnded(600);
+    return { audio: null };
   }
   if (soundId === 'bell') {
     playBellChime();
-    return;
+    triggerEnded(650);
+    return { audio: null };
   }
   if (soundId === 'digital') {
     playDigitalBeep();
-    return;
+    triggerEnded(250);
+    return { audio: null };
   }
   if (soundId === 'marimba') {
     playMarimbaSound();
-    return;
+    triggerEnded(600);
+    return { audio: null };
   }
 
   // Custom uploaded sound lookup
@@ -186,59 +203,292 @@ function playReminderSound(soundId) {
     try {
       const audio = new Audio(custom.data);
       audio.volume = 1.0;
+      activeAudio = audio;
+      let finished = false;
+      const finishOnce = () => {
+        if (!finished) {
+          finished = true;
+          if (typeof onEnded === 'function') onEnded();
+        }
+      };
+      audio.addEventListener('ended', finishOnce, { once: true });
+      audio.addEventListener('error', finishOnce, { once: true });
       const playPromise = audio.play();
       if (playPromise !== undefined) {
         playPromise.catch(err => {
           console.warn('Custom sound playback blocked, falling back to default sound:', err);
           playNotificationChime();
+          triggerEnded(600);
         });
       }
-      return;
+      // Safety timeout for custom audio
+      setTimeout(finishOnce, 15000);
+      return { audio: activeAudio };
     } catch (e) {
       console.warn('Custom sound play error, falling back to default:', e);
       playNotificationChime();
-      return;
+      triggerEnded(600);
+      return { audio: null };
     }
   }
 
   // Fallback to default chime
   playNotificationChime();
+  triggerEnded(600);
+  return { audio: null };
 }
 
-function speakReminderTitle(title, onComplete) {
-  if (!title) {
-    if (typeof onComplete === 'function') onComplete();
+// Notification sound repetition sequence controller (fixed 2-second pause between chimes)
+let _currentNotificationSequence = null;
+
+function stopNotificationSoundSequence() {
+  if (_currentNotificationSequence) {
+    _currentNotificationSequence.stopped = true;
+    if (_currentNotificationSequence.gapTimer) {
+      clearTimeout(_currentNotificationSequence.gapTimer);
+      _currentNotificationSequence.gapTimer = null;
+    }
+    if (_currentNotificationSequence.activeAudio) {
+      try {
+        _currentNotificationSequence.activeAudio.pause();
+        _currentNotificationSequence.activeAudio.currentTime = 0;
+      } catch (e) {}
+      _currentNotificationSequence.activeAudio = null;
+    }
+    _hideNotificationStopPill();
+    const onFinished = _currentNotificationSequence.onFinished;
+    _currentNotificationSequence = null;
+    if (typeof onFinished === 'function') {
+      try { onFinished(false); } catch (e) {}
+    }
+  }
+
+  // Also stop native Android notification sound if running on device
+  if (typeof Capacitor !== 'undefined' && Capacitor.Plugins && Capacitor.Plugins.AlarmPlugin && typeof Capacitor.Plugins.AlarmPlugin.stopSound === 'function') {
+    try {
+      Capacitor.Plugins.AlarmPlugin.stopSound();
+    } catch (e) {}
+  }
+
+  _hideNotificationStopPill();
+}
+
+function stopReminderSpeechSequence() {
+  if (_currentSpeechSequence) {
+    _currentSpeechSequence.stopped = true;
+    if (_currentSpeechSequence.gapTimer) {
+      clearTimeout(_currentSpeechSequence.gapTimer);
+      _currentSpeechSequence.gapTimer = null;
+    }
+    const onFinished = _currentSpeechSequence.onFinished;
+    _currentSpeechSequence = null;
+    if (typeof onFinished === 'function') {
+      try { onFinished(false); } catch (e) {}
+    }
+  }
+
+  stopReminderSpeech();
+  _hideNotificationStopPill();
+}
+
+function stopAnyReminderAlert() {
+  stopNotificationSoundSequence();
+  stopReminderSpeechSequence();
+}
+
+function playNotificationSoundSequence(soundId, playCount = 1, onFinished = null) {
+  stopAnyReminderAlert();
+
+  const totalPlays = Math.max(1, parseInt(playCount, 10) || 1);
+
+  // If on native Android and playSound is available
+  if (typeof Capacitor !== 'undefined' && Capacitor.Plugins && Capacitor.Plugins.AlarmPlugin && typeof Capacitor.Plugins.AlarmPlugin.playSound === 'function') {
+    _setupNativeAlarmListener();
+    if (totalPlays > 1) {
+      _showNotificationStopPill(1, totalPlays, false);
+    }
+    Capacitor.Plugins.AlarmPlugin.playSound({ soundId: soundId || 'default', playCount: totalPlays })
+      .then(() => {
+        _hideNotificationStopPill();
+        if (typeof onFinished === 'function') onFinished(true);
+      })
+      .catch(e => {
+        console.warn('Native AlarmPlugin.playSound error, fallback to web audio:', e);
+        _playWebNotificationSoundSequence(soundId, totalPlays, onFinished);
+      });
     return;
   }
 
-  // Stop any previous speech first
-  stopReminderSpeech();
+  _playWebNotificationSoundSequence(soundId, totalPlays, onFinished);
+}
+
+function _playWebNotificationSoundSequence(soundId, totalPlays, onFinished) {
+  if (totalPlays <= 1) {
+    playReminderSound(soundId, () => {
+      if (typeof onFinished === 'function') onFinished(true);
+    });
+    return;
+  }
+
+  const seq = {
+    stopped: false,
+    currentPlay: 0,
+    totalPlays: totalPlays,
+    gapTimer: null,
+    activeAudio: null,
+    onFinished: onFinished
+  };
+  _currentNotificationSequence = seq;
+
+  const playStep = () => {
+    if (seq.stopped) return;
+    seq.currentPlay += 1;
+
+    _showNotificationStopPill(seq.currentPlay, seq.totalPlays, false);
+
+    const soundRes = playReminderSound(soundId, () => {
+      if (seq.stopped) return;
+      if (seq.currentPlay >= seq.totalPlays) {
+        // Completed all repetitions!
+        _hideNotificationStopPill();
+        const finishCb = seq.onFinished;
+        _currentNotificationSequence = null;
+        if (typeof finishCb === 'function') {
+          try { finishCb(true); } catch (e) {}
+        }
+      } else {
+        // Gap of exactly 2 seconds (2000 ms) before next repetition
+        seq.gapTimer = setTimeout(() => {
+          seq.gapTimer = null;
+          playStep();
+        }, 2000);
+      }
+    });
+
+    if (soundRes && soundRes.audio) {
+      seq.activeAudio = soundRes.audio;
+    }
+  };
+
+  playStep();
+}
+
+function _showNotificationStopPill(current, total, isVoice = false) {
+  let pill = document.getElementById('notificationSoundStopPill');
+  if (!pill) {
+    pill = document.createElement('div');
+    pill.id = 'notificationSoundStopPill';
+    pill.className = 'fixed bottom-20 left-1/2 -translate-x-1/2 z-[10000] bg-slate-900/95 text-white px-3.5 py-2 rounded-full shadow-2xl border border-slate-700/80 backdrop-blur-md flex items-center gap-2.5 text-xs font-semibold transition-all pointer-events-auto';
+    document.body.appendChild(pill);
+  }
+  const label = isVoice ? 'Speaking alert' : 'Playing alert';
+  pill.innerHTML = `
+    <span class="flex items-center gap-1.5 ${isVoice ? 'text-purple-400' : 'text-blue-400'}">
+      <i class="fa-solid fa-volume-high animate-bounce text-xs"></i>
+      <span class="text-[11px] text-white">${label} (${current}/${total})</span>
+    </span>
+    <button type="button" onclick="stopAnyReminderAlert()" class="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-full text-[10px] font-bold transition flex items-center gap-1 shadow-sm">
+      <i class="fa-solid fa-stop text-[8px]"></i> Stop
+    </button>
+  `;
+  pill.classList.remove('hidden');
+}
+
+function _hideNotificationStopPill() {
+  const pill = document.getElementById('notificationSoundStopPill');
+  if (pill) {
+    pill.classList.add('hidden');
+  }
+}
+
+let _currentSpeechSequence = null;
+
+function speakReminderTitleSequence(title, playCount = 1, onFinished = null) {
+  stopAnyReminderAlert();
+
+  if (!title) {
+    if (typeof onFinished === 'function') onFinished(true);
+    return;
+  }
+
+  const totalPlays = Math.max(1, parseInt(playCount, 10) || 1);
 
   // 1. If running on native Android, use native Android TTS via AlarmPlugin!
   if (typeof Capacitor !== 'undefined' && Capacitor.Plugins && Capacitor.Plugins.AlarmPlugin && typeof Capacitor.Plugins.AlarmPlugin.speak === 'function') {
+    _setupNativeAlarmListener();
+    if (totalPlays > 1) {
+      _showNotificationStopPill(1, totalPlays, true);
+    }
     let finished = false;
-    const done = () => {
+    const done = (success) => {
       if (!finished) {
         finished = true;
-        if (typeof onComplete === 'function') onComplete();
+        _hideNotificationStopPill();
+        if (typeof onFinished === 'function') onFinished(success);
       }
     };
-    const watchdog = setTimeout(done, 5000);
-    Capacitor.Plugins.AlarmPlugin.speak({ text: String(title), isAlarm: false })
+    Capacitor.Plugins.AlarmPlugin.speak({ text: String(title), isAlarm: false, playCount: totalPlays })
       .then(() => {
-        clearTimeout(watchdog);
-        done();
+        done(true);
       })
       .catch(err => {
-        console.warn('Native AlarmPlugin.speak error, trying Web Speech fallback:', err);
-        clearTimeout(watchdog);
-        _speakWithWebSpeech(title, onComplete);
+        console.warn('Native AlarmPlugin.speak error, trying Web Speech sequence fallback:', err);
+        _speakWebSpeechSequence(title, totalPlays, onFinished);
       });
     return;
   }
 
   // 2. Desktop browser / PWA fallback
-  _speakWithWebSpeech(title, onComplete);
+  _speakWebSpeechSequence(title, totalPlays, onFinished);
+}
+
+function _speakWebSpeechSequence(title, totalPlays, onFinished) {
+  if (totalPlays <= 1) {
+    _speakWithWebSpeech(title, () => {
+      if (typeof onFinished === 'function') onFinished(true);
+    });
+    return;
+  }
+
+  const seq = {
+    stopped: false,
+    currentPlay: 0,
+    totalPlays: totalPlays,
+    gapTimer: null,
+    onFinished: onFinished
+  };
+  _currentSpeechSequence = seq;
+
+  const playStep = () => {
+    if (seq.stopped) return;
+    seq.currentPlay += 1;
+
+    _showNotificationStopPill(seq.currentPlay, seq.totalPlays, true);
+
+    _speakWithWebSpeech(title, () => {
+      if (seq.stopped) return;
+      if (seq.currentPlay >= seq.totalPlays) {
+        _hideNotificationStopPill();
+        const finishCb = seq.onFinished;
+        _currentSpeechSequence = null;
+        if (typeof finishCb === 'function') {
+          try { finishCb(true); } catch (e) {}
+        }
+      } else {
+        // Gap of exactly 2 seconds (2000 ms) before next repetition
+        seq.gapTimer = setTimeout(() => {
+          seq.gapTimer = null;
+          playStep();
+        }, 2000);
+      }
+    });
+  };
+
+  playStep();
+}
+
+function speakReminderTitle(title, onComplete) {
+  speakReminderTitleSequence(title, 1, onComplete);
 }
 
 function stopReminderSpeech() {
@@ -247,6 +497,23 @@ function stopReminderSpeech() {
   }
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     try { window.speechSynthesis.cancel(); } catch (e) {}
+  }
+}
+
+function previewReminderAlert(reminder) {
+  if (!reminder) return;
+  const playCount = (reminder.alertMode === 'notification') ? Math.max(1, parseInt(reminder.playCount, 10) || 1) : 1;
+  if (reminder.speakTitle) {
+    speakReminderTitleSequence(reminder.title, playCount);
+  } else {
+    playNotificationSoundSequence(reminder.sound || 'default', playCount);
+  }
+}
+
+function previewReminderAlertById(id) {
+  const rem = (appData.reminders || []).find(r => String(r.id) === String(id));
+  if (rem) {
+    previewReminderAlert(rem);
   }
 }
 
@@ -1091,6 +1358,7 @@ function _renderReminderListRow(r) {
             </p>
             <span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold ${status.badgeClass}">${status.label}</span>
             ${(r.alertMode !== 'notification') ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-100 text-[9px] font-bold"><i class="fa-solid fa-bell text-[8px] mr-1 text-rose-500"></i>Phone Alarm</span>` : `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 text-[9px] font-medium"><i class="fa-regular fa-bell text-[8px] mr-1 text-blue-500"></i>Notification</span>`}
+            ${r.alertMode === 'notification' && (parseInt(r.playCount, 10) || 1) > 1 ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 text-[9px] font-medium"><i class="fa-solid fa-repeat text-[8px] mr-1 text-blue-500"></i>${r.playCount}x (2s gap)</span>` : ''}
             ${r.repeat && r.repeat !== 'None' ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100 text-[9px] font-medium"><i class="fa-solid fa-repeat text-[8px] mr-1"></i>${repeatLabel}</span>` : ''}
             ${r.alertStyle === 'sound_only' ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-100 text-[9px] font-medium"><i class="fa-solid fa-volume-high text-[8px] mr-1"></i>Sound Only</span>` : ''}
             ${r.alertStyle === 'banner_only' ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 text-[9px] font-medium"><i class="fa-solid fa-message text-[8px] mr-1"></i>Banner Only</span>` : ''}
@@ -1230,7 +1498,7 @@ function renderReminderDetailView(id) {
             <i class="fa-solid fa-repeat text-indigo-500 text-[10px]"></i> ${repeatLabel}
           </p>
         </div>
-        <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+        <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-100 col-span-2">
           <p class="text-[10px] text-slate-400">Notification Style</p>
           <p class="font-bold text-slate-800 mt-0.5 flex items-center gap-1">
             <i class="fa-solid ${alertInfo.icon} text-blue-500 text-[10px]"></i> ${alertInfo.label}
@@ -1238,34 +1506,23 @@ function renderReminderDetailView(id) {
         </div>
         <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-100 col-span-2 flex items-center justify-between">
           <div>
-            <p class="text-[10px] text-slate-400">Alert Sound</p>
-            <p class="font-bold text-slate-800 mt-0.5 flex items-center gap-1.5">
-              <i class="fa-solid fa-music text-purple-500 text-[10px]"></i> ${getReminderSoundLabel(rem.sound)}
-              ${rem.speakTitle ? '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-700"><i class="fa-solid fa-volume-high mr-0.5"></i>Voice</span>' : ''}
+            <p class="text-[10px] text-slate-400">Alert Sound ${rem.alertMode === 'notification' && (rem.playCount || 1) > 1 ? `(${rem.playCount} times)` : ''}</p>
+            <p class="font-bold text-slate-800 mt-0.5 flex items-center gap-1.5 flex-wrap">
+              ${rem.speakTitle ? `
+                <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 flex items-center gap-1">
+                  <i class="fa-solid fa-volume-high"></i> Voice: "${_escapeHtml(rem.title)}"
+                </span>
+                <span class="text-[10px] text-slate-400 font-normal">(${getReminderSoundLabel(rem.sound)})</span>
+              ` : `
+                <i class="fa-solid fa-music text-purple-500 text-[10px]"></i> ${getReminderSoundLabel(rem.sound)}
+              `}
             </p>
           </div>
-          <button onclick="playReminderSound('${rem.sound || 'default'}')" class="px-2.5 py-1 bg-purple-50 text-purple-600 border border-purple-200 rounded-lg text-[10px] font-bold hover:bg-purple-100 transition flex items-center gap-1">
+          <button type="button" onclick="previewReminderAlertById('${rem.id}')" class="px-2.5 py-1 bg-purple-50 text-purple-600 border border-purple-200 rounded-lg text-[10px] font-bold hover:bg-purple-100 transition flex items-center gap-1 shadow-xs">
             <i class="fa-solid fa-play text-[8px]"></i> Preview Sound
           </button>
         </div>
       </div>
-
-      ${rem.speakTitle ? `
-        <div class="p-2.5 rounded-xl bg-purple-50/70 border border-purple-100 flex items-center justify-between text-xs">
-          <div class="flex items-center gap-2">
-            <div class="w-6 h-6 rounded-lg bg-purple-200/80 text-purple-700 flex items-center justify-center text-[10px]">
-              <i class="fa-solid fa-volume-high"></i>
-            </div>
-            <div>
-              <p class="text-[10px] text-slate-400 font-medium">Voice Title Announcement</p>
-              <p class="font-bold text-purple-900">Speaks "${_escapeHtml(rem.title)}" aloud</p>
-            </div>
-          </div>
-          <button type="button" onclick="speakReminderTitle('${_escapeAttr(rem.title)}')" class="px-2.5 py-1 bg-white border border-purple-200 text-purple-700 rounded-lg text-[10px] font-bold hover:bg-purple-100 transition flex items-center gap-1 shadow-xs">
-            <i class="fa-solid fa-play text-[8px]"></i> Test Voice
-          </button>
-        </div>
-      ` : ''}
 
       ${rem.quietHoursEnabled ? `
         <div class="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-100 flex items-center justify-between text-xs">
@@ -1370,6 +1627,9 @@ function renderReminderDetailView(id) {
 async function _cancelNativeAlarmAndNotification(id) {
   if (typeof stopReminderSoundLoop === 'function') {
     stopReminderSoundLoop();
+  }
+  if (typeof stopAnyReminderAlert === 'function') {
+    stopAnyReminderAlert();
   }
   const modal = document.getElementById('inAppAlarmModal');
   if (modal) modal.remove();
@@ -1580,6 +1840,7 @@ function renderReminderFormView(editId = null) {
   const quietStart = existing ? (existing.quietStart || '22:00') : '22:00';
   const quietEnd = existing ? (existing.quietEnd || '07:00') : '07:00';
   const isFavorite = existing ? Boolean(existing.favorite || existing.favourite) : false;
+  const playCount = existing ? (parseInt(existing.playCount, 10) || 1) : 1;
 
   content.innerHTML = `
     <div class="space-y-4">
@@ -1718,10 +1979,33 @@ function renderReminderFormView(editId = null) {
 
             <!-- Preview/Play Selected Sound -->
             <button type="button" onclick="testPreviewSelectedSound()" class="h-11 px-3 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl text-xs font-bold hover:bg-purple-100 transition flex items-center justify-center gap-1 shrink-0" title="Preview selected sound">
-              <i class="fa-solid fa-play text-[10px]"></i>
+              <i class="fa-solid fa-play text-[8px]"></i>
               <span>Play</span>
             </button>
           </div>
+        </div>
+
+        <!-- Notification Play Count Selector (Repetitions with 2s gap) -->
+        <div class="space-y-1.5 ${alertMode === 'notification' && alertStyle !== 'banner_only' ? '' : 'hidden'}" id="notificationPlayCountSection">
+          <label class="text-[11px] font-semibold text-slate-500 block">Sound Repetitions (2s gap)</label>
+          <div class="relative">
+            <select id="reminderPlayCountSelect" onchange="updateReminderPreview()" class="w-full text-xs p-3 pr-8 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-slate-50/50 font-medium appearance-none">
+              <option value="1" ${playCount === 1 ? 'selected' : ''}>Play 1 time</option>
+              <option value="2" ${playCount === 2 ? 'selected' : ''}>Play 2 times</option>
+              <option value="3" ${playCount === 3 ? 'selected' : ''}>Play 3 times</option>
+              <option value="4" ${playCount === 4 ? 'selected' : ''}>Play 4 times</option>
+              <option value="5" ${playCount === 5 ? 'selected' : ''}>Play 5 times</option>
+              <option value="6" ${playCount === 6 ? 'selected' : ''}>Play 6 times</option>
+              <option value="8" ${playCount === 8 ? 'selected' : ''}>Play 8 times</option>
+              <option value="10" ${playCount === 10 ? 'selected' : ''}>Play 10 times</option>
+            </select>
+            <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-400">
+              <i class="fa-solid fa-chevron-down text-[10px]"></i>
+            </div>
+          </div>
+          <p class="text-[10px] text-slate-400 flex items-center gap-1 font-normal">
+            <i class="fa-solid fa-circle-info text-[9px] text-blue-500"></i> Plays the alert chime repeatedly with a fixed 2-second pause between each chime.
+          </p>
         </div>
 
         <!-- Speak Title Aloud Toggle (Text-to-Speech) -->
@@ -1842,6 +2126,17 @@ function onAlertModeRadioChange(val) {
       if (icon) icon.className = `fa-solid ${radio?.value === 'alarm' ? 'fa-bell' : 'fa-regular fa-bell'} text-sm text-slate-400`;
     }
   });
+
+  const playCountSec = document.getElementById('notificationPlayCountSection');
+  const alertStyleRadio = document.querySelector('input[name="alertStyle"]:checked');
+  const style = alertStyleRadio ? alertStyleRadio.value : 'both';
+  if (playCountSec) {
+    if (val === 'notification' && style !== 'banner_only') {
+      playCountSec.classList.remove('hidden');
+    } else {
+      playCountSec.classList.add('hidden');
+    }
+  }
 }
 
 function onAlertStyleRadioChange(val) {
@@ -1864,6 +2159,17 @@ function onAlertStyleRadioChange(val) {
       if (icon) icon.className = `fa-solid ${radio?.value === 'sound_only' ? 'fa-volume-high' : radio?.value === 'banner_only' ? 'fa-message' : 'fa-bell'} text-sm text-slate-400`;
     }
   });
+
+  const playCountSec = document.getElementById('notificationPlayCountSection');
+  const alertModeRadio = document.querySelector('input[name="alertMode"]:checked');
+  const mode = alertModeRadio ? alertModeRadio.value : 'alarm';
+  if (playCountSec) {
+    if (mode === 'notification' && val !== 'banner_only') {
+      playCountSec.classList.remove('hidden');
+    } else {
+      playCountSec.classList.add('hidden');
+    }
+  }
 }
 
 function onRepeatSelectChange() {
@@ -1928,9 +2234,14 @@ function updateReminderPreview() {
 
   const speakToggle = document.getElementById('reminderSpeakTitleToggle');
   const isSpeakTitle = speakToggle ? speakToggle.checked : false;
+  const playCountEl = document.getElementById('reminderPlayCountSelect');
+  const playCount = parseInt(playCountEl ? playCountEl.value : '1', 10) || 1;
 
   if (prevSound) {
     let soundHtml = `<i class="fa-solid fa-music mr-1"></i>${getReminderSoundLabel(soundId)}`;
+    if (alertMode === 'notification' && alertStyle !== 'banner_only' && playCount > 1) {
+      soundHtml += ` • <span class="text-blue-300 font-bold">${playCount}x (2s gap)</span>`;
+    }
     if (isSpeakTitle) {
       soundHtml += ` • <i class="fa-solid fa-volume-high text-purple-300 mr-0.5"></i>Voice`;
     }
@@ -1997,6 +2308,8 @@ async function testCurrentReminderForm() {
   const note = (noteEl && noteEl.value.trim()) || 'This is how your phone alarm sounds and behaves.';
   const alertStyle = alertStyleRadio ? alertStyleRadio.value : 'both';
   const soundId = soundEl ? soundEl.value : 'default';
+  const playCountEl = document.getElementById('reminderPlayCountSelect');
+  const playCount = alertMode === 'notification' ? (parseInt(playCountEl ? playCountEl.value : '1', 10) || 1) : 1;
 
   const feedback = document.getElementById('testFeedbackMsg');
 
@@ -2016,35 +2329,35 @@ async function testCurrentReminderForm() {
   }
 
   if (isSpeakTitle) {
-    // If Text-to-Speech is enabled: play ONLY Text-to-Speech, NOT notification sound!
-    speakReminderTitle(title);
+    // If Text-to-Speech is enabled: speak title playCount times with 2s gap!
+    speakReminderTitleSequence(title, playCount);
     if (alertStyle !== 'sound_only') {
-      await _dispatchNotificationNow(title, note, false, 'test_alarm');
+      await _dispatchNotificationNow(title, note, false, 'test_alarm', playCount);
     }
     if (feedback) {
-      feedback.textContent = `✓ Spoken title played: "${title}" (Voice only, sound muted)`;
+      feedback.innerHTML = `✓ Spoken title playing (${playCount}x${playCount > 1 ? ', 2s gap' : ''}): "${title}"${playCount > 1 ? ` <button type="button" onclick="stopAnyReminderAlert()" class="underline font-bold text-rose-600 ml-1">Stop</button>` : ''}`;
       feedback.className = 'text-[10px] text-purple-600 font-medium text-center mt-1';
       feedback.classList.remove('hidden');
-      setTimeout(() => { if (feedback) feedback.classList.add('hidden'); }, 4000);
+      setTimeout(() => { if (feedback) feedback.classList.add('hidden'); }, Math.max(4000, playCount * 3000));
     }
     return;
   }
 
   if (alertStyle === 'sound_only') {
     // Only play sound, no banner!
-    playReminderSound(soundId);
+    playNotificationSoundSequence(soundId, playCount);
     if (feedback) {
-      feedback.textContent = `✓ Notification sound played (${getReminderSoundLabel(soundId)})! (Sound-only mode, banner suppressed)`;
+      feedback.innerHTML = `✓ Notification sound playing (${getReminderSoundLabel(soundId)}${playCount > 1 ? `, ${playCount} times with 2s gap` : ''})! (Sound-only mode, banner suppressed)${playCount > 1 ? ` <button type="button" onclick="stopAnyReminderAlert()" class="underline font-bold text-rose-600 ml-1">Stop</button>` : ''}`;
       feedback.className = 'text-[10px] text-purple-600 font-medium text-center mt-1';
       feedback.classList.remove('hidden');
-      setTimeout(() => { if (feedback) feedback.classList.add('hidden'); }, 4000);
+      setTimeout(() => { if (feedback) feedback.classList.add('hidden'); }, Math.max(4000, playCount * 2600));
     }
     return;
   }
 
   if (alertStyle === 'banner_only') {
     // Only banner, silent
-    await _dispatchNotificationNow(title, note, false, 'test_alarm');
+    await _dispatchNotificationNow(title, note, false, 'test_alarm', 1);
     if (feedback) {
       feedback.textContent = '✓ Silent notification banner sent!';
       feedback.className = 'text-[10px] text-slate-600 font-medium text-center mt-1';
@@ -2055,13 +2368,13 @@ async function testCurrentReminderForm() {
   }
 
   // 'both': Sound + Banner
-  playReminderSound(soundId);
-  await _dispatchNotificationNow(title, note, true, 'test_alarm');
+  playNotificationSoundSequence(soundId, playCount);
+  await _dispatchNotificationNow(title, note, true, 'test_alarm', playCount);
   if (feedback) {
-    feedback.textContent = `✓ Test notification banner sent with sound (${getReminderSoundLabel(soundId)})!`;
+    feedback.innerHTML = `✓ Test notification banner sent with sound (${getReminderSoundLabel(soundId)}${playCount > 1 ? `, ${playCount} times with 2s gap` : ''})!${playCount > 1 ? ` <button type="button" onclick="stopAnyReminderAlert()" class="underline font-bold text-rose-600 ml-1">Stop</button>` : ''}`;
     feedback.className = 'text-[10px] text-emerald-600 font-medium text-center mt-1';
     feedback.classList.remove('hidden');
-    setTimeout(() => { if (feedback) feedback.classList.add('hidden'); }, 4000);
+    setTimeout(() => { if (feedback) feedback.classList.add('hidden'); }, Math.max(4000, playCount * 2600));
   }
 }
 
@@ -2078,29 +2391,30 @@ async function testSpecificReminderAlert(id) {
   const title = rem.title || 'Life Tracker Reminder';
   const note = rem.note || `Alert test for "${title}" (${getReminderRepeatLabel(rem)})`;
   const soundId = rem.sound || 'default';
+  const playCount = Math.max(1, parseInt(rem.playCount, 10) || 1);
 
   if (rem.speakTitle) {
-    // If Text-to-Speech is enabled: play ONLY Text-to-Speech!
-    speakReminderTitle(title);
+    // If Text-to-Speech is enabled: speak title playCount times with 2s gap!
+    speakReminderTitleSequence(title, playCount);
     if (style !== 'sound_only') {
-      await _dispatchNotificationNow(title, note, false, 'test_' + rem.id);
+      await _dispatchNotificationNow(title, note, false, 'test_' + rem.id, playCount);
     }
     return;
   }
 
   if (style === 'sound_only') {
-    playReminderSound(soundId);
+    playNotificationSoundSequence(soundId, playCount);
     return;
   }
 
   if (style === 'banner_only') {
-    await _dispatchNotificationNow(title, note, false, 'test_' + rem.id);
+    await _dispatchNotificationNow(title, note, false, 'test_' + rem.id, 1);
     return;
   }
 
   // 'both': Sound + Banner
-  playReminderSound(soundId);
-  await _dispatchNotificationNow(title, note, true, 'test_' + rem.id);
+  playNotificationSoundSequence(soundId, playCount);
+  await _dispatchNotificationNow(title, note, true, 'test_' + rem.id, playCount);
 }
 
 // --------------- In-App Alarm Clock Modal (Real Phone Alarm Experience) ---
@@ -2354,9 +2668,17 @@ async function requestExactAlarmPermission() {
   }
 }
 
-async function _dispatchNotificationNow(title, body, withSound = true, reminderId = null) {
+async function _dispatchNotificationNow(title, body, withSound = true, reminderId = null, playCount = 1) {
+  const count = parseInt(playCount, 10) || 1;
+  const calculatedDuration = count > 1 ? Math.max(5000, (count * 600) + ((count - 1) * 2000) + 2000) : 5000;
   // Show in-app banner so alert is immediately visible inside browser
-  _showInAppAlertBanner(title, body, reminderId);
+  _showInAppAlertBanner({
+    title,
+    body,
+    reminderId,
+    durationMs: calculatedDuration,
+    playCount: count
+  });
 
   if (typeof Capacitor !== 'undefined' && Capacitor.Plugins && Capacitor.Plugins.LocalNotifications) {
     try {
@@ -2435,6 +2757,9 @@ async function handleSaveReminderSubmit(e, editId) {
   const favToggle = document.getElementById('reminderFavoriteToggle');
   const isFavorite = favToggle ? favToggle.checked : false;
 
+  const playCountEl = document.getElementById('reminderPlayCountSelect');
+  const playCount = alertMode === 'notification' ? (parseInt(playCountEl ? playCountEl.value : '1', 10) || 1) : 1;
+
   let customInterval = 15;
   let customUnit = 'minutes';
   if (repeat === 'Custom') {
@@ -2467,6 +2792,7 @@ async function handleSaveReminderSubmit(e, editId) {
       rem.quietStart = quietStart;
       rem.quietEnd = quietEnd;
       rem.note = note;
+      rem.playCount = playCount;
       rem.completed = false;
       rem.notified = false;
       savedItem = rem;
@@ -2489,6 +2815,7 @@ async function handleSaveReminderSubmit(e, editId) {
       quietStart,
       quietEnd,
       note,
+      playCount,
       paused: false,
       completed: false,
       notified: false,
@@ -2734,22 +3061,31 @@ function _checkAndFireReminders() {
       } else {
         const style = r.alertStyle || 'both';
         const isAppOpen = (typeof document !== 'undefined' && document.visibilityState === 'visible');
+        const playCount = Math.max(1, parseInt(r.playCount, 10) || 1);
+        const estimatedPerPlay = r.speakTitle ? 2500 : 600;
+        const calculatedBannerMs = Math.max(5000, (playCount * estimatedPerPlay) + ((playCount - 1) * 2000) + 2000);
 
         if (isAppOpen && isFresh) {
           if (r.speakTitle) {
-            speakReminderTitle(r.title);
+            speakReminderTitleSequence(r.title, playCount);
           } else if (style !== 'banner_only') {
-            playReminderSound(r.sound || 'default');
+            playNotificationSoundSequence(r.sound || 'default', playCount);
           }
           if (style !== 'sound_only') {
-            _showInAppAlertBanner(r.title, r.note, r.id);
+            _showInAppAlertBanner({
+              title: r.title,
+              body: r.note,
+              reminderId: r.id,
+              durationMs: calculatedBannerMs,
+              playCount: playCount
+            });
           }
         } else if (!isAppOpen) {
           if (style === 'both' || style === 'sound_only') {
             if (r.speakTitle) {
-              speakReminderTitle(r.title);
+              speakReminderTitleSequence(r.title, playCount);
             } else {
-              playReminderSound(r.sound || 'default');
+              playNotificationSoundSequence(r.sound || 'default', playCount);
             }
           }
           if (style === 'both' || style === 'banner_only') {
@@ -2784,27 +3120,32 @@ function _checkAndFireReminders() {
 
 let _inAppBannerDismissTimeout = null;
 
-function _showInAppAlertBanner(titleOrOpts, body, reminderId, durationMs = 5000) {
+function _showInAppAlertBanner(titleOrOpts, body, reminderId, durationMs = 5000, playCount = 1) {
   try {
-    // Support either positional args (title, body, reminderId, durationMs)
-    // or options object: { title, body, message, reminderId, durationMs, icon, badgeText, onClick }
+    // Support either positional args (title, body, reminderId, durationMs, playCount)
+    // or options object: { title, body, message, reminderId, durationMs, icon, badgeText, onClick, playCount }
     let title = 'Reminder';
     let iconClass = 'fa-solid fa-bell';
     let badgeText = 'Reminder Alert';
     let onClickFn = null;
+    let count = 1;
 
     if (titleOrOpts && typeof titleOrOpts === 'object') {
       const opts = titleOrOpts;
       title = opts.title || 'Notification';
       body = opts.body || opts.message || '';
       reminderId = opts.reminderId || null;
-      durationMs = typeof opts.durationMs === 'number' ? opts.durationMs : 5000;
+      count = parseInt(opts.playCount, 10) || 1;
+      const defaultDuration = count > 1 ? Math.max(5000, (count * 2500) + ((count - 1) * 2000) + 2000) : 5000;
+      durationMs = typeof opts.durationMs === 'number' ? opts.durationMs : defaultDuration;
       if (opts.icon) iconClass = opts.icon;
       if (opts.badgeText) badgeText = opts.badgeText;
       if (typeof opts.onClick === 'function') onClickFn = opts.onClick;
     } else {
       title = titleOrOpts || 'Reminder';
-      durationMs = typeof durationMs === 'number' ? durationMs : 5000;
+      count = parseInt(playCount, 10) || 1;
+      const defaultDuration = count > 1 ? Math.max(5000, (count * 2500) + ((count - 1) * 2000) + 2000) : 5000;
+      durationMs = typeof durationMs === 'number' ? durationMs : defaultDuration;
     }
 
     if (_inAppBannerDismissTimeout) {
@@ -2826,6 +3167,7 @@ function _showInAppAlertBanner(titleOrOpts, body, reminderId, durationMs = 5000)
         clearTimeout(_inAppBannerDismissTimeout);
         _inAppBannerDismissTimeout = null;
       }
+      stopAnyReminderAlert();
       if (banner && banner.parentNode) {
         banner.classList.remove('translate-y-0', 'opacity-100', 'scale-100');
         banner.classList.add('-translate-y-8', 'opacity-0', 'scale-95');
@@ -2861,7 +3203,18 @@ function _showInAppAlertBanner(titleOrOpts, body, reminderId, durationMs = 5000)
           </button>
         </div>
 
-        <!-- Animated Progress / Auto-Dismiss Countdown Bar (5.0s) -->
+        ${count > 1 ? `
+          <div class="flex items-center justify-between pt-1 border-t border-slate-800/80 text-[10px]" id="inAppBannerAudioRow">
+            <span class="text-blue-400 font-semibold flex items-center gap-1">
+              <i class="fa-solid fa-volume-high animate-bounce text-[9px]"></i> Repeating alert (${count}x, 2s gap)
+            </span>
+            <button type="button" id="inAppBannerStopAudioBtn" class="px-2 py-0.5 bg-rose-600 hover:bg-rose-700 text-white rounded-md text-[10px] font-bold transition flex items-center gap-1 shadow-xs">
+              <i class="fa-solid fa-stop text-[8px]"></i> Stop Alert
+            </button>
+          </div>
+        ` : ''}
+
+        <!-- Animated Progress / Auto-Dismiss Countdown Bar -->
         <div class="w-full h-1 bg-slate-800/80 rounded-full overflow-hidden">
           <div id="inAppBannerProgress" class="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 rounded-full w-full" style="transition: width ${durationMs}ms linear;"></div>
         </div>
@@ -2873,6 +3226,18 @@ function _showInAppAlertBanner(titleOrOpts, body, reminderId, durationMs = 5000)
     // Event listeners
     const cardEl = banner.querySelector('#inAppBannerCard');
     const closeBtn = banner.querySelector('#inAppBannerCloseBtn');
+    const stopAudioBtn = banner.querySelector('#inAppBannerStopAudioBtn');
+
+    if (stopAudioBtn) {
+      stopAudioBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        stopAnyReminderAlert();
+        const row = banner.querySelector('#inAppBannerAudioRow');
+        if (row) {
+          row.innerHTML = `<span class="text-slate-400 text-[10px]"><i class="fa-solid fa-check text-[9px] text-emerald-400 mr-1"></i>Alert stopped</span>`;
+        }
+      });
+    }
 
     if (closeBtn) {
       closeBtn.addEventListener('click', (e) => {
@@ -2938,9 +3303,17 @@ function _fireBrowserNotification(reminder) {
   const rep = getReminderRepeatLabel(reminder);
   const title = `Life Tracker: ${reminder.title}`;
   const body = `${reminder.note ? reminder.note + '\n' : ''}Scheduled: ${timeStr} • ${rep}`;
+  const playCount = Math.max(1, parseInt(reminder.playCount, 10) || 1);
+  const calculatedBannerMs = Math.max(5000, (playCount * 600) + ((playCount - 1) * 2000) + 2000);
 
   // 1. Always display guaranteed in-app visual banner
-  _showInAppAlertBanner(reminder.title, reminder.note, reminder.id);
+  _showInAppAlertBanner({
+    title: reminder.title,
+    body: reminder.note,
+    reminderId: reminder.id,
+    durationMs: calculatedBannerMs,
+    playCount: playCount
+  });
 
   // Requirement: "if app is open it should not play notif."
   // When app is open / visible, do NOT post OS / browser system notifications!
@@ -3089,10 +3462,26 @@ function _setupNativeNotificationClickListener() {
   }
 }
 
+let _nativeAlarmListenersSetup = false;
+
 function _setupNativeAlarmListener() {
+  if (_nativeAlarmListenersSetup) return;
   if (typeof Capacitor === 'undefined' || !Capacitor.Plugins || !Capacitor.Plugins.AlarmPlugin) return;
+  _nativeAlarmListenersSetup = true;
 
   try {
+    Capacitor.Plugins.AlarmPlugin.addListener('alertProgress', (data) => {
+      console.log('[AlarmPlugin] Native alert progress:', data);
+      if (data && data.current && data.total && data.total > 1) {
+        _showNotificationStopPill(data.current, data.total, !!data.isVoice);
+      }
+    });
+
+    Capacitor.Plugins.AlarmPlugin.addListener('alertFinished', () => {
+      console.log('[AlarmPlugin] Native alert finished');
+      _hideNotificationStopPill();
+    });
+
     Capacitor.Plugins.AlarmPlugin.addListener('alarmDismissed', async (data) => {
       console.log('[AlarmPlugin] Native alarm dismissed:', data);
       const alarmId = data?.id;
@@ -3272,7 +3661,8 @@ async function _scheduleNativeNotification(reminder) {
         customUnit: reminder.customUnit || 'days',
         mode: isAlarm ? 'alarm' : 'notification',
         alertStyle: reminder.alertStyle || 'both',
-        speakTitle: !!reminder.speakTitle
+        speakTitle: !!reminder.speakTitle,
+        playCount: Number(reminder.playCount) || 1
       });
       return;
     } catch (e) {
@@ -3340,3 +3730,59 @@ function _reminderIdToInt(id) {
   }
   return Math.abs(hash);
 }
+
+// Hook called whenever reminders are restored (from Google Drive or local JSON backup).
+// Resyncs custom audio, cleans up removed native alarms, catches up recurring timers,
+// reschedules all active alarms with native Android AlarmManager / LocalNotifications,
+// and re-renders the Reminders UI if currently open.
+async function onRemindersRestored() {
+  if (typeof _syncAllCustomSoundsToNative === 'function') {
+    try { await _syncAllCustomSoundsToNative(); } catch (e) { console.warn('Sync custom sounds error:', e); }
+  }
+
+  // Clean up any obsolete alarms from native Android that are no longer in appData.reminders
+  if (typeof Capacitor !== 'undefined' && Capacitor.Plugins && Capacitor.Plugins.AlarmPlugin) {
+    try {
+      const res = await Capacitor.Plugins.AlarmPlugin.getPendingAlarms();
+      const nativeAlarms = (res && Array.isArray(res.alarms)) ? res.alarms : [];
+      const currentIds = new Set((appData.reminders || []).map(r => String(r.id)));
+      for (const na of nativeAlarms) {
+        if (!currentIds.has(String(na.id))) {
+          await _cancelNativeAlarmAndNotification(na.id);
+        }
+      }
+    } catch (e) {
+      console.warn('Error cleaning up obsolete native alarms:', e);
+    }
+  }
+
+  // Fast-forward any recurring reminders whose trigger datetime passed while offline/restoring
+  if (typeof _catchUpPastRecurringReminders === 'function') {
+    try { _catchUpPastRecurringReminders(); } catch (e) { console.warn(e); }
+  }
+
+  // Reschedule all active reminders with Android AlarmManager & LocalNotifications
+  if (typeof _rescheduleAllActiveReminders === 'function') {
+    try { await _rescheduleAllActiveReminders(); } catch (e) { console.warn(e); }
+  }
+
+  // Refresh Reminders view if currently open on screen
+  const overlay = document.getElementById('remindersOverlay');
+  if (overlay && !overlay.classList.contains('hidden')) {
+    if (typeof renderRemindersListView === 'function') renderRemindersListView();
+  } else if (typeof currentTab !== 'undefined' && currentTab === 'reminders') {
+    if (typeof renderRemindersPage === 'function') renderRemindersPage(document.getElementById('mainContainer'));
+  }
+}
+
+window.onRemindersRestored = onRemindersRestored;
+window.scheduleAllReminders = onRemindersRestored;
+
+if (typeof window !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => _setupNativeAlarmListener());
+  } else {
+    _setupNativeAlarmListener();
+  }
+}
+

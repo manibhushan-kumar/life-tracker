@@ -19,8 +19,9 @@
 // before uploading, fetch whatever's on Drive right now and compare its
 // `updatedAt` against the local blob's. If Drive is newer, stop and ask the
 // user Pull / Overwrite / Cancel instead of assuming local is right.
-
-const VAULT_FILE_NAME = 'vault.enc';
+if (typeof VAULT_FILE_NAME === 'undefined') {
+  var VAULT_FILE_NAME = 'vault.enc';
+}
 
 function _vaultSyncRequireConnected() {
   if (!gdriveToken) throw new Error('Connect Google Drive first.');

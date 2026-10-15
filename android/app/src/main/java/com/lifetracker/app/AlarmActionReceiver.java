@@ -19,6 +19,7 @@ public class AlarmActionReceiver extends BroadcastReceiver {
 
         // Immediately stop continuous audio and notification
         AlarmService.stopAlarm(context);
+        AlarmReceiver.stopNotificationSound();
 
         if (alarmId != null) {
             android.app.NotificationManager nm = (android.app.NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);

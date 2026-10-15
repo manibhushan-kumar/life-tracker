@@ -51,6 +51,7 @@ public class AlarmScheduler {
             intent.putExtra("mode", alarm.optString("mode", "alarm"));
             intent.putExtra("alert_style", alarm.optString("alertStyle", "both"));
             intent.putExtra("speak_title", alarm.optBoolean("speakTitle", false));
+            intent.putExtra("play_count", alarm.optInt("playCount", 1));
 
             int requestCode = Math.abs(id.hashCode());
             int flags = PendingIntent.FLAG_UPDATE_CURRENT;
