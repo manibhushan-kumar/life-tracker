@@ -70,6 +70,15 @@ public class AlarmService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent == null) {
+            try {
+                createNotificationChannel();
+                Notification notification = buildAlarmNotification("service_recovery", "Life Tracker Alert", "");
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+                } else {
+                    startForeground(NOTIFICATION_ID, notification);
+                }
+            } catch (Exception ignore) {}
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -92,10 +101,14 @@ public class AlarmService extends Service {
         // 2. Build high-priority lock-screen notification with FullScreenIntent and action buttons
         Notification notification = buildAlarmNotification(alarmId, title, note);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
-        } else {
-            startForeground(NOTIFICATION_ID, notification);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+            } else {
+                startForeground(NOTIFICATION_ID, notification);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error starting foreground service notification", e);
         }
 
         // 3. Attempt direct AlarmActivity launch over the lockscreen

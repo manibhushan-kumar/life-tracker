@@ -1612,11 +1612,13 @@ function renderReminderDetailView(id) {
       ${!rem.completed && !rem.paused ? `
         <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-100 space-y-1.5">
           <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Quick Snooze</p>
-          <div class="grid grid-cols-4 gap-1.5 text-center">
-            <button onclick="snoozeReminder('${rem.id}', 5, 'minutes')" class="py-1.5 bg-white border border-slate-200 rounded-lg text-[11px] font-bold text-slate-700 hover:bg-blue-50 hover:border-blue-300 transition">+5m</button>
-            <button onclick="snoozeReminder('${rem.id}', 15, 'minutes')" class="py-1.5 bg-white border border-slate-200 rounded-lg text-[11px] font-bold text-slate-700 hover:bg-blue-50 hover:border-blue-300 transition">+15m</button>
-            <button onclick="snoozeReminder('${rem.id}', 60, 'minutes')" class="py-1.5 bg-white border border-slate-200 rounded-lg text-[11px] font-bold text-slate-700 hover:bg-blue-50 hover:border-blue-300 transition">+1h</button>
-            <button onclick="snoozeReminder('${rem.id}', 1, 'days')" class="py-1.5 bg-white border border-slate-200 rounded-lg text-[11px] font-bold text-slate-700 hover:bg-blue-50 hover:border-blue-300 transition">+1 Day</button>
+          <div class="grid grid-cols-6 gap-1 text-center">
+            <button onclick="snoozeReminder('${rem.id}', 1, 'minutes')" class="py-1.5 bg-white border border-slate-200 rounded-lg text-[10px] font-bold text-slate-700 hover:bg-blue-50 hover:border-blue-300 transition cursor-pointer active:scale-95 shadow-2xs">+1m</button>
+            <button onclick="snoozeReminder('${rem.id}', 5, 'minutes')" class="py-1.5 bg-white border border-slate-200 rounded-lg text-[10px] font-bold text-slate-700 hover:bg-blue-50 hover:border-blue-300 transition cursor-pointer active:scale-95 shadow-2xs">+5m</button>
+            <button onclick="snoozeReminder('${rem.id}', 15, 'minutes')" class="py-1.5 bg-white border border-slate-200 rounded-lg text-[10px] font-bold text-slate-700 hover:bg-blue-50 hover:border-blue-300 transition cursor-pointer active:scale-95 shadow-2xs">+15m</button>
+            <button onclick="snoozeReminder('${rem.id}', 30, 'minutes')" class="py-1.5 bg-white border border-slate-200 rounded-lg text-[10px] font-bold text-slate-700 hover:bg-blue-50 hover:border-blue-300 transition cursor-pointer active:scale-95 shadow-2xs">+30m</button>
+            <button onclick="snoozeReminder('${rem.id}', 60, 'minutes')" class="py-1.5 bg-white border border-slate-200 rounded-lg text-[10px] font-bold text-slate-700 hover:bg-blue-50 hover:border-blue-300 transition cursor-pointer active:scale-95 shadow-2xs">+1h</button>
+            <button onclick="snoozeReminder('${rem.id}', 1, 'days')" class="py-1.5 bg-white border border-slate-200 rounded-lg text-[10px] font-bold text-slate-700 hover:bg-blue-50 hover:border-blue-300 transition cursor-pointer active:scale-95 shadow-2xs">+1d</button>
           </div>
         </div>
       ` : ''}
@@ -1781,8 +1783,17 @@ function showRescheduleAndResumeModal(rem) {
     ? origDt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     : '';
 
+  const in1m = new Date(now.getTime() + 1 * 60000);
+  const in1mStr = in1m.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
+  const in5m = new Date(now.getTime() + 5 * 60000);
+  const in5mStr = in5m.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
   const in15m = new Date(now.getTime() + 15 * 60000);
   const in15mStr = in15m.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
+  const in30m = new Date(now.getTime() + 30 * 60000);
+  const in30mStr = in30m.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
   const in1h = new Date(now.getTime() + 60 * 60000);
   const in1hStr = in1h.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
@@ -1829,38 +1840,37 @@ function showRescheduleAndResumeModal(rem) {
           </p>
         </div>
 
-        <p class="text-[11px] font-bold text-slate-600 mb-2">Choose when this alert should trigger:</p>
+        <p class="text-[11px] font-bold text-slate-600 mb-2">Quick Presets:</p>
+        <div class="grid grid-cols-5 gap-1.5 mb-2.5">
+          <button type="button" onclick="resumeReminderWithOffset('${rem.id}', 1)" class="p-2 rounded-xl border border-slate-200 hover:border-amber-400 hover:bg-amber-50/50 bg-white transition flex flex-col items-center justify-center text-center group active:scale-95 cursor-pointer shadow-2xs">
+            <i class="fa-solid fa-bolt text-xs text-amber-500 mb-1 group-hover:scale-110 transition"></i>
+            <span class="text-xs font-bold text-slate-800">1 min</span>
+            <span class="text-[9px] text-slate-400 leading-tight">~${in1mStr}</span>
+          </button>
+          <button type="button" onclick="resumeReminderWithOffset('${rem.id}', 5)" class="p-2 rounded-xl border border-slate-200 hover:border-blue-400 hover:bg-blue-50/50 bg-white transition flex flex-col items-center justify-center text-center group active:scale-95 cursor-pointer shadow-2xs">
+            <i class="fa-solid fa-clock text-xs text-blue-500 mb-1 group-hover:scale-110 transition"></i>
+            <span class="text-xs font-bold text-slate-800">5 mins</span>
+            <span class="text-[9px] text-slate-400 leading-tight">~${in5mStr}</span>
+          </button>
+          <button type="button" onclick="resumeReminderWithOffset('${rem.id}', 15)" class="p-2 rounded-xl border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/50 bg-white transition flex flex-col items-center justify-center text-center group active:scale-95 cursor-pointer shadow-2xs">
+            <i class="fa-solid fa-clock text-xs text-indigo-500 mb-1 group-hover:scale-110 transition"></i>
+            <span class="text-xs font-bold text-slate-800">15 min</span>
+            <span class="text-[9px] text-slate-400 leading-tight">~${in15mStr}</span>
+          </button>
+          <button type="button" onclick="resumeReminderWithOffset('${rem.id}', 30)" class="p-2 rounded-xl border border-slate-200 hover:border-purple-400 hover:bg-purple-50/50 bg-white transition flex flex-col items-center justify-center text-center group active:scale-95 cursor-pointer shadow-2xs">
+            <i class="fa-solid fa-clock text-xs text-purple-500 mb-1 group-hover:scale-110 transition"></i>
+            <span class="text-xs font-bold text-slate-800">30 min</span>
+            <span class="text-[9px] text-slate-400 leading-tight">~${in30mStr}</span>
+          </button>
+          <button type="button" onclick="resumeReminderWithOffset('${rem.id}', 60)" class="p-2 rounded-xl border border-slate-200 hover:border-emerald-400 hover:bg-emerald-50/50 bg-white transition flex flex-col items-center justify-center text-center group active:scale-95 cursor-pointer shadow-2xs">
+            <i class="fa-solid fa-hourglass-half text-xs text-emerald-500 mb-1 group-hover:scale-110 transition"></i>
+            <span class="text-xs font-bold text-slate-800">1 hr</span>
+            <span class="text-[9px] text-slate-400 leading-tight">~${in1hStr}</span>
+          </button>
+        </div>
 
         <div class="space-y-2">
-          <!-- Option 1: In 15 mins -->
-          <button type="button" onclick="resumeReminderWithOffset('${rem.id}', 15)" class="w-full p-3 rounded-2xl border border-slate-200 hover:border-amber-400 hover:bg-amber-50/40 bg-white transition flex items-center justify-between group active:scale-[0.99] text-left cursor-pointer">
-            <div class="flex items-center gap-3 min-w-0">
-              <div class="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
-                <i class="fa-solid fa-bolt text-xs"></i>
-              </div>
-              <div class="min-w-0">
-                <p class="text-xs font-bold text-slate-800 group-hover:text-amber-700 transition">In 15 minutes</p>
-                <p class="text-[10px] text-slate-400">Triggers at ~${in15mStr}</p>
-              </div>
-            </div>
-            <i class="fa-solid fa-chevron-right text-xs text-slate-300 group-hover:text-amber-500 transition shrink-0 ml-2"></i>
-          </button>
-
-          <!-- Option 2: In 1 hour -->
-          <button type="button" onclick="resumeReminderWithOffset('${rem.id}', 60)" class="w-full p-3 rounded-2xl border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 bg-white transition flex items-center justify-between group active:scale-[0.99] text-left cursor-pointer">
-            <div class="flex items-center gap-3 min-w-0">
-              <div class="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 border border-blue-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
-                <i class="fa-solid fa-hourglass-half text-xs"></i>
-              </div>
-              <div class="min-w-0">
-                <p class="text-xs font-bold text-slate-800 group-hover:text-blue-700 transition">In 1 hour</p>
-                <p class="text-[10px] text-slate-400">Triggers at ~${in1hStr}</p>
-              </div>
-            </div>
-            <i class="fa-solid fa-chevron-right text-xs text-slate-300 group-hover:text-blue-500 transition shrink-0 ml-2"></i>
-          </button>
-
-          <!-- Option 3: Same time tomorrow -->
+          <!-- Option: Same time tomorrow -->
           <button type="button" onclick="resumeReminderSameTimeTomorrow('${rem.id}')" class="w-full p-3 rounded-2xl border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/40 bg-white transition flex items-center justify-between group active:scale-[0.99] text-left cursor-pointer">
             <div class="flex items-center gap-3 min-w-0">
               <div class="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
@@ -1874,7 +1884,7 @@ function showRescheduleAndResumeModal(rem) {
             <i class="fa-solid fa-chevron-right text-xs text-slate-300 group-hover:text-indigo-500 transition shrink-0 ml-2"></i>
           </button>
 
-          <!-- Option 4: Pick Date & Time -->
+          <!-- Option: Pick Date & Time -->
           <button type="button" onclick="toggleRescheduleCustomPicker()" class="w-full p-3 rounded-2xl border border-slate-200 hover:border-emerald-400 hover:bg-emerald-50/40 bg-white transition flex items-center justify-between group active:scale-[0.99] text-left cursor-pointer">
             <div class="flex items-center gap-3 min-w-0">
               <div class="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
@@ -2186,28 +2196,32 @@ function renderReminderFormView(editId = null) {
             <span id="triggerStatusBadge" class="text-[10px] font-medium text-slate-400">Date & Time</span>
           </div>
 
-          <div class="grid grid-cols-3 sm:grid-cols-6 gap-2" id="triggerPresetSelector">
-            <button type="button" onclick="selectReminderTriggerPreset('1m')" id="triggerBtn_1m" class="border border-slate-200 bg-white text-slate-600 font-medium hover:bg-slate-50 py-2.5 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-2xs">
+          <div class="grid grid-cols-4 sm:grid-cols-7 gap-1.5" id="triggerPresetSelector">
+            <button type="button" onclick="selectReminderTriggerPreset('1m')" id="triggerBtn_1m" class="border border-slate-200 bg-white text-slate-600 font-medium hover:bg-slate-50 py-2 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-2xs">
               <i class="fa-solid fa-bolt text-xs mb-1"></i>
               <span class="text-xs">1 min</span>
             </button>
-            <button type="button" onclick="selectReminderTriggerPreset('5m')" id="triggerBtn_5m" class="border border-slate-200 bg-white text-slate-600 font-medium hover:bg-slate-50 py-2.5 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-2xs">
+            <button type="button" onclick="selectReminderTriggerPreset('5m')" id="triggerBtn_5m" class="border border-slate-200 bg-white text-slate-600 font-medium hover:bg-slate-50 py-2 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-2xs">
               <i class="fa-solid fa-clock text-xs mb-1"></i>
               <span class="text-xs">5 mins</span>
             </button>
-            <button type="button" onclick="selectReminderTriggerPreset('15m')" id="triggerBtn_15m" class="border border-slate-200 bg-white text-slate-600 font-medium hover:bg-slate-50 py-2.5 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-2xs">
+            <button type="button" onclick="selectReminderTriggerPreset('15m')" id="triggerBtn_15m" class="border border-slate-200 bg-white text-slate-600 font-medium hover:bg-slate-50 py-2 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-2xs">
               <i class="fa-solid fa-clock text-xs mb-1"></i>
               <span class="text-xs">15 min</span>
             </button>
-            <button type="button" onclick="selectReminderTriggerPreset('30m')" id="triggerBtn_30m" class="border border-slate-200 bg-white text-slate-600 font-medium hover:bg-slate-50 py-2.5 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-2xs">
+            <button type="button" onclick="selectReminderTriggerPreset('30m')" id="triggerBtn_30m" class="border border-slate-200 bg-white text-slate-600 font-medium hover:bg-slate-50 py-2 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-2xs">
               <i class="fa-solid fa-clock text-xs mb-1"></i>
               <span class="text-xs">30 min</span>
             </button>
-            <button type="button" onclick="selectReminderTriggerPreset('1h')" id="triggerBtn_1h" class="border border-slate-200 bg-white text-slate-600 font-medium hover:bg-slate-50 py-2.5 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-2xs">
+            <button type="button" onclick="selectReminderTriggerPreset('1h')" id="triggerBtn_1h" class="border border-slate-200 bg-white text-slate-600 font-medium hover:bg-slate-50 py-2 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-2xs">
               <i class="fa-solid fa-hourglass-half text-xs mb-1"></i>
               <span class="text-xs">1 hr</span>
             </button>
-            <button type="button" onclick="selectReminderTriggerPreset('custom')" id="triggerBtn_custom" class="border-2 border-blue-600 bg-blue-50 text-blue-700 font-bold py-2.5 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer shadow-xs active:scale-95">
+            <button type="button" onclick="selectReminderTriggerPreset('tomorrow')" id="triggerBtn_tomorrow" class="border border-slate-200 bg-white text-slate-600 font-medium hover:bg-slate-50 py-2 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-2xs">
+              <i class="fa-solid fa-calendar-day text-xs mb-1"></i>
+              <span class="text-xs">Tomorrow</span>
+            </button>
+            <button type="button" onclick="selectReminderTriggerPreset('custom')" id="triggerBtn_custom" class="border-2 border-blue-600 bg-blue-50 text-blue-700 font-bold py-2 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer shadow-xs active:scale-95 col-span-2 sm:col-span-1">
               <i class="fa-regular fa-calendar-days text-xs mb-1"></i>
               <span class="text-xs">Date & Time</span>
             </button>
@@ -2466,10 +2480,16 @@ function renderReminderFormView(editId = null) {
   _updateTriggerPresetUI();
 }
 
-// --------------- Quick Trigger Presets (1 min, 5 mins, 15 min, 30 min, 1 hr, Date & Time) ----
+// --------------- Quick Trigger Presets (1 min, 5 mins, 15 min, 30 min, 1 hr, Tomorrow, Date & Time) ----
 
 function _getPresetTargetDate(presetKey) {
   const now = new Date();
+  if (presetKey === 'tomorrow') {
+    const d = new Date(now.getTime());
+    d.setDate(d.getDate() + 1);
+    d.setSeconds(0, 0);
+    return d;
+  }
   const d = new Date(now.getTime());
   let addMs = 0;
   if (presetKey === '1m') addMs = 60 * 1000;
@@ -2496,6 +2516,7 @@ function _getPresetLabel(presetKey) {
   if (presetKey === '15m') return '15 min';
   if (presetKey === '30m') return '30 min';
   if (presetKey === '1h') return '1 hr';
+  if (presetKey === 'tomorrow') return 'Same time tomorrow';
   return 'Date & Time';
 }
 
@@ -2522,7 +2543,7 @@ function onCustomDatetimeChange() {
 
 function _updateTriggerPresetUI() {
   const activeKey = _selectedReminderTriggerPreset || 'custom';
-  const keys = ['1m', '5m', '15m', '30m', '1h', 'custom'];
+  const keys = ['1m', '5m', '15m', '30m', '1h', 'tomorrow', 'custom'];
 
   keys.forEach(k => {
     const btn = document.getElementById(`triggerBtn_${k}`);
@@ -2555,13 +2576,21 @@ function _updateTriggerPresetUI() {
     if (labelEl) labelEl.textContent = labelText;
     if (subtextEl) {
       const timeStr = targetDt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-      subtextEl.textContent = `Scheduled for ~${timeStr}`;
+      subtextEl.textContent = _selectedReminderTriggerPreset === 'tomorrow'
+        ? `Scheduled for tomorrow at ~${timeStr}`
+        : `Scheduled for ~${timeStr}`;
     }
     if (bannerIcon) {
-      bannerIcon.className = _selectedReminderTriggerPreset === '1m' ? 'fa-solid fa-bolt' : _selectedReminderTriggerPreset === '1h' ? 'fa-solid fa-hourglass-half' : 'fa-solid fa-clock';
+      bannerIcon.className = _selectedReminderTriggerPreset === '1m'
+        ? 'fa-solid fa-bolt'
+        : _selectedReminderTriggerPreset === '1h'
+        ? 'fa-solid fa-hourglass-half'
+        : _selectedReminderTriggerPreset === 'tomorrow'
+        ? 'fa-solid fa-calendar-day'
+        : 'fa-solid fa-clock';
     }
     if (statusBadge) {
-      statusBadge.textContent = `In ${labelText}`;
+      statusBadge.textContent = _selectedReminderTriggerPreset === 'tomorrow' ? 'Tomorrow' : `In ${labelText}`;
       statusBadge.className = 'text-[10px] font-bold text-blue-600';
     }
   } else {

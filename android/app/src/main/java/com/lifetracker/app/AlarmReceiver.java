@@ -115,15 +115,19 @@ public class AlarmReceiver extends BroadcastReceiver {
     }
 
     private void triggerAlarmServiceAndActivity(Context context, Intent intent) {
-        // Acquire wake lock to illuminate locked screen
-        PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
-        if (pm != null) {
-            @SuppressWarnings("deprecation")
-            int wakeFlags = PowerManager.SCREEN_BRIGHT_WAKE_LOCK |
-                            PowerManager.ACQUIRE_CAUSES_WAKEUP |
-                            PowerManager.ON_AFTER_RELEASE;
-            PowerManager.WakeLock wakeLock = pm.newWakeLock(wakeFlags, "LifeTracker:AlarmReceiverWakeLock");
-            wakeLock.acquire(30000); // 30 seconds
+        // Acquire wake lock to illuminate locked screen safely
+        try {
+            PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            if (pm != null) {
+                @SuppressWarnings("deprecation")
+                int wakeFlags = PowerManager.SCREEN_BRIGHT_WAKE_LOCK |
+                                PowerManager.ACQUIRE_CAUSES_WAKEUP |
+                                PowerManager.ON_AFTER_RELEASE;
+                PowerManager.WakeLock wakeLock = pm.newWakeLock(wakeFlags, "LifeTracker:AlarmReceiverWakeLock");
+                wakeLock.acquire(30000); // 30 seconds
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Could not acquire screen wake lock in AlarmReceiver", e);
         }
 
         try {
@@ -200,19 +204,28 @@ public class AlarmReceiver extends BroadcastReceiver {
             // Case 1: Sound Only - Play audio chime / speech directly, DO NOT post visual notification banner
             if (isSoundOnly) {
                 Log.d(TAG, "Reminder alert style is 'sound_only'. Playing audio/speech without banner for: " + alarmId + " (" + playCount + " times)");
+                final Context appContext = context.getApplicationContext();
+                final PendingResult pendingResult = goAsync();
+                final Handler safetyHandler = new Handler(Looper.getMainLooper());
+                final boolean[] isFinished = new boolean[]{false};
+                final Runnable finishRunnable = () -> {
+                    if (!isFinished[0]) {
+                        isFinished[0] = true;
+                        try { pendingResult.finish(); } catch (Exception ignore) {}
+                    }
+                };
+                // Ensure broadcast finishes well before system 10s ANR timeout
+                safetyHandler.postDelayed(finishRunnable, 8000L);
+
                 if (speakTitle) {
-                    final PendingResult pendingResult = goAsync();
-                    TTSManager.speakSequence(context, title, playCount, false, () -> {
-                        try {
-                            pendingResult.finish();
-                        } catch (Exception ignore) {}
+                    TTSManager.speakSequence(appContext, title, playCount, false, () -> {
+                        safetyHandler.removeCallbacks(finishRunnable);
+                        finishRunnable.run();
                     });
                 } else {
-                    final PendingResult pendingResult = goAsync();
-                    playNotificationSound(context, soundId, playCount, () -> {
-                        try {
-                            pendingResult.finish();
-                        } catch (Exception ignore) {}
+                    playNotificationSound(appContext, soundId, playCount, () -> {
+                        safetyHandler.removeCallbacks(finishRunnable);
+                        finishRunnable.run();
                     });
                 }
                 return;
@@ -300,22 +313,41 @@ public class AlarmReceiver extends BroadcastReceiver {
 
             nm.notify(notifId, builder.build());
 
+            final Context appContext = context.getApplicationContext();
             if (speakTitle) {
                 // If text-to-speech is enabled, keep CPU awake and speak title via goAsync
                 final PendingResult pendingResult = goAsync();
-                TTSManager.speakSequence(context, title, playCount, false, () -> {
-                    try {
-                        pendingResult.finish();
-                    } catch (Exception ignore) {}
+                final Handler safetyHandler = new Handler(Looper.getMainLooper());
+                final boolean[] isFinished = new boolean[]{false};
+                final Runnable finishRunnable = () -> {
+                    if (!isFinished[0]) {
+                        isFinished[0] = true;
+                        try { pendingResult.finish(); } catch (Exception ignore) {}
+                    }
+                };
+                safetyHandler.postDelayed(finishRunnable, 8000L);
+
+                TTSManager.speakSequence(appContext, title, playCount, false, () -> {
+                    safetyHandler.removeCallbacks(finishRunnable);
+                    finishRunnable.run();
                 });
             } else if (!isBannerOnly) {
                 // If playCount > 1 or custom sound was selected: play repeated notification sound sequence
                 if (playCount > 1 || isCustom) {
                     final PendingResult pendingResult = goAsync();
-                    playNotificationSound(context, soundId, playCount, () -> {
-                        try {
-                            pendingResult.finish();
-                        } catch (Exception ignore) {}
+                    final Handler safetyHandler = new Handler(Looper.getMainLooper());
+                    final boolean[] isFinished = new boolean[]{false};
+                    final Runnable finishRunnable = () -> {
+                        if (!isFinished[0]) {
+                            isFinished[0] = true;
+                            try { pendingResult.finish(); } catch (Exception ignore) {}
+                        }
+                    };
+                    safetyHandler.postDelayed(finishRunnable, 8000L);
+
+                    playNotificationSound(appContext, soundId, playCount, () -> {
+                        safetyHandler.removeCallbacks(finishRunnable);
+                        finishRunnable.run();
                     });
                 }
             }
