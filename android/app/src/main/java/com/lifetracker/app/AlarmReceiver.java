@@ -82,7 +82,14 @@ public class AlarmReceiver extends BroadcastReceiver {
                     AlarmScheduler.scheduleAlarm(context, storedAlarm);
                     Log.d(TAG, "Recurring notification " + alarmId + " rescheduled for next occurrence: " + nextTimestamp);
                 } else {
-                    storedAlarm.put("completed", true);
+                    String afterAlertAction = storedAlarm.optString("afterAlertAction", "complete");
+                    if ("pause".equalsIgnoreCase(afterAlertAction)) {
+                        storedAlarm.put("paused", true);
+                        storedAlarm.put("completed", false);
+                    } else {
+                        storedAlarm.put("completed", true);
+                        storedAlarm.put("paused", false);
+                    }
                     storedAlarm.put("lastTriggeredAt", System.currentTimeMillis());
                     AlarmsStorage.saveAlarm(context, storedAlarm);
                 }

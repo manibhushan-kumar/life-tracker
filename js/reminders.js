@@ -1360,6 +1360,7 @@ function _renderReminderListRow(r) {
             ${(r.alertMode !== 'notification') ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-100 text-[9px] font-bold"><i class="fa-solid fa-bell text-[8px] mr-1 text-rose-500"></i>Phone Alarm</span>` : `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 text-[9px] font-medium"><i class="fa-regular fa-bell text-[8px] mr-1 text-blue-500"></i>Notification</span>`}
             ${r.alertMode === 'notification' && (parseInt(r.playCount, 10) || 1) > 1 ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 text-[9px] font-medium"><i class="fa-solid fa-repeat text-[8px] mr-1 text-blue-500"></i>${r.playCount}x (2s gap)</span>` : ''}
             ${r.repeat && r.repeat !== 'None' ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100 text-[9px] font-medium"><i class="fa-solid fa-repeat text-[8px] mr-1"></i>${repeatLabel}</span>` : ''}
+            ${(!r.repeat || r.repeat === 'None') && (r.afterAlertAction || r.afterTrigger) === 'pause' ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-100 text-[9px] font-medium"><i class="fa-solid fa-pause text-[8px] mr-1"></i>Pauses after alert</span>` : ''}
             ${r.alertStyle === 'sound_only' ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-100 text-[9px] font-medium"><i class="fa-solid fa-volume-high text-[8px] mr-1"></i>Sound Only</span>` : ''}
             ${r.alertStyle === 'banner_only' ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 text-[9px] font-medium"><i class="fa-solid fa-message text-[8px] mr-1"></i>Banner Only</span>` : ''}
             ${r.quietHoursEnabled ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100 text-[9px] font-medium"><i class="fa-solid fa-moon text-[8px] mr-1"></i>Quiet: ${_formatTime12h(r.quietStart || '22:00')} - ${_formatTime12h(r.quietEnd || '07:00')}</span>` : ''}
@@ -1498,6 +1499,15 @@ function renderReminderDetailView(id) {
             <i class="fa-solid fa-repeat text-indigo-500 text-[10px]"></i> ${repeatLabel}
           </p>
         </div>
+        ${(!rem.repeat || rem.repeat === 'None') ? `
+          <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-100 col-span-2">
+            <p class="text-[10px] text-slate-400">Action After Alert (One-time alert)</p>
+            <p class="font-bold ${(rem.afterAlertAction || rem.afterTrigger) === 'pause' ? 'text-amber-700' : 'text-blue-700'} mt-0.5 flex items-center gap-1.5 text-xs">
+              <i class="fa-solid ${(rem.afterAlertAction || rem.afterTrigger) === 'pause' ? 'fa-pause text-amber-500' : 'fa-circle-check text-blue-500'}"></i>
+              ${(rem.afterAlertAction || rem.afterTrigger) === 'pause' ? 'Pause Reminder (Keeps in active list as Paused)' : 'Mark Completed (Moves to Completed list)'}
+            </p>
+          </div>
+        ` : ''}
         <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-100 col-span-2">
           <p class="text-[10px] text-slate-400">Notification Style</p>
           <p class="font-bold text-slate-800 mt-0.5 flex items-center gap-1">
@@ -1805,7 +1815,10 @@ async function deleteReminder(id) {
 // --------------- View: Reminder Form View (Inside Full Overlay) -----------
 // Allows setting alertStyle: 'both' | 'sound_only' | 'banner_only'
 
+let _selectedReminderTriggerPreset = null;
+
 function renderReminderFormView(editId = null) {
+  _selectedReminderTriggerPreset = null;
   _saveRemindersUiState('form', editId);
   const subHeader = document.getElementById('remindersSubHeader');
   const subHeaderTitle = document.getElementById('remindersOverlayTitle');
@@ -1831,6 +1844,7 @@ function renderReminderFormView(editId = null) {
   const defaultDatetime = existing ? existing.datetime.slice(0, 16) : _toLocalDatetimeString(defaultDt);
   const alertMode = existing ? (existing.alertMode || 'alarm') : 'alarm';
   const repeat = existing ? (existing.repeat || 'None') : 'None';
+  const afterAlertAction = existing ? (existing.afterAlertAction || existing.afterTrigger || 'complete') : 'complete';
   const customInterval = existing ? (existing.customInterval || 15) : 15;
   const customUnit = existing ? (existing.customUnit || 'minutes') : 'minutes';
   const alertStyle = existing ? (existing.alertStyle || 'both') : 'both';
@@ -1905,9 +1919,65 @@ function renderReminderFormView(editId = null) {
           </label>
         </div>
 
-        <div>
-          <label class="text-[11px] font-semibold text-slate-500 block mb-1">Date & Time *</label>
-          <input type="datetime-local" required id="reminderDatetime" onchange="updateReminderPreview()" value="${defaultDatetime}" class="w-full text-xs p-3 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-slate-50/50 font-medium">
+        <!-- Trigger Timing: Quick Options (1 min, 5 mins, 15 min, 30 min, 1 hr) or Date & Time -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <label class="text-[11px] font-semibold text-slate-500 block">When to Trigger *</label>
+            <span id="triggerStatusBadge" class="text-[10px] font-medium text-slate-400">Date & Time</span>
+          </div>
+
+          <div class="grid grid-cols-3 sm:grid-cols-6 gap-2" id="triggerPresetSelector">
+            <button type="button" onclick="selectReminderTriggerPreset('1m')" id="triggerBtn_1m" class="border border-slate-200 bg-white text-slate-600 font-medium hover:bg-slate-50 py-2.5 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-2xs">
+              <i class="fa-solid fa-bolt text-xs mb-1"></i>
+              <span class="text-xs">1 min</span>
+            </button>
+            <button type="button" onclick="selectReminderTriggerPreset('5m')" id="triggerBtn_5m" class="border border-slate-200 bg-white text-slate-600 font-medium hover:bg-slate-50 py-2.5 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-2xs">
+              <i class="fa-solid fa-clock text-xs mb-1"></i>
+              <span class="text-xs">5 mins</span>
+            </button>
+            <button type="button" onclick="selectReminderTriggerPreset('15m')" id="triggerBtn_15m" class="border border-slate-200 bg-white text-slate-600 font-medium hover:bg-slate-50 py-2.5 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-2xs">
+              <i class="fa-solid fa-clock text-xs mb-1"></i>
+              <span class="text-xs">15 min</span>
+            </button>
+            <button type="button" onclick="selectReminderTriggerPreset('30m')" id="triggerBtn_30m" class="border border-slate-200 bg-white text-slate-600 font-medium hover:bg-slate-50 py-2.5 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-2xs">
+              <i class="fa-solid fa-clock text-xs mb-1"></i>
+              <span class="text-xs">30 min</span>
+            </button>
+            <button type="button" onclick="selectReminderTriggerPreset('1h')" id="triggerBtn_1h" class="border border-slate-200 bg-white text-slate-600 font-medium hover:bg-slate-50 py-2.5 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-2xs">
+              <i class="fa-solid fa-hourglass-half text-xs mb-1"></i>
+              <span class="text-xs">1 hr</span>
+            </button>
+            <button type="button" onclick="selectReminderTriggerPreset('custom')" id="triggerBtn_custom" class="border-2 border-blue-600 bg-blue-50 text-blue-700 font-bold py-2.5 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer shadow-xs active:scale-95">
+              <i class="fa-regular fa-calendar-days text-xs mb-1"></i>
+              <span class="text-xs">Date & Time</span>
+            </button>
+          </div>
+
+          <!-- Quick Preset Feedback Banner (shown when 1 min, 5 mins, 15 min, 30 min, or 1 hr is chosen) -->
+          <div id="triggerPresetBanner" class="hidden p-3 bg-blue-50/80 border border-blue-200/80 rounded-xl flex items-center justify-between text-xs transition">
+            <div class="flex items-center gap-2.5 text-blue-900">
+              <div class="w-8 h-8 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center text-xs shrink-0">
+                <i id="triggerPresetBannerIcon" class="fa-solid fa-clock"></i>
+              </div>
+              <div>
+                <p class="font-bold text-blue-900 leading-tight">
+                  Triggers in <span id="triggerPresetLabel">5 mins</span>
+                </p>
+                <p class="text-[10px] text-blue-700/80 mt-0.5" id="triggerPresetSubtext">
+                  Scheduled for ~12:40 PM
+                </p>
+              </div>
+            </div>
+            <button type="button" onclick="selectReminderTriggerPreset('custom')" class="px-2.5 py-1 text-[10px] font-bold text-blue-700 bg-white border border-blue-200 rounded-lg hover:bg-blue-50 transition shadow-2xs flex items-center gap-1">
+              <i class="fa-regular fa-calendar-days text-[9px]"></i> Pick Date & Time
+            </button>
+          </div>
+
+          <!-- Date & Time Picker Container (shown if none of the quick options is selected) -->
+          <div id="customDatetimeContainer" class="space-y-1">
+            <input type="datetime-local" required id="reminderDatetime" oninput="onCustomDatetimeChange()" onchange="onCustomDatetimeChange(); updateReminderPreview()" value="${defaultDatetime}" class="w-full text-xs p-3 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-slate-50/50 font-medium">
+            <p class="text-[10px] text-slate-400">Triggers on this specific date and time.</p>
+          </div>
         </div>
 
         <!-- Alert Mode: Phone Alarm vs Notification -->
@@ -2093,6 +2163,33 @@ function renderReminderFormView(editId = null) {
           </div>
         </div>
 
+        <!-- Action After Alert (for One-Time Alerts: Complete vs Pause) -->
+        <div id="afterAlertActionBox" class="${repeat === 'None' ? '' : 'hidden'} space-y-1.5 p-3.5 bg-slate-50/70 rounded-2xl border border-slate-200">
+          <div class="flex items-center justify-between">
+            <label class="text-[11px] font-semibold text-slate-700 block">After Alert (One-time alert)</label>
+            <span class="text-[10px] text-slate-400">Post-alarm action</span>
+          </div>
+          <div class="grid grid-cols-2 gap-2" id="afterAlertActionSelector">
+            <label class="after-action-label cursor-pointer border rounded-xl p-2.5 flex flex-col items-center text-center gap-1 transition ${afterAlertAction === 'complete' ? 'border-blue-500 bg-blue-50/60 font-bold text-blue-700 shadow-xs' : 'border-slate-200 bg-white text-slate-600'}">
+              <input type="radio" name="afterAlertAction" value="complete" ${afterAlertAction === 'complete' ? 'checked' : ''} onchange="onAfterAlertActionRadioChange(this.value); updateReminderPreview()" class="hidden">
+              <div class="flex items-center gap-1.5">
+                <i class="fa-solid fa-circle-check text-xs ${afterAlertAction === 'complete' ? 'text-blue-600' : 'text-slate-400'}"></i>
+                <span class="text-xs">Mark Completed</span>
+              </div>
+              <span class="text-[9px] leading-tight text-slate-500 font-normal">Moves to Completed list after alarm/notification</span>
+            </label>
+
+            <label class="after-action-label cursor-pointer border rounded-xl p-2.5 flex flex-col items-center text-center gap-1 transition ${afterAlertAction === 'pause' ? 'border-amber-500 bg-amber-50/60 font-bold text-amber-700 shadow-xs' : 'border-slate-200 bg-white text-slate-600'}">
+              <input type="radio" name="afterAlertAction" value="pause" ${afterAlertAction === 'pause' ? 'checked' : ''} onchange="onAfterAlertActionRadioChange(this.value); updateReminderPreview()" class="hidden">
+              <div class="flex items-center gap-1.5">
+                <i class="fa-solid fa-pause text-xs ${afterAlertAction === 'pause' ? 'text-amber-600' : 'text-slate-400'}"></i>
+                <span class="text-xs">Pause Reminder</span>
+              </div>
+              <span class="text-[9px] leading-tight text-slate-500 font-normal">Keeps in active list as Paused for easy resume/reuse</span>
+            </label>
+          </div>
+        </div>
+
         <div>
           <label class="text-[11px] font-semibold text-slate-500 block mb-1">Notes / Description (Optional)</label>
           <textarea id="reminderNote" oninput="updateReminderPreview()" rows="2" placeholder="Extra details (displayed in the notification body)" class="w-full text-xs p-3 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-slate-50/50">${existing ? _escapeHtml(existing.note || '') : ''}</textarea>
@@ -2105,6 +2202,119 @@ function renderReminderFormView(editId = null) {
       </form>
     </div>
   `;
+
+  _updateTriggerPresetUI();
+}
+
+// --------------- Quick Trigger Presets (1 min, 5 mins, 15 min, 30 min, 1 hr, Date & Time) ----
+
+function _getPresetTargetDate(presetKey) {
+  const now = new Date();
+  const d = new Date(now.getTime());
+  let addMs = 0;
+  if (presetKey === '1m') addMs = 60 * 1000;
+  else if (presetKey === '5m') addMs = 5 * 60 * 1000;
+  else if (presetKey === '15m') addMs = 15 * 60 * 1000;
+  else if (presetKey === '30m') addMs = 30 * 60 * 1000;
+  else if (presetKey === '1h') addMs = 60 * 60 * 1000;
+
+  d.setTime(now.getTime() + addMs);
+  if (presetKey === '1m') {
+    if (now.getSeconds() > 15) {
+      d.setMinutes(d.getMinutes() + 1);
+    }
+  } else if (d.getSeconds() >= 30) {
+    d.setMinutes(d.getMinutes() + 1);
+  }
+  d.setSeconds(0, 0);
+  return d;
+}
+
+function _getPresetLabel(presetKey) {
+  if (presetKey === '1m') return '1 min';
+  if (presetKey === '5m') return '5 mins';
+  if (presetKey === '15m') return '15 min';
+  if (presetKey === '30m') return '30 min';
+  if (presetKey === '1h') return '1 hr';
+  return 'Date & Time';
+}
+
+function selectReminderTriggerPreset(presetKey) {
+  if (_selectedReminderTriggerPreset === presetKey) {
+    presetKey = 'custom';
+  }
+
+  if (presetKey === 'custom') {
+    _selectedReminderTriggerPreset = null;
+  } else {
+    _selectedReminderTriggerPreset = presetKey;
+  }
+
+  _updateTriggerPresetUI();
+}
+
+function onCustomDatetimeChange() {
+  if (_selectedReminderTriggerPreset !== null) {
+    _selectedReminderTriggerPreset = null;
+    _updateTriggerPresetUI();
+  }
+}
+
+function _updateTriggerPresetUI() {
+  const activeKey = _selectedReminderTriggerPreset || 'custom';
+  const keys = ['1m', '5m', '15m', '30m', '1h', 'custom'];
+
+  keys.forEach(k => {
+    const btn = document.getElementById(`triggerBtn_${k}`);
+    if (!btn) return;
+    if (k === activeKey) {
+      btn.className = 'border-2 border-blue-600 bg-blue-50 text-blue-700 font-bold py-2.5 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer shadow-xs active:scale-95';
+    } else {
+      btn.className = 'border border-slate-200 bg-white text-slate-600 font-medium hover:bg-slate-50 py-2.5 px-1 rounded-xl text-center flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-2xs';
+    }
+  });
+
+  const banner = document.getElementById('triggerPresetBanner');
+  const customBox = document.getElementById('customDatetimeContainer');
+  const dtInput = document.getElementById('reminderDatetime');
+  const labelEl = document.getElementById('triggerPresetLabel');
+  const subtextEl = document.getElementById('triggerPresetSubtext');
+  const bannerIcon = document.getElementById('triggerPresetBannerIcon');
+  const statusBadge = document.getElementById('triggerStatusBadge');
+
+  if (_selectedReminderTriggerPreset) {
+    const targetDt = _getPresetTargetDate(_selectedReminderTriggerPreset);
+    if (dtInput) {
+      dtInput.value = _toLocalDatetimeString(targetDt);
+      dtInput.required = false;
+    }
+    if (banner) banner.classList.remove('hidden');
+    if (customBox) customBox.classList.add('hidden');
+
+    const labelText = _getPresetLabel(_selectedReminderTriggerPreset);
+    if (labelEl) labelEl.textContent = labelText;
+    if (subtextEl) {
+      const timeStr = targetDt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      subtextEl.textContent = `Scheduled for ~${timeStr}`;
+    }
+    if (bannerIcon) {
+      bannerIcon.className = _selectedReminderTriggerPreset === '1m' ? 'fa-solid fa-bolt' : _selectedReminderTriggerPreset === '1h' ? 'fa-solid fa-hourglass-half' : 'fa-solid fa-clock';
+    }
+    if (statusBadge) {
+      statusBadge.textContent = `In ${labelText}`;
+      statusBadge.className = 'text-[10px] font-bold text-blue-600';
+    }
+  } else {
+    if (dtInput) {
+      dtInput.required = true;
+    }
+    if (banner) banner.classList.add('hidden');
+    if (customBox) customBox.classList.remove('hidden');
+    if (statusBadge) {
+      statusBadge.textContent = 'Date & Time';
+      statusBadge.className = 'text-[10px] font-medium text-slate-400';
+    }
+  }
 
   updateReminderPreview();
 }
@@ -2175,13 +2385,36 @@ function onAlertStyleRadioChange(val) {
 function onRepeatSelectChange() {
   const sel = document.getElementById('reminderRepeat');
   const customBox = document.getElementById('customIntervalBox');
-  if (sel && customBox) {
-    if (sel.value === 'Custom') {
-      customBox.classList.remove('hidden');
-    } else {
-      customBox.classList.add('hidden');
+  const afterAlertBox = document.getElementById('afterAlertActionBox');
+  if (sel) {
+    if (customBox) {
+      if (sel.value === 'Custom') customBox.classList.remove('hidden');
+      else customBox.classList.add('hidden');
+    }
+    if (afterAlertBox) {
+      if (sel.value === 'None') afterAlertBox.classList.remove('hidden');
+      else afterAlertBox.classList.add('hidden');
     }
   }
+}
+
+function onAfterAlertActionRadioChange(val) {
+  document.querySelectorAll('#afterAlertActionSelector .after-action-label').forEach(label => {
+    const radio = label.querySelector('input[type="radio"]');
+    const icon = label.querySelector('i');
+    if (radio && radio.value === val) {
+      if (val === 'pause') {
+        label.className = 'after-action-label cursor-pointer border rounded-xl p-2.5 flex flex-col items-center text-center gap-1 transition border-amber-500 bg-amber-50/60 font-bold text-amber-700 shadow-xs';
+        if (icon) icon.className = 'fa-solid fa-pause text-xs text-amber-600';
+      } else {
+        label.className = 'after-action-label cursor-pointer border rounded-xl p-2.5 flex flex-col items-center text-center gap-1 transition border-blue-500 bg-blue-50/60 font-bold text-blue-700 shadow-xs';
+        if (icon) icon.className = 'fa-solid fa-circle-check text-xs text-blue-600';
+      }
+    } else {
+      label.className = 'after-action-label cursor-pointer border rounded-xl p-2.5 flex flex-col items-center text-center gap-1 transition border-slate-200 bg-white text-slate-600';
+      if (icon) icon.className = `fa-solid ${radio?.value === 'pause' ? 'fa-pause' : 'fa-circle-check'} text-xs text-slate-400`;
+    }
+  });
 }
 
 function updateReminderPreview() {
@@ -2228,8 +2461,15 @@ function updateReminderPreview() {
       const num = customNumEl ? customNumEl.value : '15';
       const unit = customUnitEl ? customUnitEl.value : 'minutes';
       repText = `Every ${num} ${unit}`;
+      prevRepeat.innerHTML = `<i class="fa-solid fa-repeat mr-1"></i>${repText}`;
+    } else if (repText === 'None') {
+      const afterRadio = document.querySelector('input[name="afterAlertAction"]:checked');
+      const action = afterRadio ? afterRadio.value : 'complete';
+      const actionText = action === 'pause' ? 'One-time (Pauses after alert)' : 'One-time (Completes)';
+      prevRepeat.innerHTML = `<i class="fa-solid ${action === 'pause' ? 'fa-pause' : 'fa-clock'} mr-1"></i>${actionText}`;
+    } else {
+      prevRepeat.innerHTML = `<i class="fa-solid fa-repeat mr-1"></i>${repText}`;
     }
-    prevRepeat.innerHTML = `<i class="fa-solid fa-repeat mr-1"></i>${repText}`;
   }
 
   const speakToggle = document.getElementById('reminderSpeakTitleToggle');
@@ -2535,7 +2775,14 @@ function _showInAppAlarmModal(reminder, isTest = false) {
         reminder.notified = false;
         await _scheduleNativeNotification(reminder);
       } else {
-        reminder.completed = true;
+        const action = reminder.afterAlertAction || reminder.afterTrigger || 'complete';
+        if (action === 'pause') {
+          reminder.paused = true;
+          reminder.completed = false;
+        } else {
+          reminder.completed = true;
+          reminder.paused = false;
+        }
       }
       await saveState();
       renderRemindersListView();
@@ -2734,7 +2981,16 @@ async function _dispatchNotificationNow(title, body, withSound = true, reminderI
 async function handleSaveReminderSubmit(e, editId) {
   e.preventDefault();
   const title = document.getElementById('reminderTitle').value.trim();
-  const datetime = document.getElementById('reminderDatetime').value;
+  
+  let datetime;
+  if (_selectedReminderTriggerPreset) {
+    const targetDt = _getPresetTargetDate(_selectedReminderTriggerPreset);
+    datetime = _toLocalDatetimeString(targetDt);
+  } else {
+    const dtEl = document.getElementById('reminderDatetime');
+    datetime = dtEl ? dtEl.value : '';
+  }
+
   const repeat = document.getElementById('reminderRepeat').value;
   const note = document.getElementById('reminderNote').value.trim();
   const alertModeRadio = document.querySelector('input[name="alertMode"]:checked');
@@ -2757,6 +3013,9 @@ async function handleSaveReminderSubmit(e, editId) {
   const favToggle = document.getElementById('reminderFavoriteToggle');
   const isFavorite = favToggle ? favToggle.checked : false;
 
+  const afterAlertRadio = document.querySelector('input[name="afterAlertAction"]:checked');
+  const afterAlertAction = afterAlertRadio ? afterAlertRadio.value : 'complete';
+
   const playCountEl = document.getElementById('reminderPlayCountSelect');
   const playCount = alertMode === 'notification' ? (parseInt(playCountEl ? playCountEl.value : '1', 10) || 1) : 1;
 
@@ -2769,7 +3028,12 @@ async function handleSaveReminderSubmit(e, editId) {
     customUnit = unitEl ? unitEl.value : 'minutes';
   }
 
-  if (!title || !datetime) return;
+  if (!title || !datetime) {
+    if (typeof showAlert === 'function') {
+      showAlert('Please enter a reminder title and select when it should trigger.', { title: 'Missing Information' });
+    }
+    return;
+  }
   if (!appData.reminders) appData.reminders = [];
 
   let savedItem = null;
@@ -2779,9 +3043,11 @@ async function handleSaveReminderSubmit(e, editId) {
     if (rem) {
       rem.title = title;
       rem.datetime = datetime;
+      rem.triggerPreset = _selectedReminderTriggerPreset || null;
       rem.favorite = isFavorite;
       rem.favourite = isFavorite;
       rem.repeat = repeat;
+      rem.afterAlertAction = afterAlertAction;
       rem.customInterval = customInterval;
       rem.customUnit = customUnit;
       rem.alertMode = alertMode;
@@ -2802,9 +3068,11 @@ async function handleSaveReminderSubmit(e, editId) {
       id: 'rem_' + Date.now(),
       title,
       datetime,
+      triggerPreset: _selectedReminderTriggerPreset || null,
       favorite: isFavorite,
       favourite: isFavorite,
       repeat,
+      afterAlertAction,
       customInterval,
       customUnit,
       alertMode,
@@ -2906,7 +3174,14 @@ async function _syncRemindersWithNative() {
           rem.lastSentAt = new Date(found.lastTriggeredAt).toISOString();
         }
         if (found.completed) {
-          rem.completed = true;
+          const action = rem.afterAlertAction || rem.afterTrigger || 'complete';
+          if (action === 'pause') {
+            rem.paused = true;
+            rem.completed = false;
+          } else {
+            rem.completed = true;
+            rem.paused = false;
+          }
           rem.notified = true;
           changed = true;
         } else if (found.timestamp && rem.repeat && rem.repeat !== 'None') {
@@ -2920,7 +3195,14 @@ async function _syncRemindersWithNative() {
         } else if (!rem.repeat || rem.repeat === 'None') {
           let dt = new Date(rem.datetime);
           if (dt <= now || found.lastTriggeredAt) {
-            rem.completed = true;
+            const action = rem.afterAlertAction || rem.afterTrigger || 'complete';
+            if (action === 'pause') {
+              rem.paused = true;
+              rem.completed = false;
+            } else {
+              rem.completed = true;
+              rem.paused = false;
+            }
             rem.notified = true;
             changed = true;
           }
@@ -2938,7 +3220,14 @@ async function _syncRemindersWithNative() {
             changed = true;
             _scheduleNativeNotification(rem);
           } else {
-            rem.completed = true;
+            const action = rem.afterAlertAction || rem.afterTrigger || 'complete';
+            if (action === 'pause') {
+              rem.paused = true;
+              rem.completed = false;
+            } else {
+              rem.completed = true;
+              rem.paused = false;
+            }
             rem.notified = true;
             changed = true;
           }
@@ -2972,7 +3261,14 @@ function _catchUpPastRecurringReminders() {
         rem.notified = false;
         changed = true;
       } else {
-        rem.completed = true;
+        const action = rem.afterAlertAction || rem.afterTrigger || 'complete';
+        if (action === 'pause') {
+          rem.paused = true;
+          rem.completed = false;
+        } else {
+          rem.completed = true;
+          rem.paused = false;
+        }
         rem.notified = true;
         changed = true;
       }
@@ -3022,7 +3318,14 @@ function _checkAndFireReminders() {
           }
           r.notified = false;
         } else {
-          r.completed = true;
+          const action = r.afterAlertAction || r.afterTrigger || 'complete';
+          if (action === 'pause') {
+            r.paused = true;
+            r.completed = false;
+          } else {
+            r.completed = true;
+            r.paused = false;
+          }
           r.notified = true;
         }
         changed = true;
@@ -3097,6 +3400,14 @@ function _checkAndFireReminders() {
           r.datetime = _calculateNextReminderDatetime(r.datetime, r.repeat, r.customInterval, r.customUnit);
           r.notified = false;
         } else {
+          const action = r.afterAlertAction || r.afterTrigger || 'complete';
+          if (action === 'pause') {
+            r.paused = true;
+            r.completed = false;
+          } else {
+            r.completed = true;
+            r.paused = false;
+          }
           r.notified = true;
         }
         changed = true;
@@ -3495,7 +3806,14 @@ function _setupNativeAlarmListener() {
           rem.notified = false;
           await _scheduleNativeNotification(rem);
         } else {
-          rem.completed = true;
+          const action = rem.afterAlertAction || rem.afterTrigger || 'complete';
+          if (action === 'pause') {
+            rem.paused = true;
+            rem.completed = false;
+          } else {
+            rem.completed = true;
+            rem.paused = false;
+          }
           rem.notified = true;
         }
         await saveState();
@@ -3550,6 +3868,11 @@ function _setupNativeAlarmListener() {
           rem.notified = false;
           await _scheduleNativeNotification(rem);
         } else {
+          const action = rem.afterAlertAction || rem.afterTrigger || 'complete';
+          if (action === 'pause') {
+            rem.paused = true;
+            rem.completed = false;
+          }
           rem.notified = true;
         }
         await saveState();
@@ -3662,7 +3985,8 @@ async function _scheduleNativeNotification(reminder) {
         mode: isAlarm ? 'alarm' : 'notification',
         alertStyle: reminder.alertStyle || 'both',
         speakTitle: !!reminder.speakTitle,
-        playCount: Number(reminder.playCount) || 1
+        playCount: Number(reminder.playCount) || 1,
+        afterAlertAction: reminder.afterAlertAction || reminder.afterTrigger || 'complete'
       });
       return;
     } catch (e) {
@@ -3777,6 +4101,9 @@ async function onRemindersRestored() {
 
 window.onRemindersRestored = onRemindersRestored;
 window.scheduleAllReminders = onRemindersRestored;
+window.selectReminderTriggerPreset = selectReminderTriggerPreset;
+window.onCustomDatetimeChange = onCustomDatetimeChange;
+window.onAfterAlertActionRadioChange = onAfterAlertActionRadioChange;
 
 if (typeof window !== 'undefined') {
   if (document.readyState === 'loading') {

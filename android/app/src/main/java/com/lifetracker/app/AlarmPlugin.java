@@ -79,6 +79,7 @@ public class AlarmPlugin extends Plugin {
             String alertStyle = call.getString("alertStyle", "both");
             Boolean speakTitle = call.getBoolean("speakTitle", false);
             Integer playCount = call.getInt("playCount", 1);
+            String afterAlertAction = call.getString("afterAlertAction", "complete");
 
             // Save custom sound audio if provided
             if (soundData != null && !soundData.isEmpty() && soundId != null) {
@@ -98,6 +99,7 @@ public class AlarmPlugin extends Plugin {
             alarm.put("alertStyle", alertStyle);
             alarm.put("speakTitle", speakTitle != null && speakTitle);
             alarm.put("playCount", playCount != null && playCount > 0 ? playCount : 1);
+            alarm.put("afterAlertAction", afterAlertAction);
 
             AlarmScheduler.scheduleAlarm(getContext(), alarm);
 

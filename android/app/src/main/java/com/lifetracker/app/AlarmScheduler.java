@@ -171,8 +171,16 @@ public class AlarmScheduler {
                 scheduleAlarm(context, alarm);
                 Log.d(TAG, "Rescheduled recurring alarm " + id + " for next occurrence: " + nextTimestamp);
             } else {
-                // One-time alarm completed
-                AlarmsStorage.removeAlarm(context, id);
+                String afterAlertAction = alarm.optString("afterAlertAction", "complete");
+                if ("pause".equalsIgnoreCase(afterAlertAction)) {
+                    alarm.put("paused", true);
+                    alarm.put("completed", false);
+                    alarm.put("lastTriggeredAt", System.currentTimeMillis());
+                    AlarmsStorage.saveAlarm(context, alarm);
+                } else {
+                    // One-time alarm completed
+                    AlarmsStorage.removeAlarm(context, id);
+                }
             }
         } catch (Exception e) {
             Log.e(TAG, "Error handling alarm dismissal", e);
