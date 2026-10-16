@@ -1683,51 +1683,312 @@ async function toggleReminderFavorite(id) {
   }
 }
 
-async function togglePauseReminder(id) {
-  const rem = (appData.reminders || []).find(r => r.id === id);
-  if (!rem) return;
-
-  rem.paused = !rem.paused;
-
-  if (rem.paused) {
-    if (typeof stopReminderSoundLoop === 'function') {
-      stopReminderSoundLoop();
-    }
-    const modal = document.getElementById('inAppAlarmModal');
-    if (modal) modal.remove();
-    await _cancelNativeAlarmAndNotification(id);
-  } else {
-    // When resumed: next timer should happen after current time + recurrence duration
-    const now = new Date();
-    if (rem.repeat && rem.repeat !== 'None') {
-      rem.datetime = _calculateNextReminderDatetime(now, rem.repeat, rem.customInterval, rem.customUnit);
-    } else {
-      if (new Date(rem.datetime) <= now) {
-        const nextDt = new Date(now.getTime() + 10 * 60000);
-        rem.datetime = _toLocalDatetimeString(nextDt);
-      }
-    }
-    rem.notified = false;
-    await _scheduleNativeNotification(rem);
-  }
-
-  await saveState();
-
+function _refreshRemindersView(id) {
   let currentView = 'list';
   try {
     const s = JSON.parse(localStorage.getItem(REMINDERS_UI_STATE_KEY) || '{}');
     if (s.view) currentView = s.view;
   } catch (e) {}
 
-  if (currentView === 'detail') {
+  if (currentView === 'detail' && id) {
     renderReminderDetailView(id);
   } else {
     renderRemindersListView();
   }
 }
 
+async function togglePauseReminder(id) {
+  const rem = (appData.reminders || []).find(r => r.id === id);
+  if (!rem) return;
+
+  if (!rem.paused) {
+    // Currently Active -> Pause it
+    rem.paused = true;
+    if (typeof stopReminderSoundLoop === 'function') {
+      stopReminderSoundLoop();
+    }
+    const modal = document.getElementById('inAppAlarmModal');
+    if (modal) modal.remove();
+    await _cancelNativeAlarmAndNotification(id);
+    await saveState();
+    _refreshRemindersView(id);
+    return;
+  }
+
+  // Currently Paused -> User wants to Resume it
+  const now = new Date();
+
+  // Case 1: Recurring reminder -> calculate next occurrence from now
+  if (rem.repeat && rem.repeat !== 'None') {
+    rem.datetime = _calculateNextReminderDatetime(now, rem.repeat, rem.customInterval, rem.customUnit);
+    rem.paused = false;
+    rem.notified = false;
+    await _scheduleNativeNotification(rem);
+    await saveState();
+    _refreshRemindersView(id);
+    return;
+  }
+
+  // Case 2: One-time reminder set via Quick Preset (1m, 5m, 15m, 30m, 1h)
+  // Automatically calculate next execution time: now + preset duration
+  if (rem.triggerPreset) {
+    const targetDt = _getPresetTargetDate(rem.triggerPreset);
+    rem.datetime = _toLocalDatetimeString(targetDt);
+    rem.paused = false;
+    rem.notified = false;
+    await _scheduleNativeNotification(rem);
+    await saveState();
+    _refreshRemindersView(id);
+    return;
+  }
+
+  // Case 3: One-time reminder set via custom Date & Time
+  // If scheduled time is still in the future, resume directly with existing time
+  if (new Date(rem.datetime) > now) {
+    rem.paused = false;
+    rem.notified = false;
+    await _scheduleNativeNotification(rem);
+    await saveState();
+    _refreshRemindersView(id);
+    return;
+  }
+
+  // Scheduled datetime has already passed -> Show Option A: Reschedule & Resume modal
+  showRescheduleAndResumeModal(rem);
+}
+
+function _calculateSameTimeTomorrow(origDatetimeStr) {
+  const targetDt = new Date();
+  targetDt.setDate(targetDt.getDate() + 1);
+  const origDt = new Date(origDatetimeStr);
+  if (!isNaN(origDt.getTime())) {
+    targetDt.setHours(origDt.getHours(), origDt.getMinutes(), 0, 0);
+  } else {
+    targetDt.setHours(9, 0, 0, 0);
+  }
+  return targetDt;
+}
+
+function showRescheduleAndResumeModal(rem) {
+  closeRescheduleModal();
+
+  const now = new Date();
+  const origDt = new Date(rem.datetime);
+  const origTimeStr = !isNaN(origDt.getTime())
+    ? origDt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+    : '';
+  const origDateStr = !isNaN(origDt.getTime())
+    ? origDt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : '';
+
+  const in15m = new Date(now.getTime() + 15 * 60000);
+  const in15mStr = in15m.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
+  const in1h = new Date(now.getTime() + 60 * 60000);
+  const in1hStr = in1h.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
+  const tomorrowSameTime = _calculateSameTimeTomorrow(rem.datetime);
+  const tomorrowTimeStr = tomorrowSameTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
+  const minDtStr = _toLocalDatetimeString(new Date(now.getTime() + 60000));
+  const defaultCustomDtStr = _toLocalDatetimeString(in1h);
+
+  const modal = document.createElement('div');
+  modal.id = 'rescheduleResumeModalOverlay';
+  modal.className = 'fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-3 sm:p-4 select-none';
+  modal.onclick = (e) => {
+    if (e.target === modal) closeRescheduleModal();
+  };
+
+  modal.innerHTML = `
+    <div class="bg-white rounded-3xl shadow-2xl max-w-md w-full border border-slate-100 overflow-hidden transform transition-all" onclick="event.stopPropagation()">
+      <div class="p-5 pb-3">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2.5">
+            <div class="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center text-base shadow-md shadow-blue-500/20">
+              <i class="fa-solid fa-clock-rotate-left"></i>
+            </div>
+            <div>
+              <h3 class="text-sm font-bold text-slate-800 leading-tight">Reschedule & Resume</h3>
+              <p class="text-[11px] text-slate-400 mt-0.5">Original time has passed</p>
+            </div>
+          </div>
+          <button type="button" onclick="closeRescheduleModal()" class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 transition flex items-center justify-center text-xs cursor-pointer" aria-label="Close">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        <div class="p-3 bg-slate-50 border border-slate-200/80 rounded-2xl mb-3">
+          <div class="flex items-center justify-between text-xs">
+            <span class="font-bold text-slate-800 truncate">${_escapeHtml(rem.title || 'Untitled Reminder')}</span>
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 shrink-0">PAUSED</span>
+          </div>
+          <p class="text-[11px] text-slate-500 mt-1 flex items-center gap-1">
+            <i class="fa-regular fa-clock text-[10px] text-slate-400"></i>
+            Was set for: <span class="font-medium text-slate-700">${origDateStr ? `${origDateStr} at ` : ''}${origTimeStr || rem.datetime}</span>
+          </p>
+        </div>
+
+        <p class="text-[11px] font-bold text-slate-600 mb-2">Choose when this alert should trigger:</p>
+
+        <div class="space-y-2">
+          <!-- Option 1: In 15 mins -->
+          <button type="button" onclick="resumeReminderWithOffset('${rem.id}', 15)" class="w-full p-3 rounded-2xl border border-slate-200 hover:border-amber-400 hover:bg-amber-50/40 bg-white transition flex items-center justify-between group active:scale-[0.99] text-left cursor-pointer">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
+                <i class="fa-solid fa-bolt text-xs"></i>
+              </div>
+              <div class="min-w-0">
+                <p class="text-xs font-bold text-slate-800 group-hover:text-amber-700 transition">In 15 minutes</p>
+                <p class="text-[10px] text-slate-400">Triggers at ~${in15mStr}</p>
+              </div>
+            </div>
+            <i class="fa-solid fa-chevron-right text-xs text-slate-300 group-hover:text-amber-500 transition shrink-0 ml-2"></i>
+          </button>
+
+          <!-- Option 2: In 1 hour -->
+          <button type="button" onclick="resumeReminderWithOffset('${rem.id}', 60)" class="w-full p-3 rounded-2xl border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 bg-white transition flex items-center justify-between group active:scale-[0.99] text-left cursor-pointer">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 border border-blue-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
+                <i class="fa-solid fa-hourglass-half text-xs"></i>
+              </div>
+              <div class="min-w-0">
+                <p class="text-xs font-bold text-slate-800 group-hover:text-blue-700 transition">In 1 hour</p>
+                <p class="text-[10px] text-slate-400">Triggers at ~${in1hStr}</p>
+              </div>
+            </div>
+            <i class="fa-solid fa-chevron-right text-xs text-slate-300 group-hover:text-blue-500 transition shrink-0 ml-2"></i>
+          </button>
+
+          <!-- Option 3: Same time tomorrow -->
+          <button type="button" onclick="resumeReminderSameTimeTomorrow('${rem.id}')" class="w-full p-3 rounded-2xl border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/40 bg-white transition flex items-center justify-between group active:scale-[0.99] text-left cursor-pointer">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
+                <i class="fa-solid fa-calendar-day text-xs"></i>
+              </div>
+              <div class="min-w-0">
+                <p class="text-xs font-bold text-slate-800 group-hover:text-indigo-700 transition">Same time tomorrow</p>
+                <p class="text-[10px] text-slate-400">Tomorrow at ${tomorrowTimeStr}</p>
+              </div>
+            </div>
+            <i class="fa-solid fa-chevron-right text-xs text-slate-300 group-hover:text-indigo-500 transition shrink-0 ml-2"></i>
+          </button>
+
+          <!-- Option 4: Pick Date & Time -->
+          <button type="button" onclick="toggleRescheduleCustomPicker()" class="w-full p-3 rounded-2xl border border-slate-200 hover:border-emerald-400 hover:bg-emerald-50/40 bg-white transition flex items-center justify-between group active:scale-[0.99] text-left cursor-pointer">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
+                <i class="fa-solid fa-calendar-plus text-xs"></i>
+              </div>
+              <div class="min-w-0">
+                <p class="text-xs font-bold text-slate-800 group-hover:text-emerald-700 transition">Pick Date & Time</p>
+                <p class="text-[10px] text-slate-400">Choose custom date and hour</p>
+              </div>
+            </div>
+            <i id="reschedulePickerChevron" class="fa-solid fa-chevron-down text-xs text-slate-300 group-hover:text-emerald-500 transition shrink-0 ml-2"></i>
+          </button>
+
+          <!-- Expandable Custom Datetime Box -->
+          <div id="rescheduleCustomPickerBox" class="hidden p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5 transition">
+            <label class="block text-[11px] font-bold text-slate-600">Select New Trigger Date & Time</label>
+            <input type="datetime-local" id="rescheduleCustomInput" min="${minDtStr}" value="${defaultCustomDtStr}" class="w-full text-xs p-3 rounded-xl border border-slate-200 outline-none focus:border-blue-500 bg-white font-medium">
+            <button type="button" onclick="confirmCustomReschedule('${rem.id}')" class="w-full py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white font-bold rounded-xl text-xs transition shadow-sm flex items-center justify-center gap-1.5 cursor-pointer">
+              <i class="fa-solid fa-check text-xs"></i> Set & Resume
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="p-3 bg-slate-50/80 border-t border-slate-100 flex justify-end">
+        <button type="button" onclick="closeRescheduleModal()" class="w-full py-2.5 text-xs text-slate-600 hover:text-slate-800 font-bold hover:bg-slate-100 rounded-xl transition cursor-pointer">
+          Keep Paused (Cancel)
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+}
+
+function closeRescheduleModal() {
+  const el = document.getElementById('rescheduleResumeModalOverlay');
+  if (el) el.remove();
+}
+
+function toggleRescheduleCustomPicker() {
+  const box = document.getElementById('rescheduleCustomPickerBox');
+  const chevron = document.getElementById('reschedulePickerChevron');
+  if (!box) return;
+  const isHidden = box.classList.contains('hidden');
+  if (isHidden) {
+    box.classList.remove('hidden');
+    if (chevron) chevron.className = 'fa-solid fa-chevron-up text-xs text-emerald-600 transition shrink-0 ml-2';
+    const input = document.getElementById('rescheduleCustomInput');
+    if (input) input.focus();
+  } else {
+    box.classList.add('hidden');
+    if (chevron) chevron.className = 'fa-solid fa-chevron-down text-xs text-slate-300 group-hover:text-emerald-500 transition shrink-0 ml-2';
+  }
+}
+
+async function resumeReminderWithOffset(reminderId, minutes) {
+  const rem = (appData.reminders || []).find(r => r.id === reminderId);
+  if (!rem) return;
+  const now = new Date();
+  const nextDt = new Date(now.getTime() + minutes * 60000);
+  nextDt.setSeconds(0, 0);
+  rem.datetime = _toLocalDatetimeString(nextDt);
+  rem.triggerPreset = null;
+  rem.paused = false;
+  rem.notified = false;
+  await _finishResumeAction(rem);
+}
+
+async function resumeReminderSameTimeTomorrow(reminderId) {
+  const rem = (appData.reminders || []).find(r => r.id === reminderId);
+  if (!rem) return;
+  const targetDt = _calculateSameTimeTomorrow(rem.datetime);
+  rem.datetime = _toLocalDatetimeString(targetDt);
+  rem.triggerPreset = null;
+  rem.paused = false;
+  rem.notified = false;
+  await _finishResumeAction(rem);
+}
+
+async function confirmCustomReschedule(reminderId) {
+  const rem = (appData.reminders || []).find(r => r.id === reminderId);
+  if (!rem) return;
+  const input = document.getElementById('rescheduleCustomInput');
+  if (!input || !input.value) return;
+
+  const chosenDt = new Date(input.value);
+  if (isNaN(chosenDt.getTime()) || chosenDt <= new Date()) {
+    alert('Please choose a future date and time.');
+    return;
+  }
+
+  rem.datetime = _toLocalDatetimeString(chosenDt);
+  rem.triggerPreset = null;
+  rem.paused = false;
+  rem.notified = false;
+  await _finishResumeAction(rem);
+}
+
+async function _finishResumeAction(rem) {
+  closeRescheduleModal();
+  await _scheduleNativeNotification(rem);
+  await saveState();
+  _refreshRemindersView(rem.id);
+}
+
 window.toggleReminderFavorite = toggleReminderFavorite;
 window.togglePauseReminder = togglePauseReminder;
+window.showRescheduleAndResumeModal = showRescheduleAndResumeModal;
+window.closeRescheduleModal = closeRescheduleModal;
+window.toggleRescheduleCustomPicker = toggleRescheduleCustomPicker;
+window.resumeReminderWithOffset = resumeReminderWithOffset;
+window.resumeReminderSameTimeTomorrow = resumeReminderSameTimeTomorrow;
+window.confirmCustomReschedule = confirmCustomReschedule;
 
 async function markReminderCompleted(id) {
   const rem = (appData.reminders || []).find(r => r.id === id);
@@ -1818,15 +2079,14 @@ async function deleteReminder(id) {
 let _selectedReminderTriggerPreset = null;
 
 function renderReminderFormView(editId = null) {
-  _selectedReminderTriggerPreset = null;
+  const existing = editId ? (appData.reminders || []).find(r => r.id === editId) : null;
+  _selectedReminderTriggerPreset = existing ? (existing.triggerPreset || null) : null;
   _saveRemindersUiState('form', editId);
   const subHeader = document.getElementById('remindersSubHeader');
   const subHeaderTitle = document.getElementById('remindersOverlayTitle');
   const subHeaderActions = document.getElementById('remindersOverlayHeaderActions');
   const content = document.getElementById('remindersOverlayContent');
   const backBtn = document.getElementById('remindersBackBtn');
-
-  const existing = editId ? (appData.reminders || []).find(r => r.id === editId) : null;
 
   if (subHeader) subHeader.classList.remove('hidden');
   if (subHeaderTitle) subHeaderTitle.textContent = existing ? 'Edit Reminder' : 'New Reminder';
